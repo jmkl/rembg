@@ -1,0 +1,31 @@
+# Rust workspace
+target/
+Cargo.lock
+
+# IDE folders
+.vscode/
+.idea/
+
+# Binary executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Workspace specific
+*.rs.orig
+*.bak
+workspaces/
+input/
+models/
+
+# Session/autosave
+*.session
+*.autosave
+
+*.onnx
+*.pt
+*.pth
+*.safetensors
+models/
+autosave*

@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/rembg-core", "crates/compnode", "crates/wgpu-playground"]
+resolver = "2"
+
+[package]
+name = "rembg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = "0.25"
+anyhow = "1"
+ort = { version = "2.0.0-rc.12", features = ["cuda"] }
+winit = "0.30.13"
+wry = "0.57.0"
+http = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+percent-encoding = "2"
+ureq = "3"
+sha2 = "0.10"
+rembg-core = { path = "crates/rembg-core" }
+tiny_http = "0.12"
