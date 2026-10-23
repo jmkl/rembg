@@ -495,6 +495,8 @@ impl SnarlViewer<Node> for GraphEditor {
         snarl: &mut Snarl<Node>,
     ) {
         let open = snarl.get_node_info(node).is_none_or(|info| info.open);
+        let spec = catalog::spec(snarl[node].kind());
+        let node_width = spec.body_width;
 
         // Snarl's built-in collapse icon is disabled in `style::snarl_style`;
         // draw the elegance chevron instead.
@@ -521,10 +523,15 @@ impl SnarlViewer<Node> for GraphEditor {
             snarl.open_node(node, !open);
         }
 
-        ui.add_space(4.0);
+        // Constrain header width to node width
+        ui.set_min_width(node_width);
+        ui.set_max_width(node_width);
 
         // Title centered, checkbox on the right
         ui.horizontal(|ui| {
+            ui.set_min_width(node_width);
+            ui.set_max_width(node_width);
+
             let title = catalog::spec(snarl[node].kind()).title;
             ui.add(
                 egui::Label::new(
