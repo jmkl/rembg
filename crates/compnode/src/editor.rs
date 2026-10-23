@@ -1,8 +1,8 @@
 //! Snarl view implementation and node interaction.
 
-use egui::{Align2, CornerRadius, FontId, Frame, Margin, RichText, Stroke, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, RichText, Stroke, vec2};
 use egui_snarl::{
-    InPin, NodeId, OutPin, OutPinId, Snarl,
+    InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
     ui::{BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes},
 };
 use elegance::glyphs;
@@ -522,27 +522,29 @@ impl SnarlViewer<Node> for GraphEditor {
         }
 
         ui.add_space(4.0);
-        let title = catalog::spec(snarl[node].kind()).title;
-        ui.add(
-            egui::Label::new(
-                RichText::new(title)
-                    .size(12.0)
-                    .line_height(Some(1.5))
-                    .strong()
-                    .color(pal::HEADER_TEXT),
-            )
-            .selectable(false),
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(30.0, 24.0),
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                let mut enabled = snarl[node].preview_enabled();
-                if ui.add(elegance::Checkbox::new(&mut enabled, "")).changed() {
-                    snarl[node].set_preview_enabled(enabled);
-                }
-            },
-        );
+
+        // Title centered, checkbox on the right
+        ui.horizontal(|ui| {
+            let title = catalog::spec(snarl[node].kind()).title;
+            ui.add(
+                egui::Label::new(
+                    RichText::new(title)
+                        .size(12.0)
+                        .line_height(Some(1.5))
+                        .strong()
+                        .color(pal::HEADER_TEXT),
+                )
+                .selectable(false),
+            );
+
+            // Spacer to push checkbox to the right
+            ui.add_space(ui.available_width().max(0.0));
+
+            let mut enabled = snarl[node].preview_enabled();
+            if ui.add(elegance::Checkbox::new(&mut enabled, "")).changed() {
+                snarl[node].set_preview_enabled(enabled);
+            }
+        });
     }
 
     fn show_input(
