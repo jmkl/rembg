@@ -491,12 +491,11 @@ impl ImageCanvas {
             if it.fit_pending {
                 it.size = fit_inside(display_dims, canvas_size);
                 it.fit_pending = false;
-            } else if !it.tex_is_full {
-                // Placeholder -> real image: keep the user's width,
-                // correct the aspect only if it differs.
-                let aspect = display_dims.0 as f32 / display_dims.1.max(1) as f32;
-                if (it.size.x / it.size.y.max(1.0) - aspect).abs() > 0.01 {
-                    it.size.y = it.size.x / aspect.max(0.01);
+            } else {
+                // Texture changed (e.g., preview -> full-res): refit to new dimensions
+                let texture_changed = it.tex.as_ref().map(|t| t.id()) != Some(display_tex.id());
+                if texture_changed {
+                    it.size = fit_inside(display_dims, canvas_size);
                 }
             }
             it.tex_is_full = true;
