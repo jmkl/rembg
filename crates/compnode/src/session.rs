@@ -71,6 +71,8 @@ pub(crate) enum SessionNodeData {
         /// Layer source node ids, bottom-to-top.
         #[serde(default)]
         layers: Vec<usize>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        transforms: Vec<SessionLayerTransform>,
     },
     Filter {
         filter_kind: String,
@@ -78,7 +80,19 @@ pub(crate) enum SessionNodeData {
         params: Value,
         #[serde(default)]
         layers: Vec<usize>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        transforms: Vec<SessionLayerTransform>,
     },
+}
+
+/// Saved per-layer transform (canvas position, size and rotation), matched to
+/// layers by source node id. Optional so older session files still parse.
+#[derive(Serialize, Deserialize, PartialEq, Clone, Copy)]
+pub(crate) struct SessionLayerTransform {
+    pub source: usize,
+    pub center: [f32; 2],
+    pub size: [f32; 2],
+    pub angle: f32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -184,11 +198,13 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
             },
             Node::Output(viewer) => SessionNodeData::Viewer {
                 layers: viewer.layers.iter().map(|layer| layer.source.0).collect(),
+                transforms: layer_transforms(&viewer.layers),
             },
             Node::Filter(filter) => SessionNodeData::Filter {
                 filter_kind: filter.kind.id().to_owned(),
                 params: Value::Object(filter.params.clone()),
                 layers: filter.layers.iter().map(|l| l.source.0).collect(),
+                transforms: layer_transforms(&filter.layers),
             },
         };
         nodes.push(SessionNode {
@@ -269,7 +285,7 @@ pub(crate) fn load(
     let legacy_assets = legacy_assets_dir(path);
     let mut next = Snarl::new();
     let mut id_map = HashMap::with_capacity(file.nodes.len());
-    let mut pending_viewers: Vec<(NodeId, Vec<usize>)> = Vec::new();
+    let mut pending_viewers: Vec<(NodeId, Vec<usize>, Vec<SessionLayerTransform>)> = Vec::new();
 
     for stored_asset in file.assets {
         if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&stored_asset.data) {
@@ -285,7 +301,7 @@ pub(crate) fn load(
     }
 
     for stored in file.nodes {
-        let mut viewer_layers = None;
+        let mut pending_layers: Option<(Vec<usize>, Vec<SessionLayerTransform>)> = None;
         let node = match stored.data {
             SessionNodeData::Image {
                 asset_id,
@@ -334,17 +350,17 @@ pub(crate) fn load(
                 only_center,
                 process: restore_process(cache, &legacy_assets, path, cache_key, ctx),
             }),
-            SessionNodeData::Viewer { layers } => {
-                viewer_layers = Some(layers);
+            SessionNodeData::Viewer { layers, transforms } => {
+                pending_layers = Some((layers, transforms));
                 Node::Output(ViewerNode::default())
             }
-            SessionNodeData::Filter { filter_kind, params, layers } => {
+            SessionNodeData::Filter { filter_kind, params, layers, transforms } => {
                 let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
                     continue;
                 };
-                // Layer transforms are not persisted; layers are rebuilt by
-                // `refresh_viewer` from the restored wires.
-                let _ = layers;
+                if filter_kind == FilterKind::Group {
+                    pending_layers = Some((layers, transforms));
+                }
                 Node::Filter(FilterNode::restore(
                     filter_kind,
                     params.as_object().cloned(),
@@ -359,28 +375,39 @@ pub(crate) fn load(
             next.insert_node(pos, node)
         };
         id_map.insert(stored.id, id);
-        if let Some(layers) = viewer_layers {
-            pending_viewers.push((id, layers));
+        if let Some((layers, transforms)) = pending_layers {
+            pending_viewers.push((id, layers, transforms));
         }
     }
 
-    // Restore Viewer layer order after every node has its new id.
-    for (viewer, old_layers) in pending_viewers {
+    // Restore Viewer/Group layer order and transforms after every node has
+    // its new id. `refresh_viewer` reuses these layers when the restored
+    // wires match, keeping the saved transforms.
+    for (owner, old_layers, transforms) in pending_viewers {
         let layers = old_layers
             .into_iter()
             .filter_map(|old| id_map.get(&old).copied())
-            .map(|source| crate::model::ViewerLayer {
-                source,
-                texture: None,
-                source_name: String::new(),
-                source_path: None,
-                center: egui::Vec2::ZERO,
-                size: egui::Vec2::ZERO,
-                angle: 0.0,
+            .map(|source| {
+                let saved = transforms
+                    .iter()
+                    .find(|t| id_map.get(&t.source).copied() == Some(source));
+                crate::model::ViewerLayer {
+                    source,
+                    texture: None,
+                    source_name: String::new(),
+                    source_path: None,
+                    center: saved
+                        .map(|t| egui::vec2(t.center[0], t.center[1]))
+                        .unwrap_or(egui::Vec2::ZERO),
+                    size: saved
+                        .map(|t| egui::vec2(t.size[0], t.size[1]))
+                        .unwrap_or(egui::Vec2::ZERO),
+                    angle: saved.map(|t| t.angle).unwrap_or(0.0),
+                }
             })
             .collect();
-        if let Some(viewer) = next[viewer].viewer_node_mut() {
-            viewer.layers = layers;
+        if let Some(owner_layers) = next[owner].layers_mut() {
+            *owner_layers = layers;
         }
     }
 
@@ -465,3 +492,17 @@ fn absolute(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     std::path::absolute(&path).unwrap_or(path)
 }
+
+/// Serialize layer transforms for the session file.
+fn layer_transforms(layers: &[crate::model::ViewerLayer]) -> Vec<SessionLayerTransform> {
+    layers
+        .iter()
+        .map(|layer| SessionLayerTransform {
+            source: layer.source.0,
+            center: [layer.center.x, layer.center.y],
+            size: [layer.size.x, layer.size.y],
+            angle: layer.angle,
+        })
+        .collect()
+}
+
