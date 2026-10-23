@@ -13,10 +13,12 @@ pub const WARMUP: bool = false;
 
 pub const MODEL_GFPGAN_FILE: &str = "GFPGANv1.4.onnx";
 pub const MODEL_BIREFNET_FILE: &str = "birefnet.onnx";
+pub const MODEL_RMBG_FILE: &str = "rmbg-1.4.onnx";
 pub const MODEL_SCRFD_FILE: &str = "det_10g.onnx";
 
 pub const MODEL_GFPGAN: &str = "models/GFPGANv1.4.onnx";
 pub const MODEL_BIREFNET: &str = "models/birefnet.onnx";
+pub const MODEL_RMBG: &str = "models/rmbg-1.4.onnx";
 pub const MODEL_SCRFD: &str = "models/det_10g.onnx";
 
 pub const SIZE_GFPGAN: u32 = 512;

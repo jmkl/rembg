@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use rembg_core::{config, RemoveBg};
+use rembg_core::{RemoveBg, config};
 
 #[derive(Parser, Debug)]
-#[command(name = "remove-bg", about = "RMBG-1.4 background removal (ONNX Runtime)")]
+#[command(
+    name = "remove-bg",
+    about = "RMBG-1.4 background removal (ONNX Runtime)"
+)]
 struct Args {
-    /// Path to ONNX model (default: models/birefnet.onnx)
-    #[arg(short, long, default_value = config::MODEL_BIREFNET)]
+    #[arg(short, long, default_value = config::MODEL_RMBG)]
     model: String,
     /// Input image path
     #[arg(short, long, default_value = "test.jpg")]
@@ -37,8 +39,7 @@ fn main() -> Result<()> {
     }
 
     println!("Loading input image: {}", args.input);
-    let input_img = image::open(&args.input)
-        .context("Failed to load input image")?;
+    let input_img = image::open(&args.input).context("Failed to load input image")?;
     println!(
         "   Original size: {}x{}",
         input_img.width(),
