@@ -11,12 +11,13 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::assets::AssetStore;
 use crate::cache::{OutputCache, load_cached};
 use crate::catalog;
-use crate::graph::{connect_input, rgba_to_texture};
-use crate::model::{FaceRestoreNode, ImageNode, Node, Preview, Process, ViewerNode};
+use crate::graph::{connect_input, ensure_output_node, rgba_to_texture};
+use crate::model::{FaceRestoreNode, FilterKind, FilterNode, ImageNode, Node, Preview, Process, ViewerNode};
 
 pub(crate) const SESSION_VERSION: u32 = 1;
 
@@ -70,6 +71,11 @@ pub(crate) enum SessionNodeData {
         /// Layer source node ids, bottom-to-top.
         #[serde(default)]
         layers: Vec<usize>,
+    },
+    Filter {
+        filter_kind: String,
+        #[serde(default)]
+        params: Value,
     },
 }
 
@@ -176,6 +182,10 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
             },
             Node::Output(viewer) => SessionNodeData::Viewer {
                 layers: viewer.layers.iter().map(|layer| layer.source.0).collect(),
+            },
+            Node::Filter(filter) => SessionNodeData::Filter {
+                filter_kind: filter.kind.id().to_owned(),
+                params: Value::Object(filter.params.clone()),
             },
         };
         nodes.push(SessionNode {
@@ -325,6 +335,15 @@ pub(crate) fn load(
                 viewer_layers = Some(layers);
                 Node::Output(ViewerNode::default())
             }
+            SessionNodeData::Filter { filter_kind, params } => {
+                let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
+                    continue;
+                };
+                Node::Filter(FilterNode::restore(
+                    filter_kind,
+                    params.as_object().cloned(),
+                ))
+            }
         };
 
         let pos = egui::pos2(stored.pos[0], stored.pos[1]);
@@ -376,6 +395,7 @@ pub(crate) fn load(
         );
     }
 
+    ensure_output_node(&mut next);
     Ok(next)
 }
 

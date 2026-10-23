@@ -34,6 +34,18 @@ pub(crate) mod pal {
     pub const HEADER_REMOVE_BG: Color32 = Color32::from_rgb(0x39, 0x4a, 0x63);
     pub const HEADER_FACE_RESTORE: Color32 = Color32::from_rgb(0x5d, 0x48, 0x33);
     pub const HEADER_VIEWER: Color32 = Color32::from_rgb(0x59, 0x37, 0x37);
+    pub const HEADER_ROUTE: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x4a);
+    pub const HEADER_GROUP: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x5a);
+    pub const HEADER_BLEND: Color32 = Color32::from_rgb(0x5a, 0x3d, 0x5a);
+    pub const HEADER_MASK: Color32 = Color32::from_rgb(0x5a, 0x5a, 0x3d);
+    pub const HEADER_HSV: Color32 = Color32::from_rgb(0x5a, 0x3d, 0x4a);
+    pub const HEADER_CURVES: Color32 = Color32::from_rgb(0x3d, 0x4a, 0x5a);
+    pub const HEADER_EXPOSURE: Color32 = Color32::from_rgb(0x5a, 0x50, 0x3d);
+    pub const HEADER_COLOR_BALANCE: Color32 = Color32::from_rgb(0x3d, 0x5a, 0x5a);
+    pub const HEADER_GRADIENT_MAP: Color32 = Color32::from_rgb(0x4a, 0x3d, 0x5a);
+    pub const HEADER_INVERT: Color32 = Color32::from_rgb(0x50, 0x50, 0x50);
+    pub const HEADER_GRADIENT: Color32 = Color32::from_rgb(0x5a, 0x4a, 0x3d);
+    pub const HEADER_NOISE: Color32 = Color32::from_rgb(0x4a, 0x5a, 0x4a);
 }
 
 /// Default body width for image/processing nodes.

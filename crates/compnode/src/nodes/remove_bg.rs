@@ -6,10 +6,10 @@ use elegance::{Accent, Button, ButtonSize};
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;
-use crate::model::Node;
+use crate::model::{Kind, Node};
 use crate::widgets::{error_line, preview, timing_line};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2) {
+pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::remove_bg());
 }
 

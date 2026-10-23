@@ -12,9 +12,26 @@ use crate::catalog;
 use crate::memory::ImageMemory;
 use crate::model::{Node, Preview, ViewerLayer};
 
+/// Ensure the graph has exactly one Output node, creating one if missing and
+/// removing any extras (dropping their wires).
+pub(crate) fn ensure_output_node(snarl: &mut Snarl<Node>) {
+    let output_ids: Vec<NodeId> = snarl
+        .node_ids()
+        .filter(|(_, node)| node.viewer_node().is_some())
+        .map(|(id, _)| id)
+        .collect();
+    if output_ids.is_empty() {
+        snarl.insert_node(egui::pos2(400.0, 200.0), Node::viewer());
+        return;
+    }
+    for id in output_ids.iter().skip(1) {
+        snarl.remove_node(*id);
+    }
+}
+
 /// Longest edge of the GPU preview texture. Full-resolution pixels stay in
 /// CPU memory for processing; uploading them all would only waste VRAM.
-pub(crate) const PREVIEW_MAX_EDGE: u32 = 250;
+pub(crate) const PREVIEW_MAX_EDGE: u32 = 200;
 
 pub(crate) fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
     let longest = width.max(height);

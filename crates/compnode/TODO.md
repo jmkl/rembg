@@ -215,23 +215,23 @@ Most of the UI work below depends on them.
 
 ### Node library
 
-- [ ] **Route** — headerless pass-through image, one input, one output, only one
+- [x] **Route** — headerless pass-through image, one input, one output, only one
       outgoing link.
-- [ ] **Blend** — `base` + `blend` inputs, 16 blend modes, opacity.
-- [ ] **Mask** — `image` + `mask` inputs, dark/light-is-opaque mode, strength.
-- [ ] **Group** — multi-input stack; stored as `mix` for saved-graph
+- [x] **Blend** — `base` + `blend` inputs, 16 blend modes, opacity.
+- [x] **Mask** — `image` + `mask` inputs, dark/light-is-opaque mode, strength.
+- [x] **Group** — multi-input stack; stored as `mix` for saved-graph
       compatibility.
-- [ ] **Hue / Saturation** — hue, saturation, brightness.
-- [ ] **Curves** — RGB/R/G/B channel curves, reset, add/drag/right-click
+- [x] **Hue / Saturation** — hue, saturation, brightness.
+- [x] **Curves** — RGB/R/G/B channel curves, reset, add/drag/right-click
       remove points, monotone interpolation and LUT evaluation.
-- [ ] **Exposure** — EV, offset, gamma.
-- [ ] **Color Balance** — shadows/midtones/highlights, cyan/red,
+- [x] **Exposure** — EV, offset, gamma.
+- [x] **Color Balance** — shadows/midtones/highlights, cyan/red,
       magenta/green, yellow/blue, preserve luminosity.
-- [ ] **Gradient Map** — shadow/mid/highlight colours, midpoint, reverse.
-- [ ] **Invert** — amount.
-- [ ] **Gradient** — linear/radial/solid, two colours, angle, colour
+- [x] **Gradient Map** — shadow/mid/highlight colours, midpoint, reverse.
+- [x] **Invert** — amount.
+- [x] **Gradient** — linear/radial/solid, two colours, angle, colour
       positions, output width/height.
-- [ ] **Noise Texture** — fBM/multifractal/ridged, scale, detail, roughness,
+- [x] **Noise Texture** — fBM/multifractal/ridged, scale, detail, roughness,
       lacunarity, distortion, seed.
 
 Done when every frontend node type appears in the add menu, has its expected

@@ -126,6 +126,8 @@ impl CompNodeApp {
                 }
                 Err(err) => eprintln!("compnode: could not restore autosave: {err}"),
             }
+        } else {
+            crate::graph::ensure_output_node(&mut app.snarl);
         }
 
         app.last_autosave = Some(app.snapshot());
@@ -668,6 +670,7 @@ impl CompNodeApp {
     /// Start a fresh, unsaved graph.
     fn clear(&mut self) {
         self.snarl = Snarl::default();
+        crate::graph::ensure_output_node(&mut self.snarl);
         self.editor.reset_view();
         self.session_path = None;
     }
@@ -964,13 +967,17 @@ impl App for CompNodeApp {
             self.images_need_load = false;
         }
 
+        // Evaluate filter nodes (cached by signature) before the viewer is
+        // refreshed so it can pick up the new preview textures.
+        let filters_changed = crate::eval::ensure_all(&mut self.snarl, &ctx);
+
         let viewers: Vec<NodeId> = self
             .snarl
             .node_ids()
             .filter(|(_, node)| node.viewer_node().is_some())
             .map(|(id, _)| id)
             .collect();
-        if should_refresh_images || has_edit_activity || self.autosave_due.is_some() {
+        if should_refresh_images || has_edit_activity || self.autosave_due.is_some() || filters_changed {
             for id in &viewers {
                 refresh_viewer(&mut self.snarl, *id, &ctx, &mut self.editor.assets);
             }
@@ -1104,6 +1111,7 @@ impl App for CompNodeApp {
                                     String,
                                     Option<egui::TextureHandle>,
                                     Option<PathBuf>,
+                                    (egui::Vec2, egui::Vec2, f32),
                                 )> = self
                                     .snarl
                                     .node_ids()
@@ -1118,6 +1126,7 @@ impl App for CompNodeApp {
                                             l.source_name.clone(),
                                             l.texture.clone(),
                                             l.source_path.clone(),
+                                            (l.center, l.size, l.angle),
                                         )
                                     })
                                     .collect();

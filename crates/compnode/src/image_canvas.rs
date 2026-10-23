@@ -374,9 +374,9 @@ impl ImageCanvas {
     pub fn sync_layers(
         &mut self,
         ctx: &egui::Context,
-        layers: &[(NodeId, String, Option<egui::TextureHandle>, Option<PathBuf>)],
+        layers: &[(NodeId, String, Option<egui::TextureHandle>, Option<PathBuf>, (egui::Vec2, egui::Vec2, f32))],
     ) {
-        let in_use: HashSet<PathBuf> = layers.iter().filter_map(|(_, _, _, p)| p.clone()).collect();
+        let in_use: HashSet<PathBuf> = layers.iter().filter_map(|(_, _, _, p, _)| p.clone()).collect();
 
         self.cache.forget_unused_failures(&in_use);
         self.in_use = in_use;
@@ -407,17 +407,49 @@ impl ImageCanvas {
         }
 
         let canvas_size = self.canvas_size;
-        for (source_id, source_name, preview, path) in layers {
+        for (source_id, source_name, preview, path, saved) in layers {
             // Ask the cache first: hit = already a CPU image + texture.
             let cached = path
                 .as_deref()
                 .and_then(|p| self.cache.get_or_load(ctx, p))
                 .map(|c| (c.texture.clone(), c.dims));
 
+            // Prefer the provided preview when it differs from the cached
+            // source image (e.g. a filter result), so the displayed layer
+            // matches the node instead of reverting to the original image.
+            let (display_tex, display_dims) = if let Some(p) = preview.clone() {
+                if let Some((ct, _)) = &cached {
+                    if p.id() != ct.id() {
+                        (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
+                    } else {
+                        cached.clone().unwrap()
+                    }
+                } else {
+                    (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
+                }
+            } else if let Some(c) = cached.clone() {
+                c
+            } else {
+                continue;
+            };
+
             let idx = match self.items.iter().position(|i| i.id == *source_id) {
                 Some(i) => i,
                 None => {
-                    let snap = path.as_ref().and_then(|p| self.remembered.remove(p));
+                    let remembered_snap = path.as_ref().and_then(|p| self.remembered.remove(p));
+                    let saved_snap = if remembered_snap.is_none()
+                        && saved.1.x > 0.0
+                        && saved.1.y > 0.0
+                    {
+                        Some(Snap {
+                            center: saved.0,
+                            size: saved.1,
+                            angle: saved.2,
+                        })
+                    } else {
+                        None
+                    };
+                    let snap = remembered_snap.or(saved_snap);
                     self.items.push(Item {
                         id: *source_id,
                         name: format!("{} #{}", source_name, source_id.0),
@@ -441,40 +473,22 @@ impl ImageCanvas {
                 it.tex_is_full = false;
             }
 
-            match cached {
-                Some((tex, dims)) => {
-                    if it.fit_pending {
-                        it.size = fit_inside(dims, canvas_size);
-                        it.fit_pending = false;
-                    } else if !it.tex_is_full {
-                        // Placeholder -> real image: keep the user's width,
-                        // correct the aspect only if it differs.
-                        let aspect = dims.0 as f32 / dims.1.max(1) as f32;
-                        if (it.size.x / it.size.y.max(1.0) - aspect).abs() > 0.01 {
-                            it.size.y = it.size.x / aspect.max(0.01);
-                        }
-                    }
-                    if it.tex.as_ref().map(|t| t.id()) != Some(tex.id()) {
-                        it.tex = Some(tex);
-                    }
-                    it.tex_is_full = true;
-                }
-                None => {
-                    // Still loading (or failed): show the node preview.
-                    if !it.tex_is_full {
-                        if let Some(prev) = preview {
-                            if it.tex.as_ref().map(|t| t.id()) != Some(prev.id()) {
-                                it.tex = Some(prev.clone());
-                            }
-                            if it.fit_pending {
-                                let [w, h] = prev.size();
-                                it.size = fit_inside((w as u32, h as u32), canvas_size);
-                                // stays pending: refit with real dims later
-                            }
-                        }
-                    }
+            if it.tex.as_ref().map(|t| t.id()) != Some(display_tex.id()) {
+                it.tex = Some(display_tex.clone());
+            }
+
+            if it.fit_pending {
+                it.size = fit_inside(display_dims, canvas_size);
+                it.fit_pending = false;
+            } else if !it.tex_is_full {
+                // Placeholder -> real image: keep the user's width,
+                // correct the aspect only if it differs.
+                let aspect = display_dims.0 as f32 / display_dims.1.max(1) as f32;
+                if (it.size.x / it.size.y.max(1.0) - aspect).abs() > 0.01 {
+                    it.size.y = it.size.x / aspect.max(0.01);
                 }
             }
+            it.tex_is_full = true;
         }
 
         if self.selected.is_none()

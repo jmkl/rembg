@@ -24,6 +24,9 @@ pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, po
 
     let mut shown = 0;
     for spec in NODE_SPECS {
+        if spec.hidden {
+            continue;
+        }
         if !spec.matches(filter) {
             continue;
         }
@@ -32,7 +35,7 @@ pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, po
             .add(MenuItem::new(spec.title).icon(spec.icon.to_string()))
             .clicked()
         {
-            (spec.create)(snarl, pos);
+            (spec.create)(snarl, pos, spec.kind);
             ui.close();
         }
     }

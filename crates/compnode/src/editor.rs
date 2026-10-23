@@ -412,7 +412,13 @@ impl SnarlViewer<Node> for GraphEditor {
                 .with_stroke(Stroke::new(1.0, pal::SOCKET_STROKE))
                 .with_wire_color(pal::SOCKET);
         }
-        socket(ui, "")
+        let spec = catalog::spec(snarl[pin.id.node].kind());
+        let label = spec
+            .sockets
+            .get(pin.id.input)
+            .map(|socket| socket.label)
+            .unwrap_or("");
+        socket(ui, label)
     }
 
     fn show_output(

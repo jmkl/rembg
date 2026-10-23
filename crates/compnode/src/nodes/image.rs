@@ -6,12 +6,12 @@ use rfd::FileDialog;
 
 use crate::editor::GraphEditor;
 use crate::graph::{effective_dimensions, effective_texture, invalidate_downstream, upstream};
-use crate::model::Node;
+use crate::model::{Kind, Node};
 use crate::nodes::IMAGE_EXTENSIONS;
 use crate::style::pal;
 use crate::widgets::{error_line, preview};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2) {
+pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::image(""));
 }
 

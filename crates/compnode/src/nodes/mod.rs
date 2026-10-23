@@ -7,6 +7,7 @@
 //! Register new modules in [`crate::catalog`], not in a central match.
 
 pub(crate) mod face_restore;
+pub(crate) mod filter;
 pub(crate) mod image;
 pub(crate) mod remove_bg;
 pub(crate) mod viewer;

@@ -12,14 +12,187 @@ use std::time::Duration;
 use egui::TextureHandle;
 use egui_snarl::NodeId;
 use image::RgbaImage;
+use serde_json::Value;
+
+use crate::params::{self, Params};
 
 /// Stable identity for every node kind. Used by the catalog and session layer.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Kind {
     Image,
     RemoveBg,
     FaceRestore,
     Output,
+    Filter(FilterKind),
+}
+
+/// Every CPU-only filter/generator node type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum FilterKind {
+    Route,
+    Group,
+    Blend,
+    Mask,
+    Hsv,
+    Curves,
+    Exposure,
+    ColorBalance,
+    GradientMap,
+    Invert,
+    Gradient,
+    Noise,
+}
+
+impl FilterKind {
+    /// Stable string used in session files.
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Route => "route",
+            Self::Group => "mix",
+            Self::Blend => "blend",
+            Self::Mask => "mask",
+            Self::Hsv => "hsv",
+            Self::Curves => "curves",
+            Self::Exposure => "exposure",
+            Self::ColorBalance => "colorbalance",
+            Self::GradientMap => "gradientmap",
+            Self::Invert => "invert",
+            Self::Gradient => "gradient",
+            Self::Noise => "noise",
+        }
+    }
+
+    pub(crate) fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "route" => Self::Route,
+            // "mix" is the stored name for Group, kept for saved-graph parity.
+            "mix" | "group" => Self::Group,
+            "blend" => Self::Blend,
+            "mask" => Self::Mask,
+            "hsv" => Self::Hsv,
+            "curves" => Self::Curves,
+            "exposure" => Self::Exposure,
+            "colorbalance" => Self::ColorBalance,
+            "gradientmap" => Self::GradientMap,
+            "invert" => Self::Invert,
+            "gradient" => Self::Gradient,
+            "noise" => Self::Noise,
+            _ => return None,
+        })
+    }
+
+    /// Default parameters, mirroring `frontend/src/core/nodes.ts`.
+    pub(crate) fn defaults(self) -> Params {
+        let mut params = Params::new();
+        match self {
+            Self::Route | Self::Group => {}
+            Self::Blend => {
+                params::set_string(&mut params, "mode", "source-over");
+                params::set_f32(&mut params, "opacity", 100.0);
+            }
+            Self::Mask => {
+                params::set_string(&mut params, "invert", "dark");
+                params::set_f32(&mut params, "strength", 100.0);
+            }
+            Self::Hsv => {
+                params::set_f32(&mut params, "hue", 0.0);
+                params::set_f32(&mut params, "sat", 100.0);
+                params::set_f32(&mut params, "val", 100.0);
+            }
+            Self::Curves => {
+                params::set_string(&mut params, "channel", "rgb");
+                let mut curves = Params::new();
+                for channel in ["rgb", "red", "green", "blue"] {
+                    curves.insert(channel.to_owned(), params::identity_curve_value());
+                }
+                params.insert("curves".to_owned(), Value::Object(curves));
+            }
+            Self::Exposure => {
+                params::set_f32(&mut params, "ev", 0.0);
+                params::set_f32(&mut params, "offset", 0.0);
+                params::set_f32(&mut params, "gamma", 1.0);
+            }
+            Self::ColorBalance => {
+                params::set_string(&mut params, "range", "midtones");
+                params::set_f32(&mut params, "cyanRed", 0.0);
+                params::set_f32(&mut params, "magentaGreen", 0.0);
+                params::set_f32(&mut params, "yellowBlue", 0.0);
+                params::set_string(&mut params, "preserve", "yes");
+            }
+            Self::GradientMap => {
+                params::set_string(&mut params, "color1", "#000000");
+                params::set_string(&mut params, "color2", "#808080");
+                params::set_string(&mut params, "color3", "#ffffff");
+                params::set_f32(&mut params, "midpoint", 50.0);
+                params::set_string(&mut params, "reverse", "no");
+            }
+            Self::Invert => params::set_f32(&mut params, "amount", 100.0),
+            Self::Gradient => {
+                params::set_string(&mut params, "mode", "linear");
+                params::set_string(&mut params, "color1", "#000000");
+                params::set_string(&mut params, "color2", "#ffffff");
+                params::set_f32(&mut params, "angle", 90.0);
+                params::set_f32(&mut params, "color1Position", -200.0);
+                params::set_f32(&mut params, "color2Position", 200.0);
+                params::set_u32(&mut params, "width", 1280);
+                params::set_u32(&mut params, "height", 720);
+            }
+            Self::Noise => {
+                params::set_string(&mut params, "kind", "fbm");
+                params::set_f32(&mut params, "scale", 5.0);
+                params::set_f32(&mut params, "detail", 4.0);
+                params::set_f32(&mut params, "roughness", 0.5);
+                params::set_f32(&mut params, "lacunarity", 2.0);
+                params::set_f32(&mut params, "distortion", 0.0);
+                params::set_f32(&mut params, "seed", 0.0);
+            }
+        }
+        params
+    }
+}
+
+/// A generic CPU filter/generator node.
+#[derive(Clone)]
+pub(crate) struct FilterNode {
+    pub kind: FilterKind,
+    pub params: Params,
+    /// Cached evaluated image and its preview texture (at most `eval::MAX_EDGE`
+    /// on the longest side).
+    pub preview: Preview,
+    /// Signature the cached preview was produced from. `None` forces a
+    /// re-evaluation on the next frame.
+    pub signature: Option<u64>,
+    /// Whether to render the preview image in the node body.
+    pub preview_enabled: bool,
+}
+
+impl FilterNode {
+    pub(crate) fn new(kind: FilterKind) -> Self {
+        Self {
+            kind,
+            params: kind.defaults(),
+            preview: Preview::default(),
+            signature: None,
+            preview_enabled: true,
+        }
+    }
+
+    /// Restore a saved node, filling any newly added parameter with its default.
+    pub(crate) fn restore(kind: FilterKind, stored: Option<Params>) -> Self {
+        let mut params = kind.defaults();
+        if let Some(stored) = stored {
+            for (key, value) in stored {
+                params.insert(key, value);
+            }
+        }
+        Self {
+            kind,
+            params,
+            preview: Preview::default(),
+            signature: None,
+            preview_enabled: true,
+        }
+    }
 }
 
 /// Image preview shared by source and processed nodes.
@@ -200,6 +373,7 @@ pub(crate) enum Node {
     RemoveBg(Process),
     FaceRestore(FaceRestoreNode),
     Output(ViewerNode),
+    Filter(FilterNode),
 }
 
 impl Node {
@@ -219,12 +393,39 @@ impl Node {
         Self::Output(ViewerNode::default())
     }
 
+    pub(crate) fn new_filter(kind: FilterKind) -> Self {
+        Self::Filter(FilterNode::new(kind))
+    }
+
     pub(crate) fn kind(&self) -> Kind {
         match self {
             Self::Image(_) => Kind::Image,
             Self::RemoveBg(_) => Kind::RemoveBg,
             Self::FaceRestore(_) => Kind::FaceRestore,
             Self::Output(_) => Kind::Output,
+            Self::Filter(node) => Kind::Filter(node.kind),
+        }
+    }
+
+    pub(crate) fn filter(&self) -> Option<&FilterNode> {
+        self.filter_node()
+    }
+
+    pub(crate) fn filter_mut(&mut self) -> Option<&mut FilterNode> {
+        self.filter_node_mut()
+    }
+
+    pub(crate) fn filter_node(&self) -> Option<&FilterNode> {
+        match self {
+            Self::Filter(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn filter_node_mut(&mut self) -> Option<&mut FilterNode> {
+        match self {
+            Self::Filter(node) => Some(node),
+            _ => None,
         }
     }
 
@@ -297,6 +498,7 @@ impl Node {
                 .layers
                 .last()
                 .and_then(|layer| layer.texture.as_ref()),
+            Self::Filter(node) => node.preview.texture.as_ref(),
         }
     }
 
@@ -308,6 +510,7 @@ impl Node {
                 process.preview_enabled
             }
             Self::Output(viewer) => viewer.preview_enabled,
+            Self::Filter(node) => node.preview_enabled,
         }
     }
 
@@ -318,6 +521,7 @@ impl Node {
                 process.preview_enabled = enabled
             }
             Self::Output(viewer) => viewer.preview_enabled = enabled,
+            Self::Filter(node) => node.preview_enabled = enabled,
         }
     }
 
@@ -328,6 +532,7 @@ impl Node {
                 process.preview.cpu.as_ref()
             }
             Self::Output(_) => None,
+            Self::Filter(node) => node.preview.cpu.as_ref(),
         }
     }
 
@@ -343,7 +548,7 @@ impl Node {
             Self::Image(node) if !node.path.is_empty() => Some(Path::new(&node.path)),
             Self::RemoveBg(process) => process.output_path.as_deref(),
             Self::FaceRestore(node) => node.process.output_path.as_deref(),
-            Self::Image(_) | Self::Output(_) => None,
+            Self::Image(_) | Self::Output(_) | Self::Filter(_) => None,
         }
     }
 
@@ -358,6 +563,7 @@ impl Node {
             Self::RemoveBg(process) => Some(&mut process.preview),
             Self::FaceRestore(node) => Some(&mut node.process.preview),
             Self::Output(_) => None,
+            Self::Filter(node) => Some(&mut node.preview),
         }
     }
 
@@ -417,6 +623,7 @@ impl Node {
                 process.preview.error.as_deref()
             }
             Self::Output(_) => None,
+            Self::Filter(node) => node.preview.error.as_deref(),
         }
     }
 
@@ -427,6 +634,7 @@ impl Node {
                 process.preview.error = Some(message.into());
             }
             Self::Output(_) => {}
+            Self::Filter(node) => node.preview.error = Some(message.into()),
         }
     }
 
@@ -474,6 +682,12 @@ impl Node {
                 for layer in &mut viewer.layers {
                     layer.texture = None;
                 }
+                true
+            }
+            // Filters keep their previous preview until `eval` recomputes the
+            // new signature, avoiding a one-frame flash while dragging.
+            Self::Filter(node) => {
+                node.signature = None;
                 true
             }
         }
