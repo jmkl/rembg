@@ -547,9 +547,17 @@ impl SnarlViewer<Node> for GraphEditor {
             // Spacer to push checkbox to the right
             ui.add_space(ui.available_width().max(0.0));
 
-            let mut enabled = snarl[node].preview_enabled();
-            if ui.add(elegance::Checkbox::new(&mut enabled, "")).changed() {
-                snarl[node].set_preview_enabled(enabled);
+            let enabled = snarl[node].preview_enabled();
+            let glyph = if enabled { elegance::glyphs::EYE } else { elegance::glyphs::EYE_OFF };
+            let response = ui.add(
+                egui::Button::new(RichText::new(glyph.to_string()).size(16.0).color(pal::HEADER_TEXT))
+                    .frame(false)
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE)
+                    .sense(egui::Sense::click()),
+            );
+            if response.clicked() {
+                snarl[node].set_preview_enabled(!enabled);
             }
         });
     }
