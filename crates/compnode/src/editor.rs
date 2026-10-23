@@ -498,40 +498,34 @@ impl SnarlViewer<Node> for GraphEditor {
         let spec = catalog::spec(snarl[node].kind());
         let node_width = spec.body_width;
 
-        // Snarl's built-in collapse icon is disabled in `style::snarl_style`;
-        // draw the elegance chevron instead.
-        let (rect, response) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::click());
-        let response = response.on_hover_text(if open { "Collapse" } else { "Expand" });
-        let glyph = if open {
-            glyphs::CHEVRON_DOWN
-        } else {
-            glyphs::CHEVRON_RIGHT
-        };
-        let color = if response.hovered() {
-            pal::HEADER_TEXT
-        } else {
-            pal::HEADER_TEXT.gamma_multiply(0.8)
-        };
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            glyph,
-            FontId::proportional(13.0),
-            color,
-        );
-        if response.clicked() {
-            snarl.open_node(node, !open);
-        }
-
         // Constrain header width to node width
         ui.set_min_width(node_width);
         ui.set_max_width(node_width);
 
-        // Title centered, checkbox on the right
+        // Header layout: collapse icon | title (centered) | preview toggle
         ui.horizontal(|ui| {
             ui.set_min_width(node_width);
             ui.set_max_width(node_width);
 
+            // Collapse/expand chevron
+            let open = snarl.get_node_info(node).is_none_or(|info| info.open);
+            let chevron = if open {
+                elegance::glyphs::CHEVRON_DOWN
+            } else {
+                elegance::glyphs::CHEVRON_RIGHT
+            };
+            let chevron_response = ui.add(
+                egui::Button::new(RichText::new(chevron.to_string()).size(13.0).color(pal::HEADER_TEXT))
+                    .frame(false)
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE)
+                    .sense(egui::Sense::click()),
+            );
+            if chevron_response.on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+                snarl.open_node(node, !open);
+            }
+
+            // Title (centered, takes remaining space)
             let title = catalog::spec(snarl[node].kind()).title;
             ui.add(
                 egui::Label::new(
@@ -544,13 +538,14 @@ impl SnarlViewer<Node> for GraphEditor {
                 .selectable(false),
             );
 
-            // Spacer to push checkbox to the right
+            // Spacer to push preview toggle to the right
             ui.add_space(ui.available_width().max(0.0));
 
+            // Preview toggle (EYE / EYE_OFF)
             let enabled = snarl[node].preview_enabled();
             let glyph = if enabled { elegance::glyphs::EYE } else { elegance::glyphs::EYE_OFF };
             let response = ui.add(
-                egui::Button::new(RichText::new(glyph.to_string()).size(16.0).color(pal::HEADER_TEXT))
+                egui::Button::new(RichText::new(elegance::glyphs::EYE.to_string()).size(16.0).color(pal::HEADER_TEXT))
                     .frame(false)
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::NONE)
