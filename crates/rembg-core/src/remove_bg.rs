@@ -34,7 +34,8 @@ impl RemoveBg {
 
         let (orig_w, orig_h) = (img.width(), img.height());
 
-        // 1. Resize to model input size (1024x1024)
+        // 1. Resize to model input size (1024x1024) - no max-width clamp
+        // (RMBG-1.4 processes full-resolution images at fixed 1024x1024 input)
         let resized = img
             .resize_exact(
                 config::SIZE_BIREFNET,
