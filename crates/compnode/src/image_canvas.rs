@@ -178,6 +178,11 @@ pub struct ImageCanvas {
     /// same file comes back.
     remembered: HashMap<PathBuf, Snap>,
     selected: Option<NodeId>,
+    /// Set when the user explicitly cleared the selection (right-click in the
+    /// panel, or a click on empty canvas). Keeps the idle auto-select from
+    /// re-selecting a layer and showing the gizmos again. Cleared as soon as a
+    /// layer row or a canvas image is selected.
+    selection_suppressed: bool,
     drag: Drag,
     list_drag: Option<NodeId>,
     /// Last time the user interacted with the canvas (drag/scale/rotate/reorder).
@@ -207,6 +212,7 @@ impl Default for ImageCanvas {
             cache: LayerCache::default(),
             remembered: HashMap::new(),
             selected: None,
+            selection_suppressed: false,
             drag: Drag::None,
             list_drag: None,
             last_activity: Instant::now(),
@@ -248,6 +254,21 @@ impl ImageCanvas {
 
     pub fn selected(&self) -> Option<NodeId> {
         self.selected
+    }
+
+    /// Clear the selection and hide the gizmos. The idle auto-select will not
+    /// bring them back; selecting a layer row or clicking an image in the
+    /// canvas does.
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+        self.selection_suppressed = true;
+        self.drag = Drag::None;
+        self.last_activity = Instant::now();
+    }
+
+    fn select(&mut self, id: NodeId) {
+        self.selected = Some(id);
+        self.selection_suppressed = false;
     }
 
     /// Current logical canvas size.
@@ -456,7 +477,10 @@ impl ImageCanvas {
             }
         }
 
-        if self.selected.is_none() && self.last_activity.elapsed().as_secs_f32() >= 2.0 {
+        if self.selected.is_none()
+            && !self.selection_suppressed
+            && self.last_activity.elapsed().as_secs_f32() >= 2.0
+        {
             self.selected = self.items.last().map(|i| i.id);
         }
     }
@@ -480,6 +504,18 @@ impl ImageCanvas {
     // ---------------- the widget ----------------
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        // Right-click anywhere in the panel (canvas, layer list or empty
+        // space) clears the selection and hides the gizmos.
+        let panel_rect = ui.max_rect();
+        if ui.input(|i| {
+            i.pointer.secondary_clicked()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| panel_rect.contains(p))
+        }) {
+            self.clear_selection();
+        }
+
         // --- canvas size inputs ---
         ui.horizontal(|ui| {
             ui.label("Canvas W:");
@@ -539,10 +575,9 @@ impl ImageCanvas {
             self.drag = Drag::Move {
                 grab: p - it.center,
             };
-            self.selected = Some(it.id);
+            self.select(it.id);
         } else {
-            self.selected = None;
-            self.drag = Drag::None;
+            self.clear_selection();
         }
     }
 
@@ -787,7 +822,7 @@ impl ImageCanvas {
             rows.push(rect);
 
             if resp.clicked() || resp.drag_started() {
-                self.selected = Some(id);
+                self.select(id);
             }
             if resp.dragged() {
                 self.list_drag = Some(id);
