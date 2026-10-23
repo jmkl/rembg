@@ -279,7 +279,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         outputs: 1,
         body_width: BODY_W,
         multi_input: true,
-        hidden: true,
+        hidden: false,
         fields: NO_FIELDS,
         sockets: &[SocketSpec { label: "Layers", multi: true }],
         create: nodes::filter::create,
