@@ -306,10 +306,18 @@ pub(crate) fn refresh_viewer(
     if sources.len() == existing_sources.len()
         && sources.iter().all(|s| existing_sources.contains(s))
     {
-        for (source, _, _, new_tex) in &layer_data {
+        for (source, source_name, source_path, new_tex) in &layer_data {
             if let Some(layer) = viewer_layers.iter_mut().find(|l| l.source == *source) {
                 if layer.texture != *new_tex {
                     layer.texture = new_tex.clone();
+                }
+                // A processing node that just finished has a new output file;
+                // without this the sidebar canvas keeps loading the stale one.
+                if layer.source_path != *source_path {
+                    layer.source_path = source_path.clone();
+                }
+                if layer.source_name != *source_name {
+                    layer.source_name = source_name.clone();
                 }
             }
         }
