@@ -20,7 +20,8 @@ use image::RgbaImage;
 const CPU_BUDGET: usize = 256 * 1024 * 1024;
 /// Longest edge of the GPU texture. Layers are drawn scaled to the canvas, so
 /// uploading the full bitmap of a huge photo is wasteful.
-const TEXTURE_MAX_EDGE: u32 = 2048;
+/// Increased to 4096 to accommodate RemoveBgV2 which removes the max-width clamp.
+const TEXTURE_MAX_EDGE: u32 = 4096;
 /// How often an entry's file is checked for modification.
 const STALE_CHECK_EVERY: Duration = Duration::from_millis(750);
 
