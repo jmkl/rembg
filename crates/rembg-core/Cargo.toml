@@ -8,3 +8,5 @@ image = "0.25"
 anyhow = "1"
 ort = { version = "2.0.0-rc.12", features = ["cuda"] }
 sha2 = "0.10"
+ndarray.workspace = true
+clap = { version = "4.5", features = ["derive"] }
