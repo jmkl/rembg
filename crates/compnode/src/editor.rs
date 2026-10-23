@@ -551,20 +551,17 @@ impl SnarlViewer<Node> for GraphEditor {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) -> impl SnarlPin + 'static {
-        // Output node uses a square input pin; all others use a circle.
-        if matches!(snarl[pin.id.node], Node::Output(_)) {
+        // Square pins for multi-input nodes (Group, Output) and nodes that receive layers
+        let spec = catalog::spec(snarl[pin.id.node].kind());
+        let is_multi = spec.multi_input;
+        // Remove label - connectors should not have labels
+        if is_multi {
             return PinInfo::square()
                 .with_fill(pal::SOCKET)
                 .with_stroke(Stroke::new(1.0, pal::SOCKET_STROKE))
                 .with_wire_color(pal::SOCKET);
         }
-        let spec = catalog::spec(snarl[pin.id.node].kind());
-        let label = spec
-            .sockets
-            .get(pin.id.input)
-            .map(|socket| socket.label)
-            .unwrap_or("");
-        socket(ui, label)
+        socket(ui, "")
     }
 
     fn show_output(

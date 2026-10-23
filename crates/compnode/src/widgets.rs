@@ -199,7 +199,9 @@ pub(crate) fn timing_line(ui: &mut egui::Ui, timing: Option<RunTiming>) {
 }
 
 pub(crate) fn socket(ui: &mut egui::Ui, label: &str) -> PinInfo {
-    ui.add(egui::Label::new(RichText::new(label).size(11.0).color(pal::MUTED)).selectable(false));
+    if !label.is_empty() {
+        ui.add(egui::Label::new(RichText::new(label).size(11.0).color(pal::MUTED)).selectable(false));
+    }
     PinInfo::circle()
         .with_fill(pal::SOCKET)
         .with_stroke(Stroke::new(1.0, pal::SOCKET_STROKE))

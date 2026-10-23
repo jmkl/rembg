@@ -67,10 +67,8 @@ fn install_fonts(ctx: &egui::Context) {
     ));
 }
 
-/// Default body width for image/processing nodes.
-pub(crate) const BODY_W: f32 = 196.0;
-/// Wider body for the multi-layer viewer.
-pub(crate) const VIEWER_W: f32 = 320.0;
+/// Uniform body width for all nodes.
+pub(crate) const NODE_W: f32 = 196.0;
 
 /// Install the elegance theme and app-wide egui spacing.
 pub(crate) fn install_theme(ctx: &egui::Context) {
