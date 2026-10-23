@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/rembg-core",
+  "crates/rembg-winit",
   "crates/compnode",
   "crates/wgpu-playground",
   "crates/cmd-craft",
@@ -9,12 +10,7 @@ members = [
 ]
 resolver = "2"
 
-[package]
-name = "rembg"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace.dependencies]
 image = "0.25"
 anyhow = "1"
 ort = { version = "2.0.0-rc.12", features = ["cuda"] }
@@ -29,3 +25,4 @@ ureq = "3"
 sha2 = "0.10"
 rembg-core = { path = "crates/rembg-core" }
 tiny_http = "0.12"
+ndarray = "0.17.2"
