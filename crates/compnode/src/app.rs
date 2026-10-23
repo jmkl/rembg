@@ -1206,6 +1206,7 @@ impl App for CompNodeApp {
                                     Option<egui::TextureHandle>,
                                     Option<PathBuf>,
                                     (egui::Vec2, egui::Vec2, f32),
+                                    bool,
                                 )> = if let Some(gid) = selected_group {
                                     self.snarl[gid].layers()
                                         .map(|ls| {
@@ -1217,6 +1218,7 @@ impl App for CompNodeApp {
                                                         l.texture.clone(),
                                                         l.source_path.clone(),
                                                         (l.center, l.size, l.angle),
+                                                        layer_uses_preview(&self.snarl, l.source),
                                                     )
                                                 })
                                                 .collect()
@@ -1237,6 +1239,7 @@ impl App for CompNodeApp {
                                                 l.texture.clone(),
                                                 l.source_path.clone(),
                                                 (l.center, l.size, l.angle),
+                                                layer_uses_preview(&self.snarl, l.source),
                                             )
                                         })
                                         .collect()
@@ -1368,3 +1371,11 @@ pub fn run() -> eframe::Result<()> {
         Box::new(|cx| Ok(Box::new(CompNodeApp::new(cx)))),
     )
 }
+
+/// True when a layer's node has no full-resolution output file of its own, so
+/// its low-res preview texture is the only correct content (plain filters).
+fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
+    matches!(snarl[source], crate::model::Node::Filter(_))
+        && snarl[source].output_path().is_none()
+}
+

@@ -374,9 +374,9 @@ impl ImageCanvas {
     pub fn sync_layers(
         &mut self,
         ctx: &egui::Context,
-        layers: &[(NodeId, String, Option<egui::TextureHandle>, Option<PathBuf>, (egui::Vec2, egui::Vec2, f32))],
+        layers: &[(NodeId, String, Option<egui::TextureHandle>, Option<PathBuf>, (egui::Vec2, egui::Vec2, f32), bool)],
     ) {
-        let in_use: HashSet<PathBuf> = layers.iter().filter_map(|(_, _, _, p, _)| p.clone()).collect();
+        let in_use: HashSet<PathBuf> = layers.iter().filter_map(|(_, _, _, p, _, _)| p.clone()).collect();
 
         self.cache.forget_unused_failures(&in_use);
         self.in_use = in_use;
@@ -407,28 +407,31 @@ impl ImageCanvas {
         }
 
         let canvas_size = self.canvas_size;
-        for (source_id, source_name, preview, path, saved) in layers {
+        for (source_id, source_name, preview, path, saved, use_preview) in layers {
+            let use_preview = *use_preview;
             // Ask the cache first: hit = already a CPU image + texture.
             let cached = path
                 .as_deref()
                 .and_then(|p| self.cache.get_or_load(ctx, p))
                 .map(|c| (c.texture.clone(), c.dims));
 
-            // Prefer the provided preview when it differs from the cached
-            // source image (e.g. a filter result), so the displayed layer
-            // matches the node instead of reverting to the original image.
-            let (display_tex, display_dims) = if let Some(p) = preview.clone() {
-                if let Some((ct, _)) = &cached {
-                    if p.id() != ct.id() {
-                        (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
-                    } else {
-                        cached.clone().unwrap()
-                    }
-                } else {
+            // Texture selection: the on-disk file is the highest-quality
+            // correct content *when it is the node's own output* (Image,
+            // Remove Background, Face Restore, or a rendered Group). For a
+            // plain filter without its own output the preview texture is the
+            // only correct content, so it wins even though it is low-res.
+            let (display_tex, display_dims) = if use_preview {
+                if let Some(p) = preview.clone() {
                     (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
+                } else if let Some(c) = cached.clone() {
+                    c
+                } else {
+                    continue;
                 }
             } else if let Some(c) = cached.clone() {
                 c
+            } else if let Some(p) = preview.clone() {
+                (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
             } else {
                 continue;
             };
