@@ -76,6 +76,8 @@ pub(crate) enum SessionNodeData {
         filter_kind: String,
         #[serde(default)]
         params: Value,
+        #[serde(default)]
+        layers: Vec<usize>,
     },
 }
 
@@ -186,6 +188,7 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
             Node::Filter(filter) => SessionNodeData::Filter {
                 filter_kind: filter.kind.id().to_owned(),
                 params: Value::Object(filter.params.clone()),
+                layers: filter.layers.iter().map(|l| l.source.0).collect(),
             },
         };
         nodes.push(SessionNode {
@@ -335,14 +338,19 @@ pub(crate) fn load(
                 viewer_layers = Some(layers);
                 Node::Output(ViewerNode::default())
             }
-            SessionNodeData::Filter { filter_kind, params } => {
+            SessionNodeData::Filter { filter_kind, params, layers } => {
                 let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
                     continue;
                 };
-                Node::Filter(FilterNode::restore(
+                let mut node = Node::Filter(FilterNode::restore(
                     filter_kind,
                     params.as_object().cloned(),
-                ))
+                ));
+                if let Some(filter) = node.filter_node_mut() {
+                    // transforms are not persisted; layers rebuilt by refresh_viewer
+                    let _ = layers;
+                }
+                node
             }
         };
 

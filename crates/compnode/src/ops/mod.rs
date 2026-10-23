@@ -4,7 +4,7 @@
 //! dependencies. Evaluation and caching live in [`crate::eval`].
 
 mod adjust;
-mod composite;
+pub(crate) mod composite;
 mod generate;
 
 use image::RgbaImage;
@@ -13,6 +13,8 @@ use crate::model::FilterKind;
 use crate::params::Params;
 
 pub(crate) use adjust::curve_lut;
+
+pub(crate) const EVAL_MAX_EDGE: u32 = 256;
 
 /// Evaluate one filter node.
 ///

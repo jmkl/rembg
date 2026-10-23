@@ -294,18 +294,20 @@ pub(crate) fn refresh_viewer(
         layer_data.push((*source, source_name, source_path, existing_tex));
     }
 
-    // Phase 3: Get the viewer node mutably and update layers.
-    let Some(viewer) = snarl[node].viewer_node_mut() else {
+    // Phase 3: Get the layers mutably and update.
+    let Some(layers) = snarl[node].layers_mut() else {
         return;
     };
+    // alias for minimal diff
+    let viewer_layers = layers;
 
     // If the set of sources hasn't changed, just update textures for existing layers.
-    let existing_sources: Vec<NodeId> = viewer.layers.iter().map(|l| l.source).collect();
+    let existing_sources: Vec<NodeId> = viewer_layers.iter().map(|l| l.source).collect();
     if sources.len() == existing_sources.len()
         && sources.iter().all(|s| existing_sources.contains(s))
     {
         for (source, _, _, new_tex) in &layer_data {
-            if let Some(layer) = viewer.layers.iter_mut().find(|l| l.source == *source) {
+            if let Some(layer) = viewer_layers.iter_mut().find(|l| l.source == *source) {
                 if layer.texture != *new_tex {
                     layer.texture = new_tex.clone();
                 }
@@ -319,8 +321,7 @@ pub(crate) fn refresh_viewer(
     for (source, source_name, source_path, _) in &layer_data {
         let source = *source;
         // Reuse existing layer data if we already had this source.
-        let mut layer = viewer
-            .layers
+        let mut layer = viewer_layers
             .iter()
             .find(|l| l.source == source)
             .cloned()
@@ -346,7 +347,7 @@ pub(crate) fn refresh_viewer(
         new_layers.push(layer);
     }
 
-    viewer.layers = new_layers;
+    *viewer_layers = new_layers;
 }
 
 /// Dimensions of the image a node effectively outputs.

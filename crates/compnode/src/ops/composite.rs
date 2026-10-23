@@ -2,6 +2,7 @@
 
 use image::{RgbaImage, imageops::FilterType};
 
+use crate::model::ViewerLayer;
 use crate::params::{self, Params};
 
 type Rgb = [f32; 3];
@@ -265,4 +266,88 @@ fn set_saturation(color: Rgb, sat: f32) -> Rgb {
     }
     out[min] = 0.0;
     out
+}
+
+
+/// Composite a set of viewer-style layers (with transforms) into a single
+/// bitmap. Used by the Group node.
+pub(crate) fn composite_layers(
+    layers: &[(ViewerLayer, image::RgbaImage)],
+    canvas: (u32, u32),
+) -> Result<RgbaImage, String> {
+    if layers.is_empty() {
+        return Err("No layers connected".to_owned());
+    }
+    let (cw, ch) = canvas;
+    let longest = cw.max(ch).max(1);
+    let scale = if longest > super::EVAL_MAX_EDGE {
+        super::EVAL_MAX_EDGE as f64 / longest as f64
+    } else {
+        1.0
+    };
+    let out_w = ((cw as f64 * scale).round() as u32).max(1);
+    let out_h = ((ch as f64 * scale).round() as u32).max(1);
+    let mut out = RgbaImage::new(out_w, out_h);
+
+    for (layer, src) in layers {
+        let cx = layer.center.x as f64 * scale;
+        let cy = layer.center.y as f64 * scale;
+        let sw = (layer.size.x as f64 * scale).max(1.0);
+        let sh = (layer.size.y as f64 * scale).max(1.0);
+        let (src_w, src_h) = (src.width() as f64, src.height() as f64);
+        let cos = layer.angle.cos() as f64;
+        let sin = layer.angle.sin() as f64;
+
+        for oy in 0..out_h {
+            for ox in 0..out_w {
+                let px = ox as f64 + 0.5;
+                let py = oy as f64 + 0.5;
+                let rx = px - cx;
+                let ry = py - cy;
+                // inverse rotate by -angle
+                let lx = rx * cos + ry * sin;
+                let ly = -rx * sin + ry * cos;
+                let sx = (lx + sw / 2.0) / sw * src_w;
+                let sy = (ly + sh / 2.0) / sh * src_h;
+                if sx < 0.0 || sy < 0.0 || sx >= src_w || sy >= src_h {
+                    continue;
+                }
+                let x0 = sx.floor() as u32;
+                let y0 = sy.floor() as u32;
+                let x1 = (x0 + 1).min(src.width().saturating_sub(1));
+                let y1 = (y0 + 1).min(src.height().saturating_sub(1));
+                let fx = sx - x0 as f64;
+                let fy = sy - y0 as f64;
+                let c00 = src.get_pixel(x0, y0);
+                let c10 = src.get_pixel(x1, y0);
+                let c01 = src.get_pixel(x0, y1);
+                let c11 = src.get_pixel(x1, y1);
+                let mut rgba = [0u8; 4];
+                for c in 0..4 {
+                    let v = c00[c] as f64 * (1.0 - fx) * (1.0 - fy)
+                        + c10[c] as f64 * fx * (1.0 - fy)
+                        + c01[c] as f64 * (1.0 - fx) * fy
+                        + c11[c] as f64 * fx * fy;
+                    rgba[c] = v.round().clamp(0.0, 255.0) as u8;
+                }
+                let sa = rgba[3] as f64 / 255.0;
+                let dst = out.get_pixel(ox, oy);
+                let da = dst[3] as f64 / 255.0;
+                let oa = sa + da * (1.0 - sa);
+                if oa <= 0.0 {
+                    continue;
+                }
+                let mut res = [0u8; 4];
+                for c in 0..3 {
+                    let sc = rgba[c] as f64 / 255.0;
+                    let dc = dst[c] as f64 / 255.0;
+                    let oc = (sa * sc + da * dc * (1.0 - sa)) / oa;
+                    res[c] = (oc * 255.0).round().clamp(0.0, 255.0) as u8;
+                }
+                res[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
+                *out.get_pixel_mut(ox, oy) = image::Rgba(res);
+            }
+        }
+    }
+    Ok(out)
 }

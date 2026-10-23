@@ -974,7 +974,13 @@ impl App for CompNodeApp {
         let viewers: Vec<NodeId> = self
             .snarl
             .node_ids()
-            .filter(|(_, node)| node.viewer_node().is_some())
+            .filter(|(_, node)| {
+                node.viewer_node().is_some()
+                    || node
+                        .filter_node()
+                        .map(|f| f.kind == crate::model::FilterKind::Group)
+                        .unwrap_or(false)
+            })
             .map(|(id, _)| id)
             .collect();
         if should_refresh_images || has_edit_activity || self.autosave_due.is_some() || filters_changed {
@@ -1084,11 +1090,31 @@ impl App for CompNodeApp {
                                         viewer.canvas_size = size;
                                     }
                                 }
+                                if let Some(filter) = node.filter_node_mut() {
+                                    if filter.kind == crate::model::FilterKind::Group {
+                                        let size = self.image_canvas.canvas_size();
+                                        if filter.canvas_size != size {
+                                            filter.canvas_size = size;
+                                        }
+                                    }
+                                }
                             }
 
                             // Only rebuild/sync layers when they changed (or a
                             // decode finished). Signature is allocation-free.
-                            let sig = ImageCanvas::layers_signature(
+                            let selected_group = self.editor.selected_nodes().first().copied().filter(|id| {
+                                self.snarl.get_node_info(*id).is_some()
+                                    && matches!(self.snarl[*id], crate::model::Node::Filter(ref f) if f.kind == crate::model::FilterKind::Group)
+                            });
+                            let layer_iter_sig = if let Some(gid) = selected_group {
+                                // only this group's layers
+                                self.snarl[gid]
+                                    .layers()
+                                    .into_iter()
+                                    .flatten()
+                                    .map(|l| (l.source, l.source_path.as_deref(), l.texture.as_ref().map(|t| t.id())))
+                                    .collect::<Vec<_>>()
+                            } else {
                                 self.snarl
                                     .node_ids()
                                     .filter_map(|(_, node)| match node {
@@ -1102,34 +1128,53 @@ impl App for CompNodeApp {
                                             l.source_path.as_deref(),
                                             l.texture.as_ref().map(|t| t.id()),
                                         )
-                                    }),
-                            );
+                                    })
+                                    .collect::<Vec<_>>()
+                            };
+                            let sig = ImageCanvas::layers_signature(layer_iter_sig.into_iter());
                             if self.image_canvas.begin_sync(&ctx, sig) {
-                                // Collect layers from viewer nodes (bottom-to-top).
+                                // Collect layers from the edited node (bottom-to-top).
                                 let layers: Vec<(
                                     egui_snarl::NodeId,
                                     String,
                                     Option<egui::TextureHandle>,
                                     Option<PathBuf>,
                                     (egui::Vec2, egui::Vec2, f32),
-                                )> = self
-                                    .snarl
-                                    .node_ids()
-                                    .filter_map(|(_, node)| match node {
-                                        crate::model::Node::Output(o) => Some(o),
-                                        _ => None,
-                                    })
-                                    .flat_map(|o| o.layers.iter())
-                                    .map(|l| {
-                                        (
-                                            l.source,
-                                            l.source_name.clone(),
-                                            l.texture.clone(),
-                                            l.source_path.clone(),
-                                            (l.center, l.size, l.angle),
-                                        )
-                                    })
-                                    .collect();
+                                )> = if let Some(gid) = selected_group {
+                                    self.snarl[gid].layers()
+                                        .map(|ls| {
+                                            ls.iter()
+                                                .map(|l| {
+                                                    (
+                                                        l.source,
+                                                        l.source_name.clone(),
+                                                        l.texture.clone(),
+                                                        l.source_path.clone(),
+                                                        (l.center, l.size, l.angle),
+                                                    )
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                } else {
+                                    self.snarl
+                                        .node_ids()
+                                        .filter_map(|(_, node)| match node {
+                                            crate::model::Node::Output(o) => Some(o),
+                                            _ => None,
+                                        })
+                                        .flat_map(|o| o.layers.iter())
+                                        .map(|l| {
+                                            (
+                                                l.source,
+                                                l.source_name.clone(),
+                                                l.texture.clone(),
+                                                l.source_path.clone(),
+                                                (l.center, l.size, l.angle),
+                                            )
+                                        })
+                                        .collect()
+                                };
                                 self.image_canvas.sync_layers(&ctx, &layers);
                             }
 
@@ -1148,9 +1193,24 @@ impl App for CompNodeApp {
                                 let canvas_layer_order: Vec<egui_snarl::NodeId> =
                                     self.image_canvas.layers().map(|l| l.id).collect();
 
-                                for (_, node) in self.snarl.nodes_ids_mut() {
-                                    if let crate::model::Node::Output(viewer) = node {
-                                        for layer in viewer.layers.iter_mut() {
+                                let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
+                                    self.snarl.get_node_info(*id).is_some()
+                                        && self.snarl[*id]
+                                            .filter_node()
+                                            .map(|f| f.kind == crate::model::FilterKind::Group)
+                                            .unwrap_or(false)
+                                });
+                                // fallback: single output node
+                                let target_id = edited_id.or_else(|| {
+                                    self.snarl
+                                        .node_ids()
+                                        .find(|(_, n)| n.viewer_node().is_some())
+                                        .map(|(id, _)| id)
+                                });
+
+                                if let Some(tid) = target_id {
+                                    if let Some(layers) = self.snarl[tid].layers_mut() {
+                                        for layer in layers.iter_mut() {
                                             if let Some((center, size, angle)) =
                                                 canvas_transforms.get(&layer.source)
                                             {
@@ -1159,7 +1219,7 @@ impl App for CompNodeApp {
                                                 layer.angle = *angle;
                                             }
                                         }
-                                        viewer.layers.sort_by_key(|l| {
+                                        layers.sort_by_key(|l| {
                                             canvas_layer_order
                                                 .iter()
                                                 .position(|id| *id == l.source)

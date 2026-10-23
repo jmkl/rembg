@@ -164,6 +164,9 @@ pub(crate) struct FilterNode {
     pub signature: Option<u64>,
     /// Whether to render the preview image in the node body.
     pub preview_enabled: bool,
+    /// Viewer-style layers used by the Group node. Empty for other filters.
+    pub layers: Vec<ViewerLayer>,
+    pub canvas_size: egui::Vec2,
 }
 
 impl FilterNode {
@@ -174,6 +177,8 @@ impl FilterNode {
             preview: Preview::default(),
             signature: None,
             preview_enabled: true,
+            layers: Vec::new(),
+            canvas_size: egui::Vec2::ZERO,
         }
     }
 
@@ -191,6 +196,8 @@ impl FilterNode {
             preview: Preview::default(),
             signature: None,
             preview_enabled: true,
+            layers: Vec::new(),
+            canvas_size: egui::Vec2::ZERO,
         }
     }
 }
@@ -426,6 +433,39 @@ impl Node {
         match self {
             Self::Filter(node) => Some(node),
             _ => None,
+        }
+    }
+
+    /// Layers for nodes that act as a viewer (Output, or Group).
+    pub(crate) fn layers(&self) -> Option<&[ViewerLayer]> {
+        match self {
+            Self::Output(v) => Some(&v.layers),
+            Self::Filter(f) if f.kind == FilterKind::Group => Some(&f.layers),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn layers_mut(&mut self) -> Option<&mut Vec<ViewerLayer>> {
+        match self {
+            Self::Output(v) => Some(&mut v.layers),
+            Self::Filter(f) if f.kind == FilterKind::Group => Some(&mut f.layers),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn canvas_size(&self) -> egui::Vec2 {
+        match self {
+            Self::Output(v) => v.canvas_size,
+            Self::Filter(f) if f.kind == FilterKind::Group => f.canvas_size,
+            _ => egui::Vec2::ZERO,
+        }
+    }
+
+    pub(crate) fn set_canvas_size(&mut self, size: egui::Vec2) {
+        match self {
+            Self::Output(v) => v.canvas_size = size,
+            Self::Filter(f) if f.kind == FilterKind::Group => f.canvas_size = size,
+            _ => {}
         }
     }
 

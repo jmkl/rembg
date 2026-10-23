@@ -12,7 +12,7 @@ use crate::model::{FilterKind, Kind, Node};
 use crate::ops;
 use crate::params::Params;
 
-pub(crate) const EVAL_MAX_EDGE: u32 = 256;
+
 
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
     let ids: Vec<NodeId> = snarl
@@ -53,6 +53,24 @@ fn ensure_filter(
     let result = if has_output && cached_signature == Some(signature) {
         stack.remove(&node);
         return false;
+    } else if kind == FilterKind::Group {
+        // Composite the group's layers with their transforms.
+        let canvas = {
+            let c = snarl[node].canvas_size();
+            if c.x > 0.0 && c.y > 0.0 {
+                (c.x as u32, c.y as u32)
+            } else {
+                canvas_size(snarl)
+            }
+        };
+        let layers = snarl[node].layers().map(|s| s.to_vec()).unwrap_or_default();
+        let mut resolved: Vec<(crate::model::ViewerLayer, RgbaImage)> = Vec::new();
+        for layer in &layers {
+            if let Some(img) = resolve_image(snarl, layer.source, ctx, stack) {
+                resolved.push((layer.clone(), img));
+            }
+        }
+        ops::composite::composite_layers(&resolved, canvas)
     } else {
         let inputs = resolve_inputs(snarl, node, kind, ctx, stack);
         let canvas = canvas_size(snarl);
@@ -98,6 +116,19 @@ fn filter_signature(
     }
     canvas_size(snarl).hash(&mut hasher);
 
+    if kind == FilterKind::Group {
+        if let Some(layers) = snarl[node].layers() {
+            for layer in layers {
+                layer.source.0.hash(&mut hasher);
+                node_signature(snarl, layer.source, stack).hash(&mut hasher);
+                layer.center.x.to_bits().hash(&mut hasher);
+                layer.center.y.to_bits().hash(&mut hasher);
+                layer.size.x.to_bits().hash(&mut hasher);
+                layer.size.y.to_bits().hash(&mut hasher);
+                layer.angle.to_bits().hash(&mut hasher);
+            }
+        }
+    }
     let spec = catalog::spec(Kind::Filter(kind));
     for input in 0..spec.sockets.len() {
         let remotes = snarl.in_pin(InPinId {
@@ -203,10 +234,10 @@ fn resolve_image(
 fn limit_image(image: &RgbaImage) -> RgbaImage {
     let (width, height) = image.dimensions();
     let longest = width.max(height);
-    if longest <= EVAL_MAX_EDGE {
+    if longest <= ops::EVAL_MAX_EDGE {
         return image.clone();
     }
-    let scale = EVAL_MAX_EDGE as f64 / longest as f64;
+    let scale = ops::EVAL_MAX_EDGE as f64 / longest as f64;
     let target_width = ((width as f64 * scale).round() as u32).max(1);
     let target_height = ((height as f64 * scale).round() as u32).max(1);
     image::imageops::resize(image, target_width, target_height, image::imageops::FilterType::Triangle)
