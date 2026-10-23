@@ -156,6 +156,69 @@ impl CompNodeApp {
         }
     }
 
+    /// Debounced scheduler for full-resolution Group renders. A render is
+    /// submitted once the node's eval signature has been stable for a short
+    /// time, so dragging sliders/transforms does not spam background jobs.
+    fn poll_group_renders(&mut self, ctx: &egui::Context) {
+        const GROUP_RENDER_DEBOUNCE: Duration = Duration::from_millis(600);
+        let group_ids: Vec<NodeId> = self
+            .snarl
+            .node_ids()
+            .filter(|(_, node)| {
+                node.filter_node()
+                    .map(|f| f.kind == crate::model::FilterKind::Group)
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| id)
+            .collect();
+
+        for id in group_ids {
+            let (job, render_state, signature, rendered) = {
+                let Some(filter) = self.snarl[id].filter_node() else {
+                    continue;
+                };
+                (filter.job, filter.render_state, filter.signature, filter.rendered)
+            };
+            if job.is_some() {
+                continue;
+            }
+            let Some(signature) = signature else {
+                // No eval output yet (missing inputs or error): reset debounce.
+                if let Some(filter) = self.snarl[id].filter_node_mut() {
+                    filter.render_state = None;
+                }
+                continue;
+            };
+            if rendered == Some(signature) {
+                continue;
+            }
+            match render_state {
+                Some(state) if state.signature == signature => {
+                    if state.since.elapsed() >= GROUP_RENDER_DEBOUNCE {
+                        // On failure (e.g. a layer without an on-disk source)
+                        // reset the debounce so we retry after another window.
+                        if !self
+                            .editor
+                            .start_group_render(&mut self.snarl, id, signature, ctx)
+                        {
+                            if let Some(filter) = self.snarl[id].filter_node_mut() {
+                                filter.render_state = None;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(filter) = self.snarl[id].filter_node_mut() {
+                        filter.render_state = Some(crate::model::RenderState {
+                            signature,
+                            since: Instant::now(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn poll_urls(&mut self, ctx: &egui::Context) {
         while let Ok(result) = self.url_rx.try_recv() {
             match result.result {
@@ -970,6 +1033,7 @@ impl App for CompNodeApp {
         // Evaluate filter nodes (cached by signature) before the viewer is
         // refreshed so it can pick up the new preview textures.
         let filters_changed = crate::eval::ensure_all(&mut self.snarl, &ctx);
+        self.poll_group_renders(&ctx);
 
         let viewers: Vec<NodeId> = self
             .snarl
@@ -1090,12 +1154,14 @@ impl App for CompNodeApp {
                                         viewer.canvas_size = size;
                                     }
                                 }
-                                if let Some(filter) = node.filter_node_mut() {
-                                    if filter.kind == crate::model::FilterKind::Group {
-                                        let size = self.image_canvas.canvas_size();
-                                        if filter.canvas_size != size {
-                                            filter.canvas_size = size;
-                                        }
+                                if node
+                                    .filter_node()
+                                    .map(|f| f.kind == crate::model::FilterKind::Group)
+                                    .unwrap_or(false)
+                                {
+                                    let size = self.image_canvas.canvas_size();
+                                    if node.canvas_size() != size {
+                                        node.set_canvas_size(size);
                                     }
                                 }
                             }

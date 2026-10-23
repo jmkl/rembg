@@ -270,20 +270,30 @@ fn set_saturation(color: Rgb, sat: f32) -> Rgb {
 
 
 /// Composite a set of viewer-style layers (with transforms) into a single
-/// bitmap. Used by the Group node.
+/// bitmap, downscaled so the longest edge stays within the eval cap. Used for
+/// the interactive Group preview.
 pub(crate) fn composite_layers(
     layers: &[(ViewerLayer, image::RgbaImage)],
     canvas: (u32, u32),
+) -> Result<RgbaImage, String> {
+    composite_layers_at(layers, canvas, Some(super::EVAL_MAX_EDGE as u64))
+}
+
+/// Composite layers at (up to) the given resolution. `max_edge = None` renders
+/// at full canvas resolution (used by the background disk render).
+pub(crate) fn composite_layers_at(
+    layers: &[(ViewerLayer, image::RgbaImage)],
+    canvas: (u32, u32),
+    max_edge: Option<u64>,
 ) -> Result<RgbaImage, String> {
     if layers.is_empty() {
         return Err("No layers connected".to_owned());
     }
     let (cw, ch) = canvas;
     let longest = cw.max(ch).max(1);
-    let scale = if longest > super::EVAL_MAX_EDGE {
-        super::EVAL_MAX_EDGE as f64 / longest as f64
-    } else {
-        1.0
+    let scale = match max_edge {
+        Some(cap) if longest as u64 > cap => cap as f64 / longest as f64,
+        _ => 1.0,
     };
     let out_w = ((cw as f64 * scale).round() as u32).max(1);
     let out_h = ((ch as f64 * scale).round() as u32).max(1);

@@ -71,6 +71,26 @@ pub(crate) fn cache_key(domain: &str, input: &image::RgbaImage, params: &[u8]) -
     format!("{:x}", hasher.finalize())
 }
 
+/// Content-addressed key for a multi-image composite (Group node): hashes every
+/// source image plus the serialized transform parameters.
+pub(crate) fn cache_key_layers(
+    domain: &str,
+    inputs: &[image::RgbaImage],
+    params: &[u8],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(params);
+    hasher.update((inputs.len() as u32).to_le_bytes());
+    for input in inputs {
+        hasher.update(input.width().to_le_bytes());
+        hasher.update(input.height().to_le_bytes());
+        hasher.update(input.as_raw());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 /// Fallback key when the worker could not persist its result: hash the output
 /// itself so a session save can still keep the image.
 pub(crate) fn output_cache_key(img: &image::RgbaImage) -> String {

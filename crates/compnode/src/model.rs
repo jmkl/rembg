@@ -167,6 +167,23 @@ pub(crate) struct FilterNode {
     /// Viewer-style layers used by the Group node. Empty for other filters.
     pub layers: Vec<ViewerLayer>,
     pub canvas_size: egui::Vec2,
+    /// Token of the in-flight full-resolution render, if any.
+    pub job: Option<u64>,
+    /// Absolute path to the persisted full-resolution composite on disk.
+    pub output_path: Option<PathBuf>,
+    /// Debounce state for scheduling the full-resolution render.
+    pub render_state: Option<RenderState>,
+    /// Eval signature whose full-resolution render has been claimed (in flight
+    /// or completed). Prevents re-submitting identical renders every frame.
+    pub rendered: Option<u64>,
+}
+
+/// Debounce bookkeeping for the Group full-resolution render: the eval
+/// signature that must stay stable and when it first became stable.
+#[derive(Clone, Copy)]
+pub(crate) struct RenderState {
+    pub signature: u64,
+    pub since: std::time::Instant,
 }
 
 impl FilterNode {
@@ -179,6 +196,10 @@ impl FilterNode {
             preview_enabled: true,
             layers: Vec::new(),
             canvas_size: egui::Vec2::ZERO,
+            job: None,
+            output_path: None,
+            render_state: None,
+            rendered: None,
         }
     }
 
@@ -198,6 +219,10 @@ impl FilterNode {
             preview_enabled: true,
             layers: Vec::new(),
             canvas_size: egui::Vec2::ZERO,
+            job: None,
+            output_path: None,
+            render_state: None,
+            rendered: None,
         }
     }
 }
@@ -588,7 +613,8 @@ impl Node {
             Self::Image(node) if !node.path.is_empty() => Some(Path::new(&node.path)),
             Self::RemoveBg(process) => process.output_path.as_deref(),
             Self::FaceRestore(node) => node.process.output_path.as_deref(),
-            Self::Image(_) | Self::Output(_) | Self::Filter(_) => None,
+            Self::Filter(node) => node.output_path.as_deref(),
+            Self::Image(_) | Self::Output(_) => None,
         }
     }
 
@@ -631,7 +657,10 @@ impl Node {
     }
 
     pub(crate) fn job(&self) -> Option<u64> {
-        self.process().and_then(|process| process.job)
+        match self {
+            Self::Filter(node) => node.job,
+            _ => self.process().and_then(|process| process.job),
+        }
     }
 
     pub(crate) fn timing(&self) -> Option<RunTiming> {
@@ -646,13 +675,19 @@ impl Node {
             Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.output_path.as_deref()
             }
+            Self::Filter(node) => node.output_path.as_deref(),
             _ => None,
         }
     }
 
     pub(crate) fn set_output_path(&mut self, path: Option<PathBuf>) {
-        if let Some(process) = self.process_mut() {
-            process.output_path = path;
+        match self {
+            Self::Filter(node) => node.output_path = path,
+            _ => {
+                if let Some(process) = self.process_mut() {
+                    process.output_path = path;
+                }
+            }
         }
     }
 
@@ -684,6 +719,21 @@ impl Node {
         token: u64,
         outcome: Result<(TextureHandle, JobOutput), String>,
     ) {
+        if let Self::Filter(node) = self {
+            if node.job != Some(token) {
+                return;
+            }
+            node.job = None;
+            node.render_state = None;
+            match outcome {
+                Ok((texture, output)) => {
+                    node.preview = Preview::with_image(texture, output.image);
+                    node.output_path = output.path;
+                }
+                Err(message) => node.preview.error = Some(message),
+            }
+            return;
+        }
         let Some(process) = self.process_mut() else {
             return;
         };
@@ -725,9 +775,15 @@ impl Node {
                 true
             }
             // Filters keep their previous preview until `eval` recomputes the
-            // new signature, avoiding a one-frame flash while dragging.
+            // new signature, avoiding a one-frame flash while dragging. A
+            // persisted Group render is dropped together with its pending job.
             Self::Filter(node) => {
                 node.signature = None;
+                node.job = None;
+                node.render_state = None;
+                if node.output_path.take().is_some() {
+                    node.preview.clear();
+                }
                 true
             }
         }

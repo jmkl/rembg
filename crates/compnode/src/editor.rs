@@ -281,6 +281,70 @@ impl GraphEditor {
             Err(message) => snarl[node].set_error(message),
         }
     }
+
+    /// Kick off a full-resolution Group render from on-disk source images.
+    /// Returns `false` when the node is not a Group, has no renderable layers
+    /// (e.g. a generator source without an output file) or the worker is gone.
+    pub(crate) fn start_group_render(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+        signature: u64,
+        ctx: &egui::Context,
+    ) -> bool {
+        let Some(filter) = snarl[node].filter_node() else {
+            return false;
+        };
+        if filter.kind != crate::model::FilterKind::Group {
+            return false;
+        }
+        let canvas_vec = filter.canvas_size;
+        if canvas_vec.x < 1.0 || canvas_vec.y < 1.0 {
+            return false;
+        }
+        let canvas = (canvas_vec.x as u32, canvas_vec.y as u32);
+
+        let mut layers = Vec::new();
+        for layer in &filter.layers {
+            // Full-resolution render needs every layer backed by a file.
+            let Some(path) = crate::graph::effective_output_path(snarl, layer.source) else {
+                return false;
+            };
+            layers.push(crate::worker::CompositeLayer {
+                source: layer.source,
+                path,
+                center: layer.center,
+                size: layer.size,
+                angle: layer.angle,
+            });
+        }
+        if layers.is_empty() {
+            return false;
+        }
+
+        let token = self.next_token;
+        self.next_token += 1;
+        let source_name = crate::graph::source_name(snarl, node);
+        let job = Job::Composite {
+            token,
+            node,
+            layers,
+            canvas,
+            source_name,
+        };
+        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+            if let Some(filter) = snarl[node].filter_node_mut() {
+                filter.job = Some(token);
+                filter.render_state = None;
+                filter.rendered = Some(signature);
+                filter.preview.error = None;
+            }
+            ctx.request_repaint();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl SnarlViewer<Node> for GraphEditor {

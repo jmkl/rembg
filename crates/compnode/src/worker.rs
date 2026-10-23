@@ -14,8 +14,8 @@ use rembg_core::{
     BirefNet, FaceDetector, Gfpgan, MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_SCRFD_FILE,
 };
 
-use crate::cache::{OutputCache, cache_key};
-use crate::model::{JobOutput, RunTiming};
+use crate::cache::{OutputCache, cache_key, cache_key_layers};
+use crate::model::{JobOutput, RunTiming, ViewerLayer};
 
 pub(crate) enum Job {
     RemoveBg {
@@ -32,6 +32,25 @@ pub(crate) enum Job {
         only_center: bool,
         source_name: String,
     },
+    /// Full-resolution Group composite rendered from on-disk source images.
+    Composite {
+        token: u64,
+        node: NodeId,
+        layers: Vec<CompositeLayer>,
+        canvas: (u32, u32),
+        source_name: String,
+    },
+}
+
+/// One layer of a full-resolution Group render: an on-disk source image plus
+/// its canvas transform.
+#[derive(Clone, Debug)]
+pub(crate) struct CompositeLayer {
+    pub source: NodeId,
+    pub path: PathBuf,
+    pub center: egui::Vec2,
+    pub size: egui::Vec2,
+    pub angle: f32,
 }
 
 /// Settings the worker needs to load and cache models.
@@ -51,6 +70,101 @@ pub(crate) struct JobDone {
     pub token: u64,
     pub node: NodeId,
     pub result: Result<JobOutput, String>,
+}
+
+/// Render a Group node at full resolution from on-disk source images and
+/// persist the result in the output cache. Repeated renders with identical
+/// inputs hit the disk cache instead of recompositing.
+fn composite_full(
+    cache: &OutputCache,
+    layers: &[CompositeLayer],
+    canvas: (u32, u32),
+    source_name: &str,
+) -> Result<JobOutput, String> {
+    let started = Instant::now();
+    if layers.is_empty() {
+        return Err("No layers connected".to_owned());
+    }
+    if canvas.0 == 0 || canvas.1 == 0 {
+        return Err("Invalid canvas size".to_owned());
+    }
+
+    // Serialize transforms for the cache key.
+    let mut params = Vec::new();
+    for layer in layers {
+        params.extend_from_slice(&layer.center.x.to_le_bytes());
+        params.extend_from_slice(&layer.center.y.to_le_bytes());
+        params.extend_from_slice(&layer.size.x.to_le_bytes());
+        params.extend_from_slice(&layer.size.y.to_le_bytes());
+        params.extend_from_slice(&layer.angle.to_le_bytes());
+    }
+    params.extend_from_slice(&canvas.0.to_le_bytes());
+    params.extend_from_slice(&canvas.1.to_le_bytes());
+
+    let mut images = Vec::with_capacity(layers.len());
+    for layer in layers {
+        let img = image::open(&layer.path)
+            .map_err(|err| format!("Could not load {}: {err}", layer.path.display()))?
+            .to_rgba8();
+        images.push(img);
+    }
+
+    let key = cache_key_layers("compnode-group-v1", &images, &params);
+
+    // Cache hit: reuse the stored composite.
+    let cached_path = cache.path_for(&key);
+    if cached_path.is_file() {
+        if let Ok(img) = image::open(&cached_path).map(|img| img.to_rgba8()) {
+            return Ok(JobOutput {
+                image: img,
+                path: Some(cached_path),
+                timing: RunTiming {
+                    total: started.elapsed(),
+                    load: Duration::ZERO,
+                    infer: Duration::ZERO,
+                    cache_models: false,
+                },
+            });
+        }
+    }
+
+    let pairs: Vec<(ViewerLayer, image::RgbaImage)> = layers
+        .iter()
+        .zip(images.into_iter())
+        .map(|(layer, img)| {
+            (
+                ViewerLayer {
+                    source: layer.source,
+                    texture: None,
+                    source_name: String::new(),
+                    source_path: Some(layer.path.clone()),
+                    center: layer.center,
+                    size: layer.size,
+                    angle: layer.angle,
+                },
+                img,
+            )
+        })
+        .collect();
+    let composited = crate::ops::composite::composite_layers_at(&pairs, canvas, None)?;
+
+    let path = match cache.store_named(&key, source_name, "group", &composited) {
+        Ok(path) => Some(path),
+        Err(err) => {
+            eprintln!("compnode: {err}");
+            None
+        }
+    };
+    Ok(JobOutput {
+        image: composited,
+        path,
+        timing: RunTiming {
+            total: started.elapsed(),
+            load: Duration::ZERO,
+            infer: Duration::ZERO,
+            cache_models: false,
+        },
+    })
 }
 
 pub(crate) fn spawn_worker(
@@ -153,6 +267,16 @@ pub(crate) fn spawn_worker(
                                         },
                                     }
                                 });
+                        (token, node, result)
+                    }
+                    WorkerRequest::Job(Job::Composite {
+                        token,
+                        node,
+                        layers,
+                        canvas,
+                        source_name,
+                    }) => {
+                        let result = composite_full(&cache, &layers, canvas, &source_name);
                         (token, node, result)
                     }
                 };

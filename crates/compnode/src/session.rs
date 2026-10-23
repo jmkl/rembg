@@ -342,15 +342,13 @@ pub(crate) fn load(
                 let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
                     continue;
                 };
-                let mut node = Node::Filter(FilterNode::restore(
+                // Layer transforms are not persisted; layers are rebuilt by
+                // `refresh_viewer` from the restored wires.
+                let _ = layers;
+                Node::Filter(FilterNode::restore(
                     filter_kind,
                     params.as_object().cloned(),
-                ));
-                if let Some(filter) = node.filter_node_mut() {
-                    // transforms are not persisted; layers rebuilt by refresh_viewer
-                    let _ = layers;
-                }
-                node
+                ))
             }
         };
 
