@@ -20,8 +20,17 @@ pub(crate) struct SelectOption {
 
 #[derive(Clone, Copy)]
 pub(crate) enum FieldKind {
-    Range { min: f32, max: f32, step: f64, suffix: &'static str },
-    Number { min: f32, max: f32, step: f64 },
+    Range {
+        min: f32,
+        max: f32,
+        step: f64,
+        suffix: &'static str,
+    },
+    Number {
+        min: f32,
+        max: f32,
+        step: f64,
+    },
     Color,
     Select(&'static [SelectOption]),
 }
@@ -76,116 +85,485 @@ const NO_FIELDS: &[FieldSpec] = &[];
 const NO_SOCKETS: &[SocketSpec] = &[];
 
 const BLEND_MODES: &[SelectOption] = &[
-    SelectOption { label: "Source Over", value: "source-over" },
-    SelectOption { label: "Normal", value: "normal" },
-    SelectOption { label: "Multiply", value: "multiply" },
-    SelectOption { label: "Screen", value: "screen" },
-    SelectOption { label: "Overlay", value: "overlay" },
-    SelectOption { label: "Darken", value: "darken" },
-    SelectOption { label: "Lighten", value: "lighten" },
-    SelectOption { label: "Color Dodge", value: "color-dodge" },
-    SelectOption { label: "Color Burn", value: "color-burn" },
-    SelectOption { label: "Hard Light", value: "hard-light" },
-    SelectOption { label: "Soft Light", value: "soft-light" },
-    SelectOption { label: "Difference", value: "difference" },
-    SelectOption { label: "Exclusion", value: "exclusion" },
-    SelectOption { label: "Hue", value: "hue" },
-    SelectOption { label: "Saturation", value: "saturation" },
-    SelectOption { label: "Color", value: "color" },
-    SelectOption { label: "Luminosity", value: "luminosity" },
+    SelectOption {
+        label: "Source Over",
+        value: "source-over",
+    },
+    SelectOption {
+        label: "Normal",
+        value: "normal",
+    },
+    SelectOption {
+        label: "Multiply",
+        value: "multiply",
+    },
+    SelectOption {
+        label: "Screen",
+        value: "screen",
+    },
+    SelectOption {
+        label: "Overlay",
+        value: "overlay",
+    },
+    SelectOption {
+        label: "Darken",
+        value: "darken",
+    },
+    SelectOption {
+        label: "Lighten",
+        value: "lighten",
+    },
+    SelectOption {
+        label: "Color Dodge",
+        value: "color-dodge",
+    },
+    SelectOption {
+        label: "Color Burn",
+        value: "color-burn",
+    },
+    SelectOption {
+        label: "Hard Light",
+        value: "hard-light",
+    },
+    SelectOption {
+        label: "Soft Light",
+        value: "soft-light",
+    },
+    SelectOption {
+        label: "Difference",
+        value: "difference",
+    },
+    SelectOption {
+        label: "Exclusion",
+        value: "exclusion",
+    },
+    SelectOption {
+        label: "Hue",
+        value: "hue",
+    },
+    SelectOption {
+        label: "Saturation",
+        value: "saturation",
+    },
+    SelectOption {
+        label: "Color",
+        value: "color",
+    },
+    SelectOption {
+        label: "Luminosity",
+        value: "luminosity",
+    },
 ];
 
 const HSV_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "hue", label: "Hue", kind: FieldKind::Range { min: 0.0, max: 360.0, step: 1.0, suffix: "°" } },
-    FieldSpec { key: "sat", label: "Saturation", kind: FieldKind::Range { min: 0.0, max: 200.0, step: 1.0, suffix: " %" } },
-    FieldSpec { key: "val", label: "Value", kind: FieldKind::Range { min: 0.0, max: 200.0, step: 1.0, suffix: " %" } },
+    FieldSpec {
+        key: "hue",
+        label: "Hue",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 360.0,
+            step: 1.0,
+            suffix: "°",
+        },
+    },
+    FieldSpec {
+        key: "sat",
+        label: "Saturation",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 200.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "val",
+        label: "Value",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 200.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
 ];
 
-const CURVES_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "channel", label: "Channel", kind: FieldKind::Select(&[
-        SelectOption { label: "RGB", value: "rgb" },
-        SelectOption { label: "Red", value: "red" },
-        SelectOption { label: "Green", value: "green" },
-        SelectOption { label: "Blue", value: "blue" },
-    ]) },
-];
+const CURVES_FIELDS: &[FieldSpec] = &[FieldSpec {
+    key: "channel",
+    label: "Channel",
+    kind: FieldKind::Select(&[
+        SelectOption {
+            label: "RGB",
+            value: "rgb",
+        },
+        SelectOption {
+            label: "Red",
+            value: "red",
+        },
+        SelectOption {
+            label: "Green",
+            value: "green",
+        },
+        SelectOption {
+            label: "Blue",
+            value: "blue",
+        },
+    ]),
+}];
 
 const EXPOSURE_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "ev", label: "Exposure (EV)", kind: FieldKind::Range { min: -5.0, max: 5.0, step: 0.1, suffix: "" } },
-    FieldSpec { key: "offset", label: "Offset", kind: FieldKind::Range { min: -50.0, max: 50.0, step: 1.0, suffix: "" } },
-    FieldSpec { key: "gamma", label: "Gamma", kind: FieldKind::Range { min: 0.1, max: 3.0, step: 0.01, suffix: "" } },
+    FieldSpec {
+        key: "ev",
+        label: "Exposure (EV)",
+        kind: FieldKind::Range {
+            min: -5.0,
+            max: 5.0,
+            step: 0.1,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "offset",
+        label: "Offset",
+        kind: FieldKind::Range {
+            min: -50.0,
+            max: 50.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "gamma",
+        label: "Gamma",
+        kind: FieldKind::Range {
+            min: 0.1,
+            max: 3.0,
+            step: 0.01,
+            suffix: "",
+        },
+    },
 ];
 
 const COLOR_BALANCE_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "range", label: "Range", kind: FieldKind::Select(&[
-        SelectOption { label: "Shadows", value: "shadows" },
-        SelectOption { label: "Midtones", value: "midtones" },
-        SelectOption { label: "Highlights", value: "highlights" },
-    ]) },
-    FieldSpec { key: "cyanRed", label: "Cyan / Red", kind: FieldKind::Range { min: -100.0, max: 100.0, step: 1.0, suffix: "" } },
-    FieldSpec { key: "magentaGreen", label: "Magenta / Green", kind: FieldKind::Range { min: -100.0, max: 100.0, step: 1.0, suffix: "" } },
-    FieldSpec { key: "yellowBlue", label: "Yellow / Blue", kind: FieldKind::Range { min: -100.0, max: 100.0, step: 1.0, suffix: "" } },
-    FieldSpec { key: "preserve", label: "Preserve Luma", kind: FieldKind::Select(&[
-        SelectOption { label: "Yes", value: "yes" },
-        SelectOption { label: "No", value: "no" },
-    ]) },
+    FieldSpec {
+        key: "range",
+        label: "Range",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "Shadows",
+                value: "shadows",
+            },
+            SelectOption {
+                label: "Midtones",
+                value: "midtones",
+            },
+            SelectOption {
+                label: "Highlights",
+                value: "highlights",
+            },
+        ]),
+    },
+    FieldSpec {
+        key: "cyanRed",
+        label: "Cyan / Red",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "magentaGreen",
+        label: "Magenta / Green",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "yellowBlue",
+        label: "Yellow / Blue",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "preserve",
+        label: "Preserve Luma",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "Yes",
+                value: "yes",
+            },
+            SelectOption {
+                label: "No",
+                value: "no",
+            },
+        ]),
+    },
 ];
 
 const GRADIENT_MAP_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "color1", label: "Shadow", kind: FieldKind::Color },
-    FieldSpec { key: "color2", label: "Midtone", kind: FieldKind::Color },
-    FieldSpec { key: "color3", label: "Highlight", kind: FieldKind::Color },
-    FieldSpec { key: "midpoint", label: "Midpoint", kind: FieldKind::Range { min: 0.0, max: 100.0, step: 1.0, suffix: " %" } },
-    FieldSpec { key: "reverse", label: "Reverse", kind: FieldKind::Select(&[
-        SelectOption { label: "No", value: "no" },
-        SelectOption { label: "Yes", value: "yes" },
-    ]) },
+    FieldSpec {
+        key: "color1",
+        label: "Shadow",
+        kind: FieldKind::Color,
+    },
+    FieldSpec {
+        key: "color2",
+        label: "Midtone",
+        kind: FieldKind::Color,
+    },
+    FieldSpec {
+        key: "color3",
+        label: "Highlight",
+        kind: FieldKind::Color,
+    },
+    FieldSpec {
+        key: "midpoint",
+        label: "Midpoint",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "reverse",
+        label: "Reverse",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "No",
+                value: "no",
+            },
+            SelectOption {
+                label: "Yes",
+                value: "yes",
+            },
+        ]),
+    },
 ];
 
-const INVERT_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "amount", label: "Amount", kind: FieldKind::Range { min: 0.0, max: 100.0, step: 1.0, suffix: " %" } },
-];
+const INVERT_FIELDS: &[FieldSpec] = &[FieldSpec {
+    key: "amount",
+    label: "Amount",
+    kind: FieldKind::Range {
+        min: 0.0,
+        max: 100.0,
+        step: 1.0,
+        suffix: " %",
+    },
+}];
 
 const BLEND_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "mode", label: "Mode", kind: FieldKind::Select(BLEND_MODES) },
-    FieldSpec { key: "opacity", label: "Opacity", kind: FieldKind::Range { min: 0.0, max: 100.0, step: 1.0, suffix: " %" } },
+    FieldSpec {
+        key: "mode",
+        label: "Mode",
+        kind: FieldKind::Select(BLEND_MODES),
+    },
+    FieldSpec {
+        key: "opacity",
+        label: "Opacity",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
 ];
 
 const MASK_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "invert", label: "Mask Source", kind: FieldKind::Select(&[
-        SelectOption { label: "Dark is opaque", value: "dark" },
-        SelectOption { label: "Light is opaque", value: "light" },
-    ]) },
-    FieldSpec { key: "strength", label: "Strength", kind: FieldKind::Range { min: 0.0, max: 100.0, step: 1.0, suffix: " %" } },
+    FieldSpec {
+        key: "invert",
+        label: "Mask Source",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "Dark is opaque",
+                value: "dark",
+            },
+            SelectOption {
+                label: "Light is opaque",
+                value: "light",
+            },
+        ]),
+    },
+    FieldSpec {
+        key: "strength",
+        label: "Strength",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
 ];
 
 const GRADIENT_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "mode", label: "Mode", kind: FieldKind::Select(&[
-        SelectOption { label: "Linear", value: "linear" },
-        SelectOption { label: "Radial", value: "radial" },
-        SelectOption { label: "Solid", value: "solid" },
-    ]) },
-    FieldSpec { key: "color1", label: "Color 1", kind: FieldKind::Color },
-    FieldSpec { key: "color2", label: "Color 2", kind: FieldKind::Color },
-    FieldSpec { key: "angle", label: "Angle", kind: FieldKind::Range { min: 0.0, max: 360.0, step: 1.0, suffix: "°" } },
-    FieldSpec { key: "color1Position", label: "Color 1 Position", kind: FieldKind::Range { min: -200.0, max: 200.0, step: 1.0, suffix: " %" } },
-    FieldSpec { key: "color2Position", label: "Color 2 Position", kind: FieldKind::Range { min: -200.0, max: 200.0, step: 1.0, suffix: " %" } },
-    FieldSpec { key: "width", label: "Width", kind: FieldKind::Number { min: 100.0, max: 2000.0, step: 1.0 } },
-    FieldSpec { key: "height", label: "Height", kind: FieldKind::Number { min: 100.0, max: 2000.0, step: 1.0 } },
+    FieldSpec {
+        key: "mode",
+        label: "Mode",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "Linear",
+                value: "linear",
+            },
+            SelectOption {
+                label: "Radial",
+                value: "radial",
+            },
+            SelectOption {
+                label: "Solid",
+                value: "solid",
+            },
+        ]),
+    },
+    FieldSpec {
+        key: "color1",
+        label: "Color 1",
+        kind: FieldKind::Color,
+    },
+    FieldSpec {
+        key: "color2",
+        label: "Color 2",
+        kind: FieldKind::Color,
+    },
+    FieldSpec {
+        key: "angle",
+        label: "Angle",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 360.0,
+            step: 1.0,
+            suffix: "°",
+        },
+    },
+    FieldSpec {
+        key: "color1Position",
+        label: "Color 1 Position",
+        kind: FieldKind::Range {
+            min: -200.0,
+            max: 200.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "color2Position",
+        label: "Color 2 Position",
+        kind: FieldKind::Range {
+            min: -200.0,
+            max: 200.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "width",
+        label: "Width",
+        kind: FieldKind::Number {
+            min: 100.0,
+            max: 2000.0,
+            step: 1.0,
+        },
+    },
+    FieldSpec {
+        key: "height",
+        label: "Height",
+        kind: FieldKind::Number {
+            min: 100.0,
+            max: 2000.0,
+            step: 1.0,
+        },
+    },
 ];
 
 const NOISE_FIELDS: &[FieldSpec] = &[
-    FieldSpec { key: "kind", label: "Kind", kind: FieldKind::Select(&[
-        SelectOption { label: "fBM", value: "fbm" },
-        SelectOption { label: "Multifractal", value: "multifractal" },
-        SelectOption { label: "Ridged", value: "ridged" },
-    ]) },
-    FieldSpec { key: "scale", label: "Scale", kind: FieldKind::Range { min: 0.1, max: 50.0, step: 0.1, suffix: "" } },
-    FieldSpec { key: "detail", label: "Detail", kind: FieldKind::Range { min: 1.0, max: 8.0, step: 1.0, suffix: "" } },
-    FieldSpec { key: "roughness", label: "Roughness", kind: FieldKind::Range { min: 0.0, max: 1.0, step: 0.01, suffix: "" } },
-    FieldSpec { key: "lacunarity", label: "Lacunarity", kind: FieldKind::Range { min: 1.0, max: 10.0, step: 0.1, suffix: "" } },
-    FieldSpec { key: "distortion", label: "Distortion", kind: FieldKind::Range { min: 0.0, max: 10.0, step: 0.1, suffix: "" } },
-    FieldSpec { key: "seed", label: "Seed", kind: FieldKind::Number { min: 0.0, max: 10000.0, step: 1.0 } },
+    FieldSpec {
+        key: "kind",
+        label: "Kind",
+        kind: FieldKind::Select(&[
+            SelectOption {
+                label: "fBM",
+                value: "fbm",
+            },
+            SelectOption {
+                label: "Multifractal",
+                value: "multifractal",
+            },
+            SelectOption {
+                label: "Ridged",
+                value: "ridged",
+            },
+        ]),
+    },
+    FieldSpec {
+        key: "scale",
+        label: "Scale",
+        kind: FieldKind::Range {
+            min: 0.1,
+            max: 50.0,
+            step: 0.1,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "detail",
+        label: "Detail",
+        kind: FieldKind::Range {
+            min: 1.0,
+            max: 8.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "roughness",
+        label: "Roughness",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 1.0,
+            step: 0.01,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "lacunarity",
+        label: "Lacunarity",
+        kind: FieldKind::Range {
+            min: 1.0,
+            max: 10.0,
+            step: 0.1,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "distortion",
+        label: "Distortion",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 10.0,
+            step: 0.1,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "seed",
+        label: "Seed",
+        kind: FieldKind::Number {
+            min: 0.0,
+            max: 10000.0,
+            step: 1.0,
+        },
+    },
 ];
 
 pub(crate) static NODE_SPECS: &[NodeSpec] = &[
@@ -193,7 +571,9 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         kind: Kind::Image,
         title: "Image",
         icon: glyphs::FOLDER_OPEN,
-        keywords: &["load", "file", "picture", "texture", "source", "asset", "input"],
+        keywords: &[
+            "load", "file", "picture", "texture", "source", "asset", "input",
+        ],
         accent: pal::HEADER_IMAGE,
         inputs: 1,
         outputs: 1,
@@ -201,7 +581,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::image::create,
         body: nodes::image::show_body,
     },
@@ -217,7 +600,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::remove_bg::create,
         body: nodes::remove_bg::show_body,
     },
@@ -233,7 +619,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::face_restore::create,
         body: nodes::face_restore::show_body,
     },
@@ -249,7 +638,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: true,
         hidden: true,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Layers", multi: true }],
+        sockets: &[SocketSpec {
+            label: "Layers",
+            multi: true,
+        }],
         create: nodes::viewer::create,
         body: nodes::viewer::show_body,
     },
@@ -265,7 +657,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -281,7 +676,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: true,
         hidden: false,
         fields: NO_FIELDS,
-        sockets: &[SocketSpec { label: "Layers", multi: true }],
+        sockets: &[SocketSpec {
+            label: "Layers",
+            multi: true,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -297,7 +695,16 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: BLEND_FIELDS,
-        sockets: &[SocketSpec { label: "Base", multi: false }, SocketSpec { label: "Blend", multi: false }],
+        sockets: &[
+            SocketSpec {
+                label: "Base",
+                multi: false,
+            },
+            SocketSpec {
+                label: "Blend",
+                multi: false,
+            },
+        ],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -313,7 +720,16 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: MASK_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }, SocketSpec { label: "Mask", multi: false }],
+        sockets: &[
+            SocketSpec {
+                label: "Image",
+                multi: false,
+            },
+            SocketSpec {
+                label: "Mask",
+                multi: false,
+            },
+        ],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -329,7 +745,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: HSV_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -345,7 +764,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: CURVES_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -361,7 +783,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: EXPOSURE_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -377,7 +802,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: COLOR_BALANCE_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -393,7 +821,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: GRADIENT_MAP_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
@@ -409,7 +840,10 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: INVERT_FIELDS,
-        sockets: &[SocketSpec { label: "Image", multi: false }],
+        sockets: &[SocketSpec {
+            label: "Image",
+            multi: false,
+        }],
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },

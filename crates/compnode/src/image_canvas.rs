@@ -374,9 +374,19 @@ impl ImageCanvas {
     pub fn sync_layers(
         &mut self,
         ctx: &egui::Context,
-        layers: &[(NodeId, String, Option<egui::TextureHandle>, Option<PathBuf>, (egui::Vec2, egui::Vec2, f32), bool)],
+        layers: &[(
+            NodeId,
+            String,
+            Option<egui::TextureHandle>,
+            Option<PathBuf>,
+            (egui::Vec2, egui::Vec2, f32),
+            bool,
+        )],
     ) {
-        let in_use: HashSet<PathBuf> = layers.iter().filter_map(|(_, _, _, p, _, _)| p.clone()).collect();
+        let in_use: HashSet<PathBuf> = layers
+            .iter()
+            .filter_map(|(_, _, _, p, _, _)| p.clone())
+            .collect();
 
         self.cache.forget_unused_failures(&in_use);
         self.in_use = in_use;
@@ -440,18 +450,16 @@ impl ImageCanvas {
                 Some(i) => i,
                 None => {
                     let remembered_snap = path.as_ref().and_then(|p| self.remembered.remove(p));
-                    let saved_snap = if remembered_snap.is_none()
-                        && saved.1.x > 0.0
-                        && saved.1.y > 0.0
-                    {
-                        Some(Snap {
-                            center: saved.0,
-                            size: saved.1,
-                            angle: saved.2,
-                        })
-                    } else {
-                        None
-                    };
+                    let saved_snap =
+                        if remembered_snap.is_none() && saved.1.x > 0.0 && saved.1.y > 0.0 {
+                            Some(Snap {
+                                center: saved.0,
+                                size: saved.1,
+                                angle: saved.2,
+                            })
+                        } else {
+                            None
+                        };
                     let snap = remembered_snap.or(saved_snap);
                     self.items.push(Item {
                         id: *source_id,

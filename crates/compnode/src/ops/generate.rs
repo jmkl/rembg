@@ -116,9 +116,7 @@ pub(crate) fn noise(params: &Params, canvas: (u32, u32)) -> RgbaImage {
     let width = canvas.0.max(1);
     let height = canvas.1.max(1);
     let scale = params::f32(params, "scale", 5.0).max(0.01);
-    let octaves = params::f32(params, "detail", 4.0)
-        .round()
-        .clamp(1.0, 8.0) as u32;
+    let octaves = params::f32(params, "detail", 4.0).round().clamp(1.0, 8.0) as u32;
     let roughness = params::f32(params, "roughness", 0.5).clamp(0.0, 1.0);
     let lacunarity = params::f32(params, "lacunarity", 2.0).clamp(1.0, 10.0);
     let distortion = params::f32(params, "distortion", 0.0).max(0.0);

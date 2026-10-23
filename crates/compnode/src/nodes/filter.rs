@@ -1,6 +1,6 @@
 //! Generic body UI for every filter node.
 
-use egui::{Color32, RichText, Ui, Vec2};
+use egui::{Color32, Ui, Vec2};
 use egui_snarl::{NodeId, Snarl};
 
 use crate::catalog::{FieldKind, FieldSpec, NodeSpec};
@@ -9,7 +9,6 @@ use crate::graph::invalidate_node;
 use crate::model::{FilterKind, Kind, Node};
 use crate::ops;
 use crate::params::{self, CurvePoint, Params};
-use crate::style::pal;
 use crate::widgets::{error_line, preview};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, kind: Kind) {
@@ -68,13 +67,19 @@ fn spec_for(kind: FilterKind) -> &'static NodeSpec {
 
 fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
     match &field.kind {
-        FieldKind::Range { min, max, step, suffix } => {
-            ui.label(RichText::new(field.label).size(9.0).color(pal::MUTED));
+        FieldKind::Range {
+            min,
+            max,
+            step,
+            suffix,
+        } => {
             let mut value = params::f32(params, field.key, *min);
             let response = ui.add(
-                egui::Slider::new(&mut value, *min..=*max)
-                    .step_by(*step)
-                    .suffix(*suffix),
+                elegance::Slider::new(&mut value, *min..=*max)
+                    .label(field.label)
+                    .suffix(*suffix)
+                    .step(*step)
+                    .decimals(decimals_for(*step)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -84,12 +89,12 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
             }
         }
         FieldKind::Number { min, max, step } => {
-            ui.label(RichText::new(field.label).size(9.0).color(pal::MUTED));
             let mut value = params::f32(params, field.key, *min);
             let response = ui.add(
-                egui::DragValue::new(&mut value)
-                    .range(*min..=*max)
-                    .speed(*step),
+                elegance::Slider::new(&mut value, *min..=*max)
+                    .label(field.label)
+                    .step(*step)
+                    .decimals(decimals_for(*step)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -99,47 +104,58 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
             }
         }
         FieldKind::Color => {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(field.label).size(9.0).color(pal::MUTED));
-                let mut rgb = params::color(params, field.key, "#000000");
-                let response = ui.color_edit_button_srgb(&mut rgb);
-                if response.changed() {
-                    params::set_string(params, field.key, params::rgb_hex(rgb));
-                }
-                response.changed()
-            })
-            .inner
+            let rgb = params::color(params, field.key, "#000000");
+            let mut color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            let response = ui.add(
+                elegance::ColorPicker::new((field.key, field.label), &mut color)
+                    .label(field.label)
+                    .hex_input(true),
+            );
+            if response.changed() {
+                params::set_string(
+                    params,
+                    field.key,
+                    params::rgb_hex([color.r(), color.g(), color.b()]),
+                );
+                true
+            } else {
+                false
+            }
         }
         FieldKind::Select(options) => {
-            ui.label(RichText::new(field.label).size(9.0).color(pal::MUTED));
-            let current = params::string(params, field.key, options.first().map(|o| o.value).unwrap_or("")).to_owned();
+            let current = params::string(
+                params,
+                field.key,
+                options.first().map(|o| o.value).unwrap_or(""),
+            )
+            .to_owned();
             let mut selected = current.clone();
-            let mut changed = false;
-            egui::ComboBox::from_id_salt((field.key, field.label))
-                .selected_text(
-                    options
-                        .iter()
-                        .find(|option| option.value == current)
-                        .map(|option| option.label)
-                        .unwrap_or(current.as_str()),
-                )
-                .show_ui(ui, |ui| {
-                    for option in *options {
-                        if ui
-                            .selectable_value(&mut selected, option.value.to_owned(), option.label)
-                            .clicked()
-                        {
-                            changed = true;
-                        }
-                    }
-                });
-            if changed || selected != current {
+            let response = ui.add(
+                elegance::Select::new((field.key, field.label), &mut selected)
+                    .label(field.label)
+                    .options(options.iter().map(|o| (o.value.to_owned(), o.label)))
+                    .width(ui.available_width()),
+            );
+            if response.changed() {
                 params::set_string(params, field.key, selected);
                 true
             } else {
                 false
             }
         }
+    }
+}
+
+/// Fraction digits for a slider driven by `step` (1.0 → 0 digits, 0.1 → 1, ...).
+fn decimals_for(step: f64) -> usize {
+    if step >= 1.0 {
+        0
+    } else if step >= 0.1 {
+        1
+    } else if step >= 0.01 {
+        2
+    } else {
+        3
     }
 }
 
@@ -189,9 +205,15 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     for (index, value) in lut.iter().enumerate() {
         let t = index as f32 / 255.0;
         let y = *value as f32 / 255.0;
-        let pos = egui::pos2(rect.left() + rect.width() * t, rect.bottom() - rect.height() * y);
+        let pos = egui::pos2(
+            rect.left() + rect.width() * t,
+            rect.bottom() - rect.height() * y,
+        );
         if let Some(previous) = prev {
-            painter.line_segment([previous, pos], egui::Stroke::new(1.5, Color32::from_rgb(0x7a, 0xb8, 0xff)));
+            painter.line_segment(
+                [previous, pos],
+                egui::Stroke::new(1.5, Color32::from_rgb(0x7a, 0xb8, 0xff)),
+            );
         }
         prev = Some(pos);
     }
@@ -229,7 +251,10 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
             let y = (1.0 - (pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
             points.push(CurvePoint { x, y });
             points.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
-            if let Some(index) = points.iter().position(|p| (p.x - x).abs() < 1e-4 && (p.y - y).abs() < 1e-4) {
+            if let Some(index) = points
+                .iter()
+                .position(|p| (p.x - x).abs() < 1e-4 && (p.y - y).abs() < 1e-4)
+            {
                 ui.data_mut(|data| data.insert_temp(id, index));
             }
             changed = true;
@@ -287,16 +312,16 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     }
 
     // Reset button.
-    ui.horizontal(|ui| {
-        if ui.small_button("Reset").clicked() {
-            points = params::identity_curve();
-            changed = true;
-        }
-    });
+    if ui
+        .add(elegance::Button::new("Reset").size(elegance::ButtonSize::Small))
+        .clicked()
+    {
+        points = params::identity_curve();
+        changed = true;
+    }
 
     if changed {
         params::set_curve(params, &channel, &points);
     }
     changed
 }
-

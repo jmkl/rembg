@@ -73,11 +73,7 @@ pub(crate) fn cache_key(domain: &str, input: &image::RgbaImage, params: &[u8]) -
 
 /// Content-addressed key for a multi-image composite (Group node): hashes every
 /// source image plus the serialized transform parameters.
-pub(crate) fn cache_key_layers(
-    domain: &str,
-    inputs: &[image::RgbaImage],
-    params: &[u8],
-) -> String {
+pub(crate) fn cache_key_layers(domain: &str, inputs: &[image::RgbaImage], params: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(domain.as_bytes());
     hasher.update([0]);

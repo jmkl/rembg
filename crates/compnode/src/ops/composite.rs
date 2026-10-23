@@ -268,7 +268,6 @@ fn set_saturation(color: Rgb, sat: f32) -> Rgb {
     out
 }
 
-
 /// Composite a set of viewer-style layers (with transforms) into a single
 /// bitmap, downscaled so the longest edge stays within the eval cap. Used for
 /// the interactive Group preview.

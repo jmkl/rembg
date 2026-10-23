@@ -49,13 +49,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
             let (hw, hh) = (layer.size.x / 2.0, layer.size.y / 2.0);
             let s = layer.angle.sin();
             let c = layer.angle.cos();
-            let corners = [
-                vec2(-hw, -hh),
-                vec2(hw, -hh),
-                vec2(hw, hh),
-                vec2(-hw, hh),
-            ]
-            .map(|l| {
+            let corners = [vec2(-hw, -hh), vec2(hw, -hh), vec2(hw, hh), vec2(-hw, hh)].map(|l| {
                 let rotated = vec2(l.x * c - l.y * s, l.x * s + l.y * c);
                 layer.center + rotated
             });
@@ -163,12 +157,10 @@ fn paint_preview_texture(painter: &egui::Painter, rect: egui::Rect, texture: &eg
 
 pub(crate) fn error_line(ui: &mut egui::Ui, error: Option<&str>) {
     if let Some(error) = error {
-        ui.add(
-            egui::Label::new(RichText::new(error).size(9.0).color(pal::DANGER))
-                .selectable(false)
-                .truncate(),
-        )
-        .on_hover_text(error);
+        elegance::Callout::new(elegance::CalloutTone::Danger)
+            .icon(elegance::glyphs::TRIANGLE_ALERT.to_string())
+            .body(egui::RichText::new(error).size(9.0))
+            .show(ui, |_| {});
     }
 }
 

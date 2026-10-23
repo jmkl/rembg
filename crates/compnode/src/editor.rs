@@ -456,7 +456,7 @@ impl SnarlViewer<Node> for GraphEditor {
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
                 let mut enabled = snarl[node].preview_enabled();
-                if ui.checkbox(&mut enabled, "").changed() {
+                if ui.add(elegance::Checkbox::new(&mut enabled, "")).changed() {
                     snarl[node].set_preview_enabled(enabled);
                 }
             },

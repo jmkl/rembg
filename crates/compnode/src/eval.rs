@@ -12,8 +12,6 @@ use crate::model::{FilterKind, Kind, Node};
 use crate::ops;
 use crate::params::Params;
 
-
-
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
     let ids: Vec<NodeId> = snarl
         .node_ids()
@@ -131,10 +129,7 @@ fn filter_signature(
     }
     let spec = catalog::spec(Kind::Filter(kind));
     for input in 0..spec.sockets.len() {
-        let remotes = snarl.in_pin(InPinId {
-            node,
-            input,
-        }).remotes.clone();
+        let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
         for remote in remotes {
             node_signature(snarl, remote.node, stack).hash(&mut hasher);
         }
@@ -147,9 +142,7 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
         return 0;
     }
     let signature = match &snarl[id] {
-        Node::Filter(filter) => {
-            filter_signature(snarl, id, filter.kind, &filter.params, stack)
-        }
+        Node::Filter(filter) => filter_signature(snarl, id, filter.kind, &filter.params, stack),
         Node::Image(image) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             image.asset_id.hash(&mut hasher);
@@ -194,10 +187,7 @@ fn resolve_inputs(
     let spec = catalog::spec(Kind::Filter(kind));
     let mut out = Vec::with_capacity(spec.sockets.len());
     for index in 0..spec.sockets.len() {
-        let remotes = snarl
-            .in_pin(InPinId { node, input: index })
-            .remotes
-            .clone();
+        let remotes = snarl.in_pin(InPinId { node, input: index }).remotes.clone();
         let mut images = Vec::new();
         for remote in remotes {
             if let Some(image) = resolve_image(snarl, remote.node, ctx, stack) {
@@ -240,13 +230,23 @@ fn limit_image(image: &RgbaImage) -> RgbaImage {
     let scale = ops::EVAL_MAX_EDGE as f64 / longest as f64;
     let target_width = ((width as f64 * scale).round() as u32).max(1);
     let target_height = ((height as f64 * scale).round() as u32).max(1);
-    image::imageops::resize(image, target_width, target_height, image::imageops::FilterType::Triangle)
+    image::imageops::resize(
+        image,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Triangle,
+    )
 }
 
 fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> TextureHandle {
     let (width, height) = image.dimensions();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw());
-    ctx.load_texture(format!("filter-{}", node.0), color_image, TextureOptions::LINEAR)
+    let color_image =
+        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw());
+    ctx.load_texture(
+        format!("filter-{}", node.0),
+        color_image,
+        TextureOptions::LINEAR,
+    )
 }
 
 pub(crate) fn canvas_size(snarl: &Snarl<Node>) -> (u32, u32) {

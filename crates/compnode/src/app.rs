@@ -177,7 +177,12 @@ impl CompNodeApp {
                 let Some(filter) = self.snarl[id].filter_node() else {
                     continue;
                 };
-                (filter.job, filter.render_state, filter.signature, filter.rendered)
+                (
+                    filter.job,
+                    filter.render_state,
+                    filter.signature,
+                    filter.rendered,
+                )
             };
             if job.is_some() {
                 continue;
@@ -679,7 +684,11 @@ impl CompNodeApp {
                             .desired_width(360.0)
                             .hint_text("https://…"),
                     );
-                    if ui.button("Add").clicked() && !self.url_text.trim().is_empty() {
+                    if ui
+                        .add(elegance::Button::new("Add").size(elegance::ButtonSize::Small))
+                        .clicked()
+                        && !self.url_text.trim().is_empty()
+                    {
                         let url = self.url_text.trim().to_owned();
                         let target = self.selected_image_node();
                         let pos = egui::pos2(100.0, 100.0);
@@ -705,7 +714,14 @@ impl CompNodeApp {
                                     .file_name()
                                     .map(|name| name.to_string_lossy().into_owned())
                                     .unwrap_or_default();
-                                if ui.button(name).clicked() {
+                                if ui
+                                    .add(
+                                        elegance::Button::new(name)
+                                            .size(elegance::ButtonSize::Small)
+                                            .full_width(),
+                                    )
+                                    .clicked()
+                                {
                                     let pos = egui::pos2(100.0, 100.0);
                                     match self.editor.assets.insert_path(&path) {
                                         Ok(asset_id) => self.add_image_asset(ctx, &asset_id, pos),
@@ -1047,7 +1063,11 @@ impl App for CompNodeApp {
             })
             .map(|(id, _)| id)
             .collect();
-        if should_refresh_images || has_edit_activity || self.autosave_due.is_some() || filters_changed {
+        if should_refresh_images
+            || has_edit_activity
+            || self.autosave_due.is_some()
+            || filters_changed
+        {
             for id in &viewers {
                 refresh_viewer(&mut self.snarl, *id, &ctx, &mut self.editor.assets);
             }
@@ -1375,7 +1395,5 @@ pub fn run() -> eframe::Result<()> {
 /// True when a layer's node has no full-resolution output file of its own, so
 /// its low-res preview texture is the only correct content (plain filters).
 fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
-    matches!(snarl[source], crate::model::Node::Filter(_))
-        && snarl[source].output_path().is_none()
+    matches!(snarl[source], crate::model::Node::Filter(_)) && snarl[source].output_path().is_none()
 }
-

@@ -48,6 +48,25 @@ pub(crate) mod pal {
     pub const HEADER_NOISE: Color32 = Color32::from_rgb(0x4a, 0x5a, 0x4a);
 }
 
+/// Condensed grotesque UI face (Apache 2.0 / OFL, from google/fonts).
+const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed-Variable.ttf");
+
+/// Register Roboto Condensed as the primary proportional font.
+///
+/// Uses `Context::add_font` with the highest priority so elegance's icon
+/// font (installed with the lowest priority as a fallback) keeps covering the
+/// private-use-area glyphs.
+fn install_fonts(ctx: &egui::Context) {
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "RobotoCondensed",
+        egui::FontData::from_static(ROBOTO_CONDENSED),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: egui::FontFamily::Proportional,
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+}
+
 /// Default body width for image/processing nodes.
 pub(crate) const BODY_W: f32 = 196.0;
 /// Wider body for the multi-layer viewer.
@@ -56,6 +75,7 @@ pub(crate) const VIEWER_W: f32 = 320.0;
 /// Install the elegance theme and app-wide egui spacing.
 pub(crate) fn install_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
+    install_fonts(ctx);
 
     // Keep the Blender-ish greys, but let elegance drive every widget's shape,
     // typography, focus ring and interaction states.
@@ -74,23 +94,24 @@ pub(crate) fn install_theme(ctx: &egui::Context) {
     theme.palette.danger = pal::DANGER;
     theme.palette.warning = pal::SOCKET;
 
-    theme.typography.body = 12.0;
-    theme.typography.button = 11.5;
-    theme.typography.label = 11.0;
-    theme.typography.small = 10.0;
-    theme.typography.heading = 14.0;
+    theme.typography.body = 12.5;
+    theme.typography.button = 12.0;
+    theme.typography.label = 11.5;
+    theme.typography.small = 10.5;
+    theme.typography.heading = 14.5;
     theme.typography.monospace = 11.0;
 
-    theme.control_radius = 5.0;
+    theme.control_radius = 6.0;
     theme.card_radius = 8.0;
-    theme.control_padding_x = 9.0;
-    theme.control_padding_y = 4.0;
+    theme.control_padding_x = 10.0;
+    theme.control_padding_y = 5.0;
     theme.install(ctx);
 
     ctx.all_styles_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-        style.spacing.button_padding = egui::vec2(8.0, 3.0);
+        style.spacing.item_spacing = egui::vec2(7.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 4.0);
         style.spacing.slider_width = 120.0;
+        style.spacing.menu_margin = egui::Margin::same(6);
         // Node headers and labels are drag handles, so never let dragging
         // turn into text selection.
         style.interaction.selectable_labels = false;

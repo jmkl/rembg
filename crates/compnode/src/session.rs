@@ -17,7 +17,9 @@ use crate::assets::AssetStore;
 use crate::cache::{OutputCache, load_cached};
 use crate::catalog;
 use crate::graph::{connect_input, ensure_output_node, rgba_to_texture};
-use crate::model::{FaceRestoreNode, FilterKind, FilterNode, ImageNode, Node, Preview, Process, ViewerNode};
+use crate::model::{
+    FaceRestoreNode, FilterKind, FilterNode, ImageNode, Node, Preview, Process, ViewerNode,
+};
 
 pub(crate) const SESSION_VERSION: u32 = 1;
 
@@ -354,7 +356,12 @@ pub(crate) fn load(
                 pending_layers = Some((layers, transforms));
                 Node::Output(ViewerNode::default())
             }
-            SessionNodeData::Filter { filter_kind, params, layers, transforms } => {
+            SessionNodeData::Filter {
+                filter_kind,
+                params,
+                layers,
+                transforms,
+            } => {
                 let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
                     continue;
                 };
@@ -505,4 +512,3 @@ fn layer_transforms(layers: &[crate::model::ViewerLayer]) -> Vec<SessionLayerTra
         })
         .collect()
 }
-

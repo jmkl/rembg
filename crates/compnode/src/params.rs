@@ -34,10 +34,7 @@ pub(crate) fn u32(params: &Params, key: &str, default: u32) -> u32 {
 }
 
 pub(crate) fn string<'a>(params: &'a Params, key: &str, default: &'a str) -> &'a str {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or(default)
+    params.get(key).and_then(Value::as_str).unwrap_or(default)
 }
 
 pub(crate) fn set_f32(params: &mut Params, key: &str, value: f32) {
@@ -106,10 +103,7 @@ pub(crate) fn set_curve(params: &mut Params, channel: &str, points: &[CurvePoint
 }
 
 pub(crate) fn identity_curve() -> Vec<CurvePoint> {
-    vec![
-        CurvePoint { x: 0.0, y: 0.0 },
-        CurvePoint { x: 1.0, y: 1.0 },
-    ]
+    vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }]
 }
 
 /// JSON value for the default identity curve, used when a node is created.

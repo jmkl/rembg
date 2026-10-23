@@ -35,9 +35,7 @@ pub(crate) fn evaluate(
 
     match kind {
         FilterKind::Route => Ok(first(0)?.clone()),
-        FilterKind::Group => {
-            composite::stack(inputs.first().map(Vec::as_slice).unwrap_or(&[]))
-        }
+        FilterKind::Group => composite::stack(inputs.first().map(Vec::as_slice).unwrap_or(&[])),
         FilterKind::Blend => composite::blend(
             inputs.first().and_then(|list| list.first()),
             inputs.get(1).and_then(|list| list.first()),

@@ -44,10 +44,10 @@ pub(crate) fn show(
         .frame(frame)
         .show(ctx, |ui| {
             section(ui, "Inference");
-            ui.checkbox(
+            ui.add(elegance::Checkbox::new(
                 &mut settings.cache_models,
                 "Keep inference models in memory between runs",
-            );
+            ));
             ui.label(
                 RichText::new(
                     "When enabled, models load on first use and stay resident. When disabled, each run loads them and releases them afterwards.",
@@ -74,17 +74,21 @@ pub(crate) fn show(
             ui.separator();
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let apply = egui::Button::new(RichText::new("Apply").color(Color32::WHITE))
-                    .fill(pal::ACCENT)
-                    .min_size(egui::vec2(72.0, 24.0));
-                if ui.add(apply).clicked() {
+                if ui
+                    .add(
+                        elegance::Button::new("Apply")
+                            .accent(elegance::Accent::Blue)
+                            .min_width(72.0),
+                    )
+                    .clicked()
+                {
                     action = SettingsAction::Apply;
                 }
                 if ui
                     .add(
-                        egui::Button::new("Cancel")
-                            .fill(pal::NODE)
-                            .min_size(egui::vec2(72.0, 24.0)),
+                        elegance::Button::new("Cancel")
+                            .outline()
+                            .min_width(72.0),
                     )
                     .clicked()
                 {

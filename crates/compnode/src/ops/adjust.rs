@@ -325,7 +325,11 @@ pub(crate) fn gradient_map(src: &RgbaImage, params: &Params) -> RgbaImage {
             t = 1.0 - t;
         }
         let (from, to, local) = if t <= midpoint {
-            (shadow, mid, if midpoint <= 0.0 { 0.0 } else { t / midpoint })
+            (
+                shadow,
+                mid,
+                if midpoint <= 0.0 { 0.0 } else { t / midpoint },
+            )
         } else {
             (
                 mid,
