@@ -161,6 +161,15 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
             process.job.hash(&mut hasher);
             hasher.finish()
         }
+        Node::RemoveBgV2(process) => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            process.output_path.hash(&mut hasher);
+            if let Some(texture) = &process.preview.texture {
+                texture.id().hash(&mut hasher);
+            }
+            process.job.hash(&mut hasher);
+            hasher.finish()
+        }
         Node::FaceRestore(node) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             node.strength.to_bits().hash(&mut hasher);

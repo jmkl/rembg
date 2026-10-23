@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use egui_snarl::NodeId;
 use rembg_core::{
-    BirefNet, FaceDetector, Gfpgan, MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_SCRFD_FILE,
+    BirefNet, FaceDetector, Gfpgan, MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_RMBG_FILE,
+    MODEL_SCRFD_FILE, RemoveBg,
 };
 
 use crate::cache::{OutputCache, cache_key, cache_key_layers};
@@ -19,6 +20,13 @@ use crate::model::{JobOutput, RunTiming, ViewerLayer};
 
 pub(crate) enum Job {
     RemoveBg {
+        token: u64,
+        node: NodeId,
+        input: image::RgbaImage,
+        source_name: String,
+    },
+    /// Remove background using the new RemoveBg library (RMBG-1.4 logic)
+    RemoveBgV2 {
         token: u64,
         node: NodeId,
         input: image::RgbaImage,
@@ -178,7 +186,7 @@ pub(crate) fn spawn_worker(
     thread::Builder::new()
         .name("compnode-inference".to_owned())
         .spawn(move || {
-            let mut models = Models::new(config);
+            let mut models = Models::new(config.clone());
 
             while let Ok(request) = request_rx.recv() {
                 let (token, node, result) = match request {
@@ -204,6 +212,42 @@ pub(crate) fn spawn_worker(
                                 &key,
                                 &source_name,
                                 "remove-bg",
+                                &run.image,
+                            ) {
+                                Ok(path) => Some(path),
+                                Err(err) => {
+                                    eprintln!("compnode: {err}");
+                                    None
+                                }
+                            };
+                            JobOutput {
+                                image: run.image,
+                                path,
+                                timing: RunTiming {
+                                    total: started.elapsed(),
+                                    load: run.load,
+                                    infer: run.infer,
+                                    cache_models,
+                                },
+                            }
+                        });
+                        (token, node, result)
+                    }
+                    WorkerRequest::Job(Job::RemoveBgV2 {
+                        token,
+                        node,
+                        input,
+                        source_name,
+                    }) => {
+                        let domain = format!("rmbg-v1:{}", model_tag(&config.model_dir.join(MODEL_RMBG_FILE)));
+                        let cache_models = models.config.cache_models;
+                        let started = Instant::now();
+                        let result = remove_bg_v2(&mut models, &input).map(|run| {
+                            let key = cache_key(&domain, &input, &[]);
+                            let path = match cache.store_named(
+                                &key,
+                                &source_name,
+                                "remove-bg-v2",
                                 &run.image,
                             ) {
                                 Ok(path) => Some(path),
@@ -303,6 +347,7 @@ pub(crate) fn spawn_worker(
 struct Models {
     config: InferenceConfig,
     birefnet: Option<BirefNet>,
+    remove_bg_v2: Option<RemoveBg>,
     gfpgan: Option<Gfpgan>,
     detector: Option<FaceDetector>,
 }
@@ -321,6 +366,7 @@ impl Models {
         Self {
             config,
             birefnet: None,
+            remove_bg_v2: None,
             gfpgan: None,
             detector: None,
         }
@@ -337,6 +383,7 @@ impl Models {
 
     fn unload(&mut self) {
         self.birefnet = None;
+        self.remove_bg_v2 = None;
         self.gfpgan = None;
         self.detector = None;
     }
@@ -469,6 +516,53 @@ fn model_tag(path: &Path) -> String {
 
 fn process_birefnet(
     model: &BirefNet,
+    input: &image::RgbaImage,
+) -> Result<image::RgbaImage, String> {
+    let img = image::DynamicImage::ImageRgba8(input.clone());
+    model.process_image(&img).map_err(|e| format!("{e:#}"))
+}
+
+fn remove_bg_v2(
+    models: &mut Models,
+    input: &image::RgbaImage,
+) -> Result<TimedImage, String> {
+    let path = models.config.model_dir.join(MODEL_RMBG_FILE);
+    let mut load = Duration::ZERO;
+
+    if models.config.cache_models {
+        if models.remove_bg_v2.is_none() {
+            let started = Instant::now();
+            models.remove_bg_v2 = Some(load_rmbg(&path)?);
+            load = started.elapsed();
+        }
+        let started = Instant::now();
+        let image = process_rmbg(models.remove_bg_v2.as_ref().expect("just loaded"), input)?;
+        Ok(TimedImage {
+            image,
+            load,
+            infer: started.elapsed(),
+        })
+    } else {
+        let started = Instant::now();
+        let model = load_rmbg(&path)?;
+        load = started.elapsed();
+
+        let started = Instant::now();
+        let image = process_rmbg(&model, input)?;
+        Ok(TimedImage {
+            image,
+            load,
+            infer: started.elapsed(),
+        })
+    }
+}
+
+fn load_rmbg(path: &Path) -> Result<RemoveBg, String> {
+    RemoveBg::load_from(path).map_err(|e| format!("load {}: {e:#}", path.display()))
+}
+
+fn process_rmbg(
+    model: &RemoveBg,
     input: &image::RgbaImage,
 ) -> Result<image::RgbaImage, String> {
     let img = image::DynamicImage::ImageRgba8(input.clone());

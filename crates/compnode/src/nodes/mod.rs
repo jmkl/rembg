@@ -10,6 +10,7 @@ pub(crate) mod face_restore;
 pub(crate) mod filter;
 pub(crate) mod image;
 pub(crate) mod remove_bg;
+pub(crate) mod remove_bgv2;
 pub(crate) mod viewer;
 
 /// File picker filter used by Image nodes.

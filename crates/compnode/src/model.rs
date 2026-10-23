@@ -21,6 +21,7 @@ use crate::params::{self, Params};
 pub(crate) enum Kind {
     Image,
     RemoveBg,
+    RemoveBgV2,
     FaceRestore,
     Output,
     Filter(FilterKind),
@@ -403,6 +404,7 @@ pub(crate) struct ViewerNode {
 pub(crate) enum Node {
     Image(ImageNode),
     RemoveBg(Process),
+    RemoveBgV2(Process),
     FaceRestore(FaceRestoreNode),
     Output(ViewerNode),
     Filter(FilterNode),
@@ -415,6 +417,10 @@ impl Node {
 
     pub(crate) fn remove_bg() -> Self {
         Self::RemoveBg(Process::default())
+    }
+
+    pub(crate) fn remove_bg_v2() -> Self {
+        Self::RemoveBgV2(Process::default())
     }
 
     pub(crate) fn face_restore() -> Self {
@@ -433,6 +439,7 @@ impl Node {
         match self {
             Self::Image(_) => Kind::Image,
             Self::RemoveBg(_) => Kind::RemoveBg,
+            Self::RemoveBgV2(_) => Kind::RemoveBgV2,
             Self::FaceRestore(_) => Kind::FaceRestore,
             Self::Output(_) => Kind::Output,
             Self::Filter(node) => Kind::Filter(node.kind),
@@ -520,6 +527,7 @@ impl Node {
     pub(crate) fn process_mut(&mut self) -> Option<&mut Process> {
         match self {
             Self::RemoveBg(process) => Some(process),
+            Self::RemoveBgV2(process) => Some(process),
             Self::FaceRestore(node) => Some(&mut node.process),
             _ => None,
         }
@@ -556,7 +564,7 @@ impl Node {
     pub(crate) fn texture(&self) -> Option<&TextureHandle> {
         match self {
             Self::Image(node) => node.preview.texture.as_ref(),
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.texture.as_ref()
             }
             Self::Output(viewer) => viewer
@@ -571,7 +579,7 @@ impl Node {
     pub(crate) fn preview_enabled(&self) -> bool {
         match self {
             Self::Image(node) => node.preview_enabled,
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview_enabled
             }
             Self::Output(viewer) => viewer.preview_enabled,
@@ -582,7 +590,7 @@ impl Node {
     pub(crate) fn set_preview_enabled(&mut self, enabled: bool) {
         match self {
             Self::Image(node) => node.preview_enabled = enabled,
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview_enabled = enabled
             }
             Self::Output(viewer) => viewer.preview_enabled = enabled,
@@ -593,7 +601,7 @@ impl Node {
     pub(crate) fn cpu(&self) -> Option<&RgbaImage> {
         match self {
             Self::Image(node) => node.preview.cpu.as_ref(),
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.cpu.as_ref()
             }
             Self::Output(_) => None,
@@ -611,7 +619,7 @@ impl Node {
     pub(crate) fn reload_path(&self) -> Option<&Path> {
         match self {
             Self::Image(node) if !node.path.is_empty() => Some(Path::new(&node.path)),
-            Self::RemoveBg(process) => process.output_path.as_deref(),
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) => process.output_path.as_deref(),
             Self::FaceRestore(node) => node.process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
             Self::Image(_) | Self::Output(_) => None,
@@ -626,7 +634,7 @@ impl Node {
     fn preview_mut(&mut self) -> Option<&mut Preview> {
         match self {
             Self::Image(node) => Some(&mut node.preview),
-            Self::RemoveBg(process) => Some(&mut process.preview),
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&mut process.preview),
             Self::FaceRestore(node) => Some(&mut node.process.preview),
             Self::Output(_) => None,
             Self::Filter(node) => Some(&mut node.preview),
@@ -694,7 +702,7 @@ impl Node {
     pub(crate) fn error(&self) -> Option<&str> {
         match self {
             Self::Image(node) => node.preview.error.as_deref(),
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error.as_deref()
             }
             Self::Output(_) => None,
@@ -705,7 +713,7 @@ impl Node {
     pub(crate) fn set_error(&mut self, message: impl Into<String>) {
         match self {
             Self::Image(node) => node.preview.error = Some(message.into()),
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error = Some(message.into());
             }
             Self::Output(_) => {}
@@ -761,6 +769,10 @@ impl Node {
             // when either its selected asset or its upstream input changes.
             Self::Image(_) => true,
             Self::RemoveBg(process) => {
+                process.clear_outputs();
+                true
+            }
+            Self::RemoveBgV2(process) => {
                 process.clear_outputs();
                 true
             }

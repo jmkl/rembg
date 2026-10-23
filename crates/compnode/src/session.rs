@@ -69,6 +69,15 @@ pub(crate) enum SessionNodeData {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cache_key: Option<String>,
     },
+    /// Remove background v2 (RMBG-1.4 logic)
+    RemoveBgV2 {
+        /// Absolute path to the processed result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        /// Legacy pre-path sessions: key into the shared result cache.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_key: Option<String>,
+    },
     Viewer {
         /// Layer source node ids, bottom-to-top.
         #[serde(default)]
@@ -189,6 +198,10 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
                 }
             }
             Node::RemoveBg(process) => SessionNodeData::RemoveBg {
+                path: process.output_path.as_deref().map(path_string),
+                cache_key: None,
+            },
+            Node::RemoveBgV2(process) => SessionNodeData::RemoveBgV2 {
                 path: process.output_path.as_deref().map(path_string),
                 cache_key: None,
             },
@@ -341,6 +354,9 @@ pub(crate) fn load(
             }
             SessionNodeData::RemoveBg { path, cache_key } => {
                 Node::RemoveBg(restore_process(cache, &legacy_assets, path, cache_key, ctx))
+            }
+            SessionNodeData::RemoveBgV2 { path, cache_key } => {
+                Node::RemoveBgV2(restore_process(cache, &legacy_assets, path, cache_key, ctx))
             }
             SessionNodeData::FaceRestore {
                 strength,

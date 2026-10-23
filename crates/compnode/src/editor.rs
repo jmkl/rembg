@@ -345,6 +345,88 @@ impl GraphEditor {
             false
         }
     }
+
+    /// Blender-style dot grid, drawn in graph space with a screen-constant dot
+    /// size and an adaptive spacing so the dot count stays bounded.
+    fn draw_background(
+        &mut self,
+        _background: Option<&BackgroundPattern>,
+        viewport: &egui::Rect,
+        _snarl_style: &SnarlStyle,
+        _style: &egui::Style,
+        painter: &egui::Painter,
+        _snarl: &Snarl<Node>,
+    ) {
+        let zoom = self.zoom.max(0.05);
+        let mut spacing = 22.0;
+        while spacing * zoom < 40.0 {
+            spacing *= 2.0;
+        }
+        while spacing * zoom > 80.0 {
+            spacing *= 0.5;
+        }
+
+        let radius = (1.1 / zoom).clamp(0.45, 2.0);
+        let x0 = (viewport.left() / spacing).floor() * spacing;
+        let y0 = (viewport.top() / spacing).floor() * spacing;
+
+        let mut y = y0;
+        while y <= viewport.bottom() {
+            let mut x = x0;
+            while x <= viewport.right() {
+                painter.circle_filled(egui::pos2(x, y), radius, pal::GRID);
+                x += spacing;
+            }
+            y += spacing;
+        }
+    }
+
+    /// Start background removal using the new RemoveBg library (RMBG-1.4 logic).
+    pub(crate) fn start_remove_bg_v2(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+        ctx: &egui::Context,
+    ) {
+        let path = crate::graph::effective_output_path(snarl, node);
+        let path = match path {
+            Some(p) => p,
+            None => {
+                snarl[node].set_error("No input connected");
+                return;
+            }
+        };
+        let image = image::open(&path)
+            .map_err(|err| format!("Could not load {}: {err}", path.display()))
+            .map(|img| img.to_rgba8());
+        match image {
+            Ok(input) => {
+                let token = self.next_token;
+                self.next_token += 1;
+                let source_name = crate::graph::source_name(snarl, node);
+                if self
+                    .jobs
+                    .send(WorkerRequest::Job(Job::RemoveBgV2 {
+                        token,
+                        node,
+                        input,
+                        source_name,
+                    }))
+                    .is_ok()
+                {
+                    if let Some(process) = snarl[node].process_mut() {
+                        process.job = Some(token);
+                        process.preview.error = None;
+                    }
+                    invalidate_downstream(snarl, node);
+                    ctx.request_repaint();
+                } else {
+                    snarl[node].set_error("Inference worker is not running");
+                }
+            }
+            Err(message) => snarl[node].set_error(message),
+        }
+    }
 }
 
 impl SnarlViewer<Node> for GraphEditor {
@@ -650,40 +732,5 @@ impl SnarlViewer<Node> for GraphEditor {
     ) {
         self.to_global = *to_global;
         self.zoom = to_global.scaling.max(0.05);
-    }
-
-    /// Blender-style dot grid, drawn in graph space with a screen-constant dot
-    /// size and an adaptive spacing so the dot count stays bounded.
-    fn draw_background(
-        &mut self,
-        _background: Option<&BackgroundPattern>,
-        viewport: &egui::Rect,
-        _snarl_style: &SnarlStyle,
-        _style: &egui::Style,
-        painter: &egui::Painter,
-        _snarl: &Snarl<Node>,
-    ) {
-        let zoom = self.zoom.max(0.05);
-        let mut spacing = 22.0;
-        while spacing * zoom < 40.0 {
-            spacing *= 2.0;
-        }
-        while spacing * zoom > 80.0 {
-            spacing *= 0.5;
-        }
-
-        let radius = (1.1 / zoom).clamp(0.45, 2.0);
-        let x0 = (viewport.left() / spacing).floor() * spacing;
-        let y0 = (viewport.top() / spacing).floor() * spacing;
-
-        let mut y = y0;
-        while y <= viewport.bottom() {
-            let mut x = x0;
-            while x <= viewport.right() {
-                painter.circle_filled(egui::pos2(x, y), radius, pal::GRID);
-                x += spacing;
-            }
-            y += spacing;
-        }
     }
 }
