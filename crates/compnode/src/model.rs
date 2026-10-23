@@ -680,7 +680,7 @@ impl Node {
     pub(crate) fn output_path(&self) -> Option<&Path> {
         match self {
             Self::Image(node) if !node.path.is_empty() => Some(Path::new(&node.path)),
-            Self::RemoveBg(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.output_path.as_deref()
             }
             Self::Filter(node) => node.output_path.as_deref(),
