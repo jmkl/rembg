@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/rembg-core", "crates/compnode", "crates/wgpu-playground"]
+members = [
+  "crates/rembg-core",
+  "crates/compnode",
+  "crates/wgpu-playground",
+  "crates/cmd-craft",
+  "crates/gpaste",
+
+]
 resolver = "2"
 
 [package]
