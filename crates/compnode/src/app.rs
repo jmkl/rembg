@@ -7,10 +7,12 @@ use std::time::{Duration, Instant};
 use eframe::{App, CreationContext};
 use egui::{Color32, Frame, Pos2};
 use egui_snarl::{NodeId, Snarl, ui::SnarlWidget};
+use gpaste::protocol::Message;
 
 use crate::assets::{self, AssetStore, FetchedImage};
 use crate::cache::{OutputCache, output_cache_key};
 use crate::editor::GraphEditor;
+use crate::gpaste_app::GPasTeApp;
 use crate::graph::{ensure_image_loaded, refresh_viewer, rgba_to_texture, source_name};
 use crate::graph_menu;
 use crate::image_canvas::ImageCanvas;
@@ -62,7 +64,11 @@ pub struct CompNodeApp {
     pub(crate) image_canvas: ImageCanvas,
 }
 impl CompNodeApp {
-    pub(crate) fn new(cx: &CreationContext) -> Self {
+    pub(crate) fn new(
+        cx: &CreationContext,
+        tx: crossbeam_channel::Sender<Message>,
+        rx: crossbeam_channel::Receiver<Message>,
+    ) -> Self {
         install_theme(&cx.egui_ctx);
         let settings = Settings::load();
         if let Err(err) = settings.ensure_workspace() {
@@ -78,6 +84,7 @@ impl CompNodeApp {
         let (worker, inflight) = spawn_worker(cx.egui_ctx.clone(), cache.clone(), config);
         let (url_tx, url_rx) = mpsc::channel::<FetchedImage>();
         let autosave_path = settings.autosave_path();
+        let gpaste_app = GPasTeApp::new(tx, rx);
         let mut app = Self {
             snarl: Snarl::new(),
             style: snarl_style(),
@@ -107,7 +114,7 @@ impl CompNodeApp {
             sidebar_maximized: false,
             sidebar_open: true,
             images_need_load: true,
-            image_canvas: ImageCanvas::new(),
+            image_canvas: ImageCanvas::new(gpaste_app),
         };
 
         if autosave_path.exists() {
@@ -914,7 +921,9 @@ impl App for CompNodeApp {
         }
         let _ = raw_input;
     }
-
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.image_canvas.gpaste_app().poll_messages(ctx);
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let has_edit_activity = ctx.input(|input| {
@@ -1376,6 +1385,11 @@ impl App for CompNodeApp {
     }
 }
 
+use crossbeam_channel::unbounded;
+use gpaste::protocol;
+use std::{net::TcpListener, thread};
+const ADDRESS: &str = "127.0.0.1:38471";
+
 pub fn run() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -1385,10 +1399,15 @@ pub fn run() -> eframe::Result<()> {
             .with_decorations(false),
         ..Default::default()
     };
+    let (to_gui_tx, to_gui_rx) = unbounded::<protocol::Message>();
+    let (to_host_tx, to_host_rx) = unbounded::<protocol::Message>();
     eframe::run_native(
         "CompNode",
         native_options,
-        Box::new(|cx| Ok(Box::new(CompNodeApp::new(cx)))),
+        Box::new(|cx| {
+            start_bridge_server(to_gui_tx, to_host_rx, cx.egui_ctx.clone());
+            Ok(Box::new(CompNodeApp::new(cx, to_host_tx, to_gui_rx)))
+        }),
     )
 }
 
@@ -1396,4 +1415,112 @@ pub fn run() -> eframe::Result<()> {
 /// its low-res preview texture is the only correct content (plain filters).
 fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
     matches!(snarl[source], crate::model::Node::Filter(_)) && snarl[source].output_path().is_none()
+}
+fn start_bridge_server(
+    incoming_tx: crossbeam_channel::Sender<protocol::Message>,
+    outgoing_rx: crossbeam_channel::Receiver<protocol::Message>,
+    ctx: eframe::egui::Context,
+) {
+    thread::spawn(move || {
+        let listener = loop {
+            match TcpListener::bind(ADDRESS) {
+                Ok(listener) => break listener,
+                Err(error) => {
+                    eprintln!("Cannot bind {ADDRESS}: {error}; retrying…");
+                    thread::sleep(Duration::from_secs(2));
+                }
+            }
+        };
+        eprintln!("Bridge listening on {ADDRESS}");
+
+        loop {
+            let (stream, peer) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    eprintln!("TCP accept failed: {error}");
+                    continue;
+                }
+            };
+            eprintln!("Native host connected: {peer}");
+
+            let mut writer = match stream.try_clone() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("Could not clone TCP stream: {error}");
+                    continue;
+                }
+            };
+            let read_stream = match stream.try_clone() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("Could not clone TCP stream: {error}");
+                    continue;
+                }
+            };
+            let _ = stream.set_nodelay(true); // keep abort messages low-latency
+            let read_tx = incoming_tx.clone();
+            let read_ctx = ctx.clone();
+            let reader_thread = thread::spawn(move || {
+                use std::io::{BufRead, BufReader};
+                let mut reader = BufReader::new(read_stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => match serde_json::from_str::<protocol::Message>(line.trim()) {
+                            Ok(message) => {
+                                if read_tx.send(message).is_err() {
+                                    break;
+                                }
+                                read_ctx.request_repaint();
+                            }
+                            Err(error) => eprintln!("Invalid message from host: {error}"),
+                        },
+                        Err(error) => {
+                            eprintln!("TCP read failed: {error}");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            let _ = incoming_tx.send(protocol::Message::BridgeStatus {
+                connected: true,
+                detail: "native host".into(),
+            });
+            ctx.request_repaint();
+
+            loop {
+                match outgoing_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(message) => {
+                        use std::io::Write;
+                        let mut bytes = match serde_json::to_vec(&message) {
+                            Ok(bytes) => bytes,
+                            Err(error) => {
+                                eprintln!("Could not serialize message: {error}");
+                                continue;
+                            }
+                        };
+                        bytes.push(b'\n');
+                        if let Err(error) = writer.write_all(&bytes) {
+                            eprintln!("TCP write failed: {error}");
+                            break;
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        if reader_thread.is_finished() {
+                            break;
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            let _ = incoming_tx.send(protocol::Message::BridgeStatus {
+                connected: false,
+                detail: "native host disconnected".into(),
+            });
+            ctx.request_repaint();
+        }
+    });
 }

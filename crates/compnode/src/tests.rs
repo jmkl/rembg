@@ -11,6 +11,7 @@ use crate::app::CompNodeApp;
 use crate::assets::AssetStore;
 use crate::cache::{OutputCache, cache_key};
 use crate::editor::GraphEditor;
+use crate::gpaste_app::GPasTeApp;
 use crate::graph::{invalidate_node, refresh_viewer, rgba_to_texture, upstream_texture};
 use crate::image_canvas::ImageCanvas;
 use crate::model::{Node, ViewerLayer};
@@ -24,6 +25,7 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
     install_theme(&ctx);
     let (worker, _job_rx) = mpsc::channel::<WorkerRequest>();
     let (_done_tx, inflight) = mpsc::channel();
+    let (tx, rx) = crossbeam_channel::unbounded();
     let settings = Settings::default();
     CompNodeApp {
         snarl: Snarl::new(),
@@ -60,7 +62,7 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         sidebar_maximized: false,
         sidebar_open: true,
         images_need_load: true,
-        image_canvas: ImageCanvas::new(),
+        image_canvas: ImageCanvas::new(GPasTeApp::new(tx, rx)),
     }
 }
 

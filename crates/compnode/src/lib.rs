@@ -20,6 +20,7 @@ mod cache;
 mod catalog;
 mod editor;
 mod eval;
+mod gpaste_app;
 mod graph;
 mod graph_menu;
 mod image_canvas;

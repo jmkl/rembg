@@ -15,6 +15,7 @@
 //! Gizmos on the selected layer: drag body = move, corners = uniform scale,
 //! edges = stretch, round handle = rotate (Shift = 15° snap).
 
+use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
 use crate::style::pal;
 use eframe::egui::{
@@ -176,6 +177,8 @@ pub struct LayerInfo<'a> {
     pub angle: f32,
 }
 
+struct Prompt {}
+
 pub struct ImageCanvas {
     canvas_size: Vec2,
     background: Color32,
@@ -207,14 +210,15 @@ pub struct ImageCanvas {
     in_use: HashSet<PathBuf>,
     /// `last_activity` value at the last transform write-back.
     committed_activity: Option<Instant>,
+    gpasteapp: GPasTeApp,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
 /// disk are noticed.
 const FORCE_SYNC_EVERY: Duration = Duration::from_millis(750);
 
-impl Default for ImageCanvas {
-    fn default() -> Self {
+impl ImageCanvas {
+    pub fn new(gpaste_app: GPasTeApp) -> Self {
         Self {
             canvas_size: vec2(1280.0, 720.0),
             background: Color32::from_gray(245),
@@ -232,13 +236,12 @@ impl Default for ImageCanvas {
             last_sync: Instant::now(),
             in_use: HashSet::new(),
             committed_activity: None,
+            gpasteapp: gpaste_app,
         }
     }
-}
 
-impl ImageCanvas {
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn gpaste_app(&mut self) -> &mut GPasTeApp {
+        &mut self.gpasteapp
     }
 
     /// Logical canvas size (default 1280×720).
@@ -575,54 +578,62 @@ impl ImageCanvas {
                 let inner_width = ui.available_width();
 
                 ui.vertical(|ui| {
-                    ui.set_width(inner_width);
-                    ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
+                    egui::Panel::top("top_sidebar_panel")
+                        .resizable(true)
+                        .min_size(150.0)
+                        .show_collapsible(ui, &mut true, |ui| {
+                            ui.set_width(inner_width);
+                            ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
 
-                    // ===== TOP CONTROLS: Width & Height =====
-                    ui.horizontal(|ui| {
-                        ui.set_width(inner_width);
-                        ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.horizontal(|ui| {
+                                ui.set_width(inner_width);
+                                ui.spacing_mut().item_spacing.x = 8.0;
 
-                        let input_w = (inner_width - 8.0) * 0.5;
+                                let input_w = (inner_width - 8.0) * 0.5;
 
-                        let w_rect = ui
-                            .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                            .0;
-                        let mut w_val = self.canvas_size.x;
-                        self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
-                        self.canvas_size.x = w_val;
+                                let w_rect = ui
+                                    .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                                    .0;
+                                let mut w_val = self.canvas_size.x;
+                                self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
+                                self.canvas_size.x = w_val;
 
-                        let h_rect = ui
-                            .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                            .0;
-                        let mut h_val = self.canvas_size.y;
-                        self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
-                        self.canvas_size.y = h_val;
-                    });
+                                let h_rect = ui
+                                    .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                                    .0;
+                                let mut h_val = self.canvas_size.y;
+                                self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
+                                self.canvas_size.y = h_val;
+                            });
 
-                    // ===== CANVAS / PREVIEW AREA =====
-                    let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
-                    let canvas_h = self.canvas_size.y * scale;
+                            let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
+                            let canvas_h = self.canvas_size.y * scale;
 
-                    egui::Frame::new()
-                        .fill(Color32::TRANSPARENT)
-                        .corner_radius(CornerRadius::same(CANVAS_RADIUS))
-                        .stroke(Stroke::NONE)
-                        .inner_margin(0.0)
-                        .show(ui, |ui| {
-                            ui.set_min_size(vec2(inner_width, canvas_h));
-                            ui.allocate_ui_with_layout(
-                                vec2(inner_width, canvas_h),
-                                egui::Layout::top_down(egui::Align::Center),
-                                |ui| {
-                                    self.canvas_ui(ui, scale);
-                                },
-                            );
+                            egui::Frame::new()
+                                .fill(Color32::TRANSPARENT)
+                                .corner_radius(CornerRadius::same(CANVAS_RADIUS))
+                                .stroke(Stroke::NONE)
+                                .inner_margin(0.0)
+                                .show(ui, |ui| {
+                                    ui.set_min_size(vec2(inner_width, canvas_h));
+                                    ui.allocate_ui_with_layout(
+                                        vec2(inner_width, canvas_h),
+                                        egui::Layout::top_down(egui::Align::Center),
+                                        |ui| {
+                                            self.canvas_ui(ui, scale);
+                                        },
+                                    );
+                                });
+
+                            ui.add_space(4.0);
+                            self.layer_list_ui(ui, inner_width);
+
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    self.gpasteapp.render_ui(ui);
+                                })
                         });
-
-                    // ===== LAYER LIST =====
-                    ui.add_space(8.0);
-                    self.layer_list_ui(ui, inner_width);
                 });
             });
     }
