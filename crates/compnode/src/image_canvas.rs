@@ -806,9 +806,9 @@ impl ImageCanvas {
     fn layer_list_ui(&mut self, ui: &mut egui::Ui) {
         let h = ui.available_height().max(120.0);
         egui::Frame::new()
-            .fill(Color32::from_gray(38))
-            .corner_radius(CornerRadius::same(4))
-            .inner_margin(Margin::same(8))
+            .fill(pal::PANEL)
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 egui::ScrollArea::vertical()
@@ -824,7 +824,7 @@ impl ImageCanvas {
     fn layer_rows(&mut self, ui: &mut egui::Ui) {
         let n = self.items.len();
         if n == 0 {
-            ui.colored_label(Color32::from_gray(150), "No layers yet.");
+            ui.colored_label(pal::MUTED, "No layers yet.");
             return;
         }
 
@@ -858,25 +858,33 @@ impl ImageCanvas {
 
             let is_sel = self.selected == Some(id);
             let is_dragged = self.list_drag == Some(id);
-            let mut bg = if is_sel {
-                Color32::from_rgb(205, 228, 255)
+
+            // Dark background with subtle border
+            let bg = if is_sel {
+                Color32::from_rgb(0x3a, 0x4a, 0x6a) // selected: muted blue
+            } else if is_dragged {
+                Color32::from_rgb(0x30, 0x30, 0x30)
+            } else if resp.hovered() {
+                Color32::from_rgb(0x2e, 0x2e, 0x2e)
             } else {
-                Color32::from_gray(240)
+                Color32::from_rgb(0x26, 0x26, 0x26)
             };
-            if is_dragged {
-                bg = bg.gamma_multiply(0.5);
-            }
 
             let painter = ui.painter();
-            painter.rect_filled(rect, CornerRadius::same(3), bg);
-            if is_sel {
-                painter.rect_stroke(
-                    rect,
-                    CornerRadius::same(3),
-                    Stroke::new(1.5, ACCENT),
-                    StrokeKind::Inside,
-                );
-            }
+            painter.rect_filled(rect, CornerRadius::same(4), bg);
+
+            // Light border
+            let border_color = if is_sel {
+                ACCENT
+            } else {
+                Color32::from_gray(0x3a)
+            };
+            painter.rect_stroke(
+                rect,
+                CornerRadius::same(4),
+                Stroke::new(1.0, border_color),
+                StrokeKind::Inside,
+            );
 
             // thumbnail (aspect-fit into a square)
             let box_sz = ROW_H - 8.0;
@@ -899,12 +907,13 @@ impl ImageCanvas {
                 );
             }
 
+            // Light text
             painter.text(
                 pos2(rect.left() + box_sz + 14.0, rect.center().y),
                 Align2::LEFT_CENTER,
                 name,
-                FontId::proportional(14.0),
-                Color32::BLACK,
+                FontId::proportional(13.0),
+                pal::TEXT,
             );
         }
 
