@@ -483,7 +483,7 @@ impl SnarlViewer<Node> for GraphEditor {
                 sw: 0,
                 se: 0,
             })
-            .inner_margin(Margin::symmetric(6, 3))
+            .inner_margin(Margin::symmetric(10, 3))
     }
 
     fn show_header(
@@ -494,67 +494,115 @@ impl SnarlViewer<Node> for GraphEditor {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
-        let open = snarl.get_node_info(node).is_none_or(|info| info.open);
         let spec = catalog::spec(snarl[node].kind());
         let node_width = spec.body_width;
+        let open = snarl.get_node_info(node).is_none_or(|info| info.open);
 
-        // Constrain header width to node width
-        ui.set_min_width(node_width);
-        ui.set_max_width(node_width);
+        const ROW_H: f32 = 22.0;
+        const SIDE_W: f32 = 22.0;
 
-        // Header layout: collapse icon | title (centered) | preview toggle
-        ui.horizontal(|ui| {
-            ui.set_min_width(node_width);
-            ui.set_max_width(node_width);
+        // Lay the header out on an explicit row rect so the chevron hugs the
+        // left edge, the preview toggle hugs the right edge, and the title is
+        // centered on the node rather than on whatever space is left over.
+        let avail = ui.available_rect_before_wrap();
+        let row_w = avail.width().max(node_width);
+        let row_rect = egui::Rect::from_min_size(avail.min, vec2(row_w, ROW_H));
+        ui.allocate_rect(row_rect, egui::Sense::hover());
 
-            // Collapse/expand chevron
-            let open = snarl.get_node_info(node).is_none_or(|info| info.open);
-            let chevron = if open {
-                elegance::glyphs::CHEVRON_DOWN
-            } else {
-                elegance::glyphs::CHEVRON_RIGHT
-            };
-            let chevron_response = ui.add(
-                egui::Button::new(RichText::new(chevron.to_string()).size(13.0).color(pal::HEADER_TEXT))
-                    .frame(false)
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .sense(egui::Sense::click()),
+        let side_w = SIDE_W.min(row_w / 3.0);
+        let chevron_rect = egui::Rect::from_min_size(row_rect.min, vec2(side_w, ROW_H));
+        let eye_rect = egui::Rect::from_min_size(
+            egui::pos2(row_rect.right() - side_w, row_rect.top()),
+            vec2(side_w, ROW_H),
+        );
+        let title_rect = egui::Rect::from_min_max(
+            egui::pos2(chevron_rect.right(), row_rect.top()),
+            egui::pos2(eye_rect.left(), row_rect.bottom()),
+        );
+
+        // Collapse/expand chevron, flush with the left edge.
+        {
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(chevron_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            if chevron_response.on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+            let chevron = if open {
+                glyphs::CHEVRON_DOWN
+            } else {
+                glyphs::CHEVRON_RIGHT
+            };
+            let response = ui.add(
+                egui::Button::new(
+                    RichText::new(chevron.to_string())
+                        .size(13.0)
+                        .color(pal::HEADER_TEXT),
+                )
+                .frame(false)
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE)
+                .sense(egui::Sense::click()),
+            );
+            if response
+                .on_hover_text(if open { "Collapse" } else { "Expand" })
+                .clicked()
+            {
                 snarl.open_node(node, !open);
             }
+        }
 
-            // Title (centered, takes remaining space)
-            let title = catalog::spec(snarl[node].kind()).title;
+        // Preview toggle, flush with the right edge.
+        {
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(eye_rect)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            let enabled = snarl[node].preview_enabled();
+            let glyph = if enabled {
+                glyphs::EYE
+            } else {
+                glyphs::EYE_OFF
+            };
+            let response = ui.add(
+                egui::Button::new(
+                    RichText::new(glyph.to_string())
+                        .size(16.0)
+                        .color(pal::HEADER_TEXT),
+                )
+                .frame(false)
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE)
+                .sense(egui::Sense::click()),
+            );
+            if response
+                .on_hover_text(if enabled {
+                    "Hide preview"
+                } else {
+                    "Show preview"
+                })
+                .clicked()
+            {
+                snarl[node].set_preview_enabled(!enabled);
+            }
+        }
+
+        // Title, centered on the node.
+        {
+            let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(title_rect).layout(
+                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            ));
             ui.add(
                 egui::Label::new(
-                    RichText::new(title)
+                    RichText::new(spec.title)
                         .size(12.0)
-                        .line_height(Some(1.5))
                         .strong()
                         .color(pal::HEADER_TEXT),
                 )
-                .selectable(false),
+                .selectable(false)
+                .truncate(),
             );
-
-            // Spacer to push preview toggle to the right
-            ui.add_space(ui.available_width().max(0.0));
-
-            // Preview toggle (EYE / EYE_OFF)
-            let enabled = snarl[node].preview_enabled();
-            let glyph = if enabled { elegance::glyphs::EYE } else { elegance::glyphs::EYE_OFF };
-            let response = ui.add(
-                egui::Button::new(RichText::new(elegance::glyphs::EYE.to_string()).size(16.0).color(pal::HEADER_TEXT))
-                    .frame(false)
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .sense(egui::Sense::click()),
-            );
-            if response.clicked() {
-                snarl[node].set_preview_enabled(!enabled);
-            }
-        });
+        }
     }
 
     fn show_input(
