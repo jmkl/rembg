@@ -17,7 +17,8 @@ use std::{
 
 const PROMPTS_FILE: &str = "saved_prompts.json";
 const MAX_PREVIEW: f32 = 300.0;
-
+const SLOT_H: f32 = 160.0;
+const SLOT_MIN_W: f32 = 110.0; // below this, the two holders stack vertically
 struct AttachedImage {
     name: String,
     data_url: String,
@@ -69,6 +70,134 @@ fn fit_size(size: egui::Vec2, max_w: f32, max_h: f32) -> egui::Vec2 {
     }
     let scale = (max_w / size.x).min(max_h / size.y).min(1.0);
     size * scale
+}
+
+enum CardAction {
+    None,
+    Open,
+    Delete,
+}
+
+/// One-line, ellipsized text laid out inside `max_w`.
+fn one_line(
+    ui: &egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, max_w);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    ui.painter().layout_job(job)
+}
+
+/// A compact card: title, subtitle, hover highlight, delete button on hover.
+fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
+    const H: f32 = 46.0;
+    const PAD_X: f32 = 10.0;
+    const DEL: f32 = 22.0;
+
+    let mut action = CardAction::None;
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), H), Sense::click());
+
+    // Delete button zone (registered after the row, so it wins clicks on overlap).
+    let del_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - PAD_X - DEL * 0.5, rect.center().y),
+        vec2(DEL, DEL),
+    );
+    let del_resp = ui
+        .interact(
+            del_rect,
+            ui.id().with(("del_prompt", index)),
+            Sense::click(),
+        )
+        .on_hover_text("Delete");
+
+    let hovered = resp.hovered() || del_resp.hovered();
+    let v = ui.visuals();
+    let bg = if hovered {
+        v.widgets.hovered.bg_fill
+    } else {
+        v.widgets.inactive.weak_bg_fill
+    };
+    let border = if hovered {
+        v.selection.bg_fill
+    } else {
+        v.widgets.noninteractive.bg_stroke.color
+    };
+    let text_col = v.text_color();
+    let weak_col = v.weak_text_color();
+
+    let p = ui.painter();
+    p.rect_filled(rect, egui::CornerRadius::same(8), bg);
+    p.rect_stroke(
+        rect,
+        egui::CornerRadius::same(8),
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+
+    // Title = first non-empty line, subtitle = next one (or a size hint).
+    let mut lines = prompt.lines().map(str::trim).filter(|l| !l.is_empty());
+    let title = lines.next().unwrap_or("(empty)");
+    let subtitle = lines
+        .next()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{} chars", prompt.chars().count()));
+
+    let text_w = rect.width() - PAD_X * 2.0 - if hovered { DEL + 6.0 } else { 0.0 };
+    let title_g = one_line(
+        ui,
+        title,
+        egui::FontId::proportional(13.0),
+        text_col,
+        text_w,
+    );
+    let sub_g = one_line(
+        ui,
+        &subtitle,
+        egui::FontId::proportional(11.0),
+        weak_col,
+        text_w,
+    );
+
+    let total_h = title_g.size().y + 2.0 + sub_g.size().y;
+    let top = rect.center().y - total_h * 0.5;
+    ui.painter().galley(
+        egui::pos2(rect.left() + PAD_X, top),
+        title_g.clone(),
+        text_col,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + PAD_X, top + title_g.size().y + 2.0),
+        sub_g,
+        weak_col,
+    );
+
+    // Delete "✕", only while the card is hovered.
+    if hovered {
+        let danger = egui::Color32::from_rgb(0xe0, 0x6c, 0x60);
+        if del_resp.hovered() {
+            ui.painter()
+                .circle_filled(del_rect.center(), DEL * 0.5, danger.gamma_multiply(0.25));
+        }
+        ui.painter().text(
+            del_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "✕",
+            egui::FontId::proportional(12.0),
+            if del_resp.hovered() { danger } else { weak_col },
+        );
+    }
+
+    if resp.on_hover_text(prompt).clicked() && !del_resp.hovered() {
+        action = CardAction::Open;
+    }
+    if del_resp.clicked() {
+        action = CardAction::Delete;
+    }
+    action
 }
 
 /// First line of a prompt, shortened for the sidebar list.
@@ -483,48 +612,50 @@ impl GPasTeApp {
         egui::CentralPanel::default()
             .frame(tight_frame())
             .show(ui, |ui| {
+                // ── Header ──
                 ui.horizontal(|ui| {
-                    ui.heading("Saved prompts");
-                    ui.label(egui::RichText::new(format!("({})", self.saved_prompts.len())).weak());
-                });
-                ui.separator();
-
-                if self.saved_prompts.is_empty() {
-                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Saved prompts").strong().size(14.0));
                     ui.label(
-                        egui::RichText::new(
-                            "No saved prompts yet.\nWrite one and press “Save prompt”.",
-                        )
-                        .weak(),
+                        egui::RichText::new(self.saved_prompts.len().to_string())
+                            .small()
+                            .weak(),
                     );
+                });
+                ui.add_space(2.0);
+
+                // ── Empty state ──
+                if self.saved_prompts.is_empty() {
+                    ui.add_space(24.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new("No saved prompts yet").weak());
+                        ui.label(
+                            egui::RichText::new("Write a prompt and press save")
+                                .small()
+                                .weak(),
+                        );
+                    });
                     return;
                 }
 
+                // ── Cards ──
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
                         for (index, prompt) in self.saved_prompts.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add(elegance::Button::new((elegance::glyphs::X).to_string()))
-                                    .clicked()
-                                {
-                                    to_delete = Some(index);
-                                }
-                                let response = ui
-                                    .selectable_label(false, prompt_title(prompt))
-                                    .on_hover_text(prompt);
-                                if response.clicked() {
-                                    to_fill = Some(index);
-                                }
-                            });
+                            match prompt_card(ui, index, prompt) {
+                                CardAction::Open => to_fill = Some(index),
+                                CardAction::Delete => to_delete = Some(index),
+                                CardAction::None => {}
+                            }
                         }
                     });
             });
 
         if let Some(index) = to_fill {
             self.prompt = self.saved_prompts[index].clone();
-            self.status = "Prompt loaded from sidebar".into();
+            self.sidebar_open = false; // jump back to the editor
+            self.status = "Prompt loaded".into();
         }
         if let Some(index) = to_delete {
             self.saved_prompts.remove(index);
@@ -532,7 +663,6 @@ impl GPasTeApp {
             self.status = "Prompt deleted".into();
         }
     }
-
     fn ebtn_add(&mut self, ic: char) -> elegance::Button {
         elegance::Button::new(egui::RichText::new(ic)).size(ButtonSize::Small)
     }
@@ -677,27 +807,48 @@ impl GPasTeApp {
                         ui.vertical(|ui| {
                             // Two equal slots side by side, each allocated in the layout flow.
                             let gap = 8.0;
-                            let w = (ui.available_width() - gap) / 2.0;
-                            let used = ui.min_rect().height();
-                            let slot_h = (avail_h - used - 24.0).clamp(90.0, w * 1.2);
-                            let slot_size = vec2(w, slot_h);
-                            ui.horizontal_top(|ui| {
-                                ui.spacing_mut().item_spacing.x = gap;
-                                image_slot(
-                                    ui,
-                                    slot_size,
-                                    self.selected_image.as_ref().map(|i| &i.preview),
-                                    "No image attached.",
-                                    self.selected_image.as_ref().map(|i| i.name.as_str()),
-                                );
-                                image_slot(
-                                    ui,
-                                    slot_size,
-                                    self.generated_texture.as_ref(),
-                                    "Nothing generated yet.",
-                                    None,
-                                );
-                            });
+                            let total_w = ui.available_width();
+                            let stacked = total_w < SLOT_MIN_W * 2.0 + gap;
+                            let w = if stacked {
+                                total_w
+                            } else {
+                                ((total_w - gap) / 2.0).floor()
+                            };
+
+                            let area_h = if stacked { SLOT_H * 2.0 + gap } else { SLOT_H };
+                            let (area, _) =
+                                ui.allocate_exact_size(vec2(total_w, area_h), Sense::hover());
+
+                            let slot1 = egui::Rect::from_min_size(area.min, vec2(w, SLOT_H));
+                            let slot2 = if stacked {
+                                egui::Rect::from_min_size(
+                                    area.min + vec2(0.0, SLOT_H + gap),
+                                    vec2(w, SLOT_H),
+                                )
+                            } else {
+                                egui::Rect::from_min_size(
+                                    area.min + vec2(w + gap, 0.0),
+                                    vec2(w, SLOT_H),
+                                )
+                            };
+
+                            image_slot(
+                                ui,
+                                slot1,
+                                "attached",
+                                self.selected_image.as_ref().map(|i| &i.preview),
+                                "No image attached.",
+                                self.selected_image.as_ref().map(|i| i.name.as_str()),
+                            );
+                            image_slot(
+                                ui,
+                                slot2,
+                                "generated",
+                                self.generated_texture.as_ref(),
+                                "Nothing generated yet.",
+                                None,
+                            );
+
                             if !self.image_status.is_empty() {
                                 ui.label(egui::RichText::new(&self.image_status).small().weak());
                             }
@@ -739,40 +890,52 @@ impl GPasTeApp {
         }
     }
 }
-/// Bordered preview box. Fits the texture inside, shows `empty_text` otherwise.
+/// Paints one preview holder inside `rect`. Everything is clipped to `rect`.
 fn image_slot(
     ui: &mut egui::Ui,
-    size: egui::Vec2,
+    rect: egui::Rect,
+    id: &str,
     tex: Option<&egui::TextureHandle>,
     empty_text: &str,
     name: Option<&str>,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_stroke(
+    let painter = ui.painter_at(rect); // clips to the holder
+    painter.rect_stroke(
         rect,
         egui::CornerRadius::same(6),
         ui.visuals().widgets.noninteractive.bg_stroke,
         egui::StrokeKind::Inside,
     );
 
+    let inner = rect.shrink(4.0);
     match tex {
-        Some(tex) => {
-            let inner = rect.shrink(4.0);
-            let fitted = fit_size(tex.size_vec2(), inner.width(), inner.height());
-            let img_rect = egui::Rect::from_center_size(inner.center(), fitted);
-            ui.put(img_rect, egui::Image::new((tex.id(), fitted)));
-        }
-        None => {
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                empty_text,
-                egui::FontId::proportional(12.0),
-                ui.visuals().weak_text_color(),
+        Some(tex) if tex.size_vec2().x > 0.0 && tex.size_vec2().y > 0.0 => {
+            let t = tex.size_vec2();
+            let k = (inner.width() / t.x).min(inner.height() / t.y);
+            let img_rect = egui::Rect::from_center_size(inner.center(), t * k);
+            painter.image(
+                tex.id(),
+                img_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
             );
         }
+        _ => {
+            let color = ui.visuals().weak_text_color();
+            // Wraps to the holder width instead of overflowing it.
+            let galley = painter.layout(
+                empty_text.to_owned(),
+                egui::FontId::proportional(12.0),
+                color,
+                inner.width().max(1.0),
+            );
+            let pos = inner.center() - galley.size() / 2.0;
+            painter.galley(pos, galley, color);
+        }
     }
+
+    let resp = ui.interact(rect, ui.id().with(("preview_slot", id)), Sense::hover());
     if let Some(name) = name {
-        let _ = resp.on_hover_text(name);
+        resp.on_hover_text(name);
     }
 }
