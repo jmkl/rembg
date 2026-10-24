@@ -540,30 +540,58 @@ impl ImageCanvas {
             self.clear_selection();
         }
 
+        // Available width for the whole panel
+        let available_width = ui.available_width();
+
         // --- canvas size inputs ---
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label("Canvas W:");
+            ui.set_width(available_width);
+            ui.label(
+                egui::RichText::new("Canvas")
+                    .size(11.0)
+                    .color(pal::MUTED)
+                    .strong(),
+            );
+            ui.add_space(8.0);
+            let input_w = (available_width - 120.0).max(100.0) / 2.0;
             ui.add(
                 egui::DragValue::new(&mut self.canvas_size.x)
                     .range(64.0..=8192.0)
-                    .speed(1.0),
+                    .speed(1.0)
+                    .prefix("W: ")
+                    .suffix("px")
+                    .fixed_decimals(0),
             );
-            ui.label("H:");
+            ui.add_space(8.0);
             ui.add(
                 egui::DragValue::new(&mut self.canvas_size.y)
                     .range(64.0..=8192.0)
-                    .speed(1.0),
+                    .speed(1.0)
+                    .prefix("H: ")
+                    .suffix("px")
+                    .fixed_decimals(0),
             );
         });
-        ui.add_space(6.0);
+        ui.add_space(12.0);
 
-        let scale = (ui.available_width() / self.canvas_size.x)
-            .min(1.0)
-            .max(0.05);
-        self.canvas_ui(ui, scale);
+        // --- canvas (centered) ---
+        let scale = (available_width / self.canvas_size.x).min(1.0).max(0.05);
+        let canvas_w = self.canvas_size.x * scale;
+        let canvas_h = self.canvas_size.y * scale;
 
-        ui.add_space(10.0);
+        ui.allocate_ui_with_layout(
+            vec2(available_width, canvas_h + 4.0),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.add_space(2.0);
+                self.canvas_ui(ui, scale);
+            },
+        );
+
+        ui.add_space(16.0);
         self.layer_list_ui(ui);
+        ui.add_space(8.0);
     }
 
     // ---------------- canvas ----------------
