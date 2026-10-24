@@ -31,7 +31,17 @@ use std::time::{Duration, Instant};
 const HANDLE_R: f32 = 8.0; // screen pixels
 const ROT_DIST: f32 = 32.0; // screen pixels
 const MIN_SIZE: f32 = 8.0; // canvas units
-const ROW_H: f32 = 34.0;
+const ROW_H: f32 = 36.0;
+// Sidebar design constants
+const SIDEBAR_PADDING: f32 = 16.0;
+const SIDEBAR_GAP: f32 = 12.0;
+const INPUT_H: f32 = 36.0;
+const INPUT_RADIUS: u8 = 8;
+const CANVAS_RADIUS: u8 = 12;
+const LAYER_RADIUS: u8 = 8;
+const DRAG_HANDLE_DOT: f32 = 4.0;
+const DRAG_HANDLE_GAP: f32 = 3.0;
+const DRAG_HANDLE_SIZE: f32 = 24.0;
 const ACCENT: Color32 = Color32::from_rgb(0, 140, 255);
 
 const SCALE_HANDLES: [(i8, i8); 8] = [
@@ -527,71 +537,150 @@ impl ImageCanvas {
 
     // ---------------- the widget ----------------
 
+    /// Draw the six-dot drag handle (2 columns × 3 rows)
+    fn draw_drag_handle(&self, ui: &mut egui::Ui, rect: Rect) {
+        let painter = ui.painter();
+        let dot_r = DRAG_HANDLE_DOT * 0.5;
+        let start_x = rect.left() + (rect.width() - (DRAG_HANDLE_DOT * 2.0 + DRAG_HANDLE_GAP)) * 0.5;
+        let start_y = rect.top() + (rect.height() - (DRAG_HANDLE_DOT * 3.0 + DRAG_HANDLE_GAP * 2.0)) * 0.5;
+
+        for row in 0..3 {
+            for col in 0..2 {
+                let cx = start_x + col as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
+                let cy = start_y + row as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
+                painter.circle_filled(
+                    egui::pos2(cx, cy),
+                    dot_r,
+                    pal::SIDEBAR_DRAG_HANDLE,
+                );
+            }
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        // Right-click anywhere in the panel (canvas, layer list or empty
-        // space) clears the selection and hides the gizmos.
+        // Right-click anywhere in the panel clears selection
         let panel_rect = ui.max_rect();
         if ui.input(|i| {
             i.pointer.secondary_clicked()
-                && i.pointer
-                    .interact_pos()
-                    .is_some_and(|p| panel_rect.contains(p))
+                && i.pointer.interact_pos().is_some_and(|p| panel_rect.contains(p))
         }) {
             self.clear_selection();
         }
 
-        // Available width for the whole panel
         let available_width = ui.available_width();
+        let inner_width = available_width - SIDEBAR_PADDING * 2.0;
 
-        // --- canvas size inputs ---
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.set_width(available_width);
-            ui.label(
-                egui::RichText::new("Canvas")
-                    .size(11.0)
-                    .color(pal::MUTED)
-                    .strong(),
-            );
-            ui.add_space(8.0);
-            let input_w = (available_width - 120.0).max(100.0) / 2.0;
-            ui.add(
-                egui::DragValue::new(&mut self.canvas_size.x)
-                    .range(64.0..=8192.0)
-                    .speed(1.0)
-                    .prefix("W: ")
-                    .suffix("px")
-                    .fixed_decimals(0),
-            );
-            ui.add_space(8.0);
-            ui.add(
-                egui::DragValue::new(&mut self.canvas_size.y)
-                    .range(64.0..=8192.0)
-                    .speed(1.0)
-                    .prefix("H: ")
-                    .suffix("px")
-                    .fixed_decimals(0),
-            );
-        });
-        ui.add_space(12.0);
+        // Main container frame
+        egui::Frame::new()
+            .fill(pal::SIDEBAR_BG)
+            .corner_radius(CornerRadius::same(12))
+            .stroke(Stroke::new(1.0, pal::SIDEBAR_BORDER))
+            .inner_margin(Margin::symmetric(SIDEBAR_PADDING as i8, SIDEBAR_PADDING as i8))
+            .show(ui, |ui| {
+                ui.set_width(inner_width);
+                ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
 
-        // --- canvas (centered) ---
-        let scale = (available_width / self.canvas_size.x).min(1.0).max(0.05);
-        let canvas_w = self.canvas_size.x * scale;
-        let canvas_h = self.canvas_size.y * scale;
+                // ===== TOP CONTROLS: Width & Height =====
+                ui.horizontal(|ui| {
+                    ui.set_width(inner_width);
+                    ui.spacing_mut().item_spacing.x = 8.0;
 
-        ui.allocate_ui_with_layout(
-            vec2(available_width, canvas_h + 4.0),
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                ui.add_space(2.0);
-                self.canvas_ui(ui, scale);
-            },
+                    let input_w = (inner_width - 8.0) * 0.5;
+
+                    // Width input
+                    let w_rect = ui.allocate_exact_size(
+                        vec2(input_w, INPUT_H),
+                        Sense::hover(),
+                    ).0;
+                    let mut w_val = self.canvas_size.x;
+                    self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
+                    self.canvas_size.x = w_val;
+
+                    // Height input
+                    let h_rect = ui.allocate_exact_size(
+                        vec2(input_w, INPUT_H),
+                        Sense::hover(),
+                    ).0;
+                    let mut h_val = self.canvas_size.y;
+                    self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
+                    self.canvas_size.y = h_val;
+                });
+
+                // ===== CANVAS / PREVIEW AREA =====
+                let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
+                let canvas_w = self.canvas_size.x * scale;
+                let canvas_h = self.canvas_size.y * scale;
+
+                // Canvas container frame
+                egui::Frame::new()
+                    .fill(pal::SIDEBAR_CANVAS_BG)
+                    .corner_radius(CornerRadius::same(CANVAS_RADIUS))
+                    .stroke(Stroke::new(1.0, pal::SIDEBAR_BORDER))
+                    .inner_margin(0.0)
+                    .show(ui, |ui| {
+                        ui.set_min_size(vec2(inner_width, canvas_h));
+                        ui.allocate_ui_with_layout(
+                            vec2(inner_width, canvas_h),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                self.canvas_ui(ui, scale);
+                            },
+                        );
+                    });
+
+                // ===== LAYER LIST =====
+                ui.add_space(8.0);
+                self.layer_list_ui(ui, inner_width);
+            });
+    }
+
+    /// Draw a single input field (WIDTH/HEIGHT) with label inside
+    fn draw_input_field(&mut self, ui: &mut egui::Ui, rect: Rect, label: &str, value: &mut f32) {
+        let response = ui.allocate_rect(rect, Sense::click());
+
+        // Input background
+        let bg_color = if response.hovered() || response.has_focus() {
+            Color32::from_rgb(0x20, 0x24, 0x29)
+        } else {
+            pal::SIDEBAR_INPUT_BG
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(INPUT_RADIUS), bg_color);
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(INPUT_RADIUS),
+            Stroke::new(1.0, pal::SIDEBAR_BORDER_LIGHT),
+            StrokeKind::Inside,
         );
 
-        ui.add_space(16.0);
-        self.layer_list_ui(ui);
-        ui.add_space(8.0);
+        // Label + value text
+        let label_pos = egui::pos2(rect.left() + 12.0, rect.top() + 6.0);
+        ui.painter().text(
+            label_pos,
+            Align2::LEFT_TOP,
+            label,
+            FontId::proportional(9.0),
+            pal::SIDEBAR_TEXT_MUTED,
+        );
+
+        let value_str = format!("{:.0} px", value);
+        let value_pos = egui::pos2(rect.left() + 12.0, rect.center().y + 2.0);
+        ui.painter().text(
+            value_pos,
+            Align2::LEFT_CENTER,
+            value_str,
+            FontId::new(13.0, egui::FontFamily::Proportional),
+            pal::SIDEBAR_TEXT,
+        );
+
+        // DragValue interaction - place it in the rect
+        let mut dv = egui::DragValue::new(value)
+            .range(64.0..=8192.0)
+            .speed(1.0)
+            .fixed_decimals(0)
+            .custom_formatter(|v, _| format!("{:.0}", v))
+            .custom_parser(|s| s.parse::<f64>().ok());
+        let inner_rect = rect.shrink(8.0);
+        ui.put(inner_rect, dv);
     }
 
     // ---------------- canvas ----------------
@@ -831,46 +920,33 @@ impl ImageCanvas {
         self.items.reverse();
     }
 
-    fn layer_list_ui(&mut self, ui: &mut egui::Ui) {
-        let h = ui.available_height().max(120.0);
-        egui::Frame::new()
-            .fill(pal::PANEL)
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .max_height((h - 20.0).max(60.0))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 6.0;
-                        self.layer_rows(ui);
-                    });
-            });
-    }
-
-    fn layer_rows(&mut self, ui: &mut egui::Ui) {
+    fn layer_list_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
         let n = self.items.len();
         if n == 0 {
-            ui.colored_label(pal::MUTED, "No layers yet.");
+            return;
+        }
+
+        // Layer list without scroll - just render the rows
+        ui.spacing_mut().item_spacing.y = 8.0;
+        self.layer_rows(ui, inner_width);
+    }
+
+    fn layer_rows(&mut self, ui: &mut egui::Ui, inner_width: f32) {
+        let n = self.items.len();
+        if n == 0 {
             return;
         }
 
         let mut rows: Vec<Rect> = Vec::with_capacity(n);
         for d in 0..n {
             let idx = n - 1 - d; // top of the list = front-most layer
-            let (id, name, tex_id, size): (NodeId, String, Option<TextureId>, Vec2) = {
-                let it = &self.items[idx];
-                (
-                    it.id,
-                    it.name.clone(),
-                    it.tex.as_ref().map(|t| t.id()),
-                    it.size,
-                )
-            };
+            let id = self.items[idx].id;
+            let name = self.items[idx].name.clone();
 
-            let (rect, resp) =
-                ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
+            let (rect, resp) = ui.allocate_exact_size(
+                vec2(inner_width, ROW_H),
+                Sense::click_and_drag(),
+            );
             rows.push(rect);
 
             if resp.clicked() || resp.drag_started() {
@@ -887,61 +963,44 @@ impl ImageCanvas {
             let is_sel = self.selected == Some(id);
             let is_dragged = self.list_drag == Some(id);
 
-            // Dark background with subtle border
             let bg = if is_sel {
-                Color32::from_rgb(0x3a, 0x4a, 0x6a) // selected: muted blue
+                Color32::from_rgb(0x2a, 0x35, 0x4a)
             } else if is_dragged {
-                Color32::from_rgb(0x30, 0x30, 0x30)
+                pal::SIDEBAR_LAYER_BG_HOVER
             } else if resp.hovered() {
-                Color32::from_rgb(0x2e, 0x2e, 0x2e)
+                pal::SIDEBAR_LAYER_BG_HOVER
             } else {
-                Color32::from_rgb(0x26, 0x26, 0x26)
+                pal::SIDEBAR_LAYER_BG
             };
 
-            let painter = ui.painter();
-            painter.rect_filled(rect, CornerRadius::same(4), bg);
+            ui.painter().rect_filled(rect, CornerRadius::same(LAYER_RADIUS), bg);
 
-            // Light border
             let border_color = if is_sel {
-                ACCENT
+                pal::SIDEBAR_ACCENT
             } else {
-                Color32::from_gray(0x3a)
+                pal::SIDEBAR_BORDER
             };
-            painter.rect_stroke(
+            ui.painter().rect_stroke(
                 rect,
-                CornerRadius::same(4),
+                CornerRadius::same(LAYER_RADIUS),
                 Stroke::new(1.0, border_color),
                 StrokeKind::Inside,
             );
 
-            // thumbnail (aspect-fit into a square)
-            let box_sz = ROW_H - 8.0;
-            let aspect = (size.x / size.y).max(0.01);
-            let (tw, th) = if aspect >= 1.0 {
-                (box_sz, box_sz / aspect)
-            } else {
-                (box_sz * aspect, box_sz)
-            };
-            let thumb = Rect::from_center_size(
-                pos2(rect.left() + 4.0 + box_sz / 2.0, rect.center().y),
-                vec2(tw, th),
+            // Six-dot drag handle on the left
+            let handle_rect = Rect::from_min_size(
+                egui::pos2(rect.left() + 12.0, rect.center().y - DRAG_HANDLE_SIZE * 0.5),
+                vec2(DRAG_HANDLE_SIZE, DRAG_HANDLE_SIZE),
             );
-            if let Some(tex_id) = tex_id {
-                painter.image(
-                    tex_id,
-                    thumb,
-                    Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-            }
+            self.draw_drag_handle(ui, handle_rect);
 
-            // Light text
-            painter.text(
-                pos2(rect.left() + box_sz + 14.0, rect.center().y),
+            // Layer name
+            ui.painter().text(
+                egui::pos2(rect.left() + 12.0 + DRAG_HANDLE_SIZE + 16.0, rect.center().y),
                 Align2::LEFT_CENTER,
                 name,
                 FontId::proportional(13.0),
-                pal::TEXT,
+                pal::SIDEBAR_TEXT,
             );
         }
 
@@ -950,12 +1009,12 @@ impl ImageCanvas {
             if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
                 let slot = rows.iter().position(|r| p.y < r.center().y).unwrap_or(n);
                 let y = if slot < n {
-                    rows[slot].top() - 3.0
+                    rows[slot].top() - 4.0
                 } else {
-                    rows[n - 1].bottom() + 3.0
+                    rows[n - 1].bottom() + 4.0
                 };
                 ui.painter()
-                    .hline(rows[0].x_range(), y, Stroke::new(2.0, ACCENT));
+                    .hline(rows[0].x_range(), y, Stroke::new(2.0, pal::SIDEBAR_ACCENT));
 
                 if ui.input(|i| i.pointer.primary_released()) {
                     self.move_layer(drag_id, slot);

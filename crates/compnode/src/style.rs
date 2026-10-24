@@ -13,6 +13,19 @@ use elegance::Theme;
 pub(crate) mod pal {
     use egui::Color32;
 
+    // --- Sidebar / panel palette (design spec) ---
+    pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x13, 0x16, 0x19);  // near-black charcoal
+    pub const SIDEBAR_BORDER: Color32 = Color32::from_rgb(0x3a, 0x3d, 0x41);  // thin dark gray border
+    pub const SIDEBAR_BORDER_LIGHT: Color32 = Color32::from_rgb(0x5a, 0x5d, 0x61);  // lighter border for inputs
+    pub const SIDEBAR_INPUT_BG: Color32 = Color32::from_rgb(0x1a, 0x1d, 0x21);  // input background
+    pub const SIDEBAR_CANVAS_BG: Color32 = Color32::from_rgb(0x18, 0x1b, 0x1f);  // canvas area background
+    pub const SIDEBAR_LAYER_BG: Color32 = Color32::from_rgb(0x1c, 0x1f, 0x23);  // layer row background
+    pub const SIDEBAR_LAYER_BG_HOVER: Color32 = Color32::from_rgb(0x22, 0x26, 0x2b);  // layer row hover
+    pub const SIDEBAR_TEXT: Color32 = Color32::from_rgb(0xe0, 0xe0, 0xe0);  // main text
+    pub const SIDEBAR_TEXT_MUTED: Color32 = Color32::from_rgb(0x8a, 0x8d, 0x93);  // muted text
+    pub const SIDEBAR_DRAG_HANDLE: Color32 = Color32::from_rgb(0x5a, 0x5d, 0x61);  // drag handle dots
+    pub const SIDEBAR_ACCENT: Color32 = Color32::from_rgb(0x47, 0x76, 0xd1);  // accent blue
+
     pub const BG: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x1e);
     pub const GRID: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
     pub const PANEL: Color32 = Color32::from_rgb(0x28, 0x28, 0x28);
