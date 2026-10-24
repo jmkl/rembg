@@ -1,13 +1,14 @@
 //! Small reusable drawing/widget helpers shared by node bodies.
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, RichText, Shape, Stroke, Vec2,
+    Align2, CornerRadius, FontId, Mesh, Pos2, Rect, Shape, Stroke, Vec2,
     epaint::Vertex, pos2, vec2,
 };
 use egui_snarl::ui::PinInfo;
 
 use crate::model::{RunTiming, ViewerLayer};
-use crate::style::pal;
+use crate::style::controls::muted;
+use crate::style::{font, pal};
 
 /// Viewer preview: draw every layer bottom-to-top into the same frame,
 /// applying each layer's center/size/angle transform so it matches ImageCanvas.
@@ -65,7 +66,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
                 mesh.vertices.push(Vertex {
                     pos: to_screen(corners[k]),
                     uv: uvs[k],
-                    color: Color32::WHITE,
+                    color: pal::NO_TINT,
                 });
             }
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
@@ -79,7 +80,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
             rect.center(),
             Align2::CENTER_CENTER,
             "connect layers",
-            FontId::proportional(11.0),
+            FontId::proportional(font::LABEL),
             pal::MUTED,
         );
     }
@@ -103,7 +104,7 @@ pub(crate) fn preview(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, 
                 rect.center(),
                 Align2::CENTER_CENTER,
                 "no preview",
-                FontId::proportional(11.0),
+                FontId::proportional(font::LABEL),
                 pal::MUTED,
             );
         }
@@ -151,18 +152,11 @@ fn paint_preview_texture(painter: &egui::Painter, rect: egui::Rect, texture: &eg
         texture.id(),
         dst,
         egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-        Color32::WHITE,
+        pal::NO_TINT,
     );
 }
 
-pub(crate) fn error_line(ui: &mut egui::Ui, error: Option<&str>) {
-    if let Some(error) = error {
-        elegance::Callout::new(elegance::CalloutTone::Danger)
-            .icon(elegance::glyphs::TRIANGLE_ALERT.to_string())
-            .body(egui::RichText::new(error).size(9.0))
-            .show(ui, |_| {});
-    }
-}
+pub(crate) use crate::style::controls::error_line;
 
 fn duration_text(duration: std::time::Duration) -> String {
     if duration.as_secs_f64() < 1.0 {
@@ -183,24 +177,23 @@ pub(crate) fn timing_line(ui: &mut egui::Ui, timing: Option<RunTiming>) {
         "model cache off"
     };
     ui.add(
-        egui::Label::new(
-            RichText::new(format!(
+        egui::Label::new(muted(
+            format!(
                 "Last run {} · load {}\nInference {} · {}",
                 duration_text(timing.total),
                 duration_text(timing.load),
                 duration_text(timing.infer),
                 cache,
-            ))
-            .size(9.0)
-            .color(pal::MUTED),
-        )
+            ),
+            font::TINY,
+        ))
         .selectable(false),
     );
 }
 
 pub(crate) fn socket(ui: &mut egui::Ui, label: &str) -> PinInfo {
     if !label.is_empty() {
-        ui.add(egui::Label::new(RichText::new(label).size(11.0).color(pal::MUTED)).selectable(false));
+        ui.add(egui::Label::new(muted(label, font::LABEL)).selectable(false));
     }
     PinInfo::circle()
         .with_fill(pal::SOCKET)

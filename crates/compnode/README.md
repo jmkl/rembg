@@ -83,7 +83,7 @@ reloadable path are never released.
 
 | Module | Responsibility |
 | --- | --- |
-| `style.rs` | Palette, spacing, egui/elegance theme, Snarl canvas style |
+| `style/` | All styling: `palette.rs` (every colour), `icons.rs` (icon font), `controls.rs` (widget kit on vanilla egui), `mod.rs` (metrics, egui theme, Snarl style) |
 | `model.rs` | `Node`, `Preview`, `Process`, viewer layers, node accessors |
 | `catalog.rs` | Single registry of node kinds, menu metadata and body functions |
 | `nodes/` | One body UI module per node kind |
@@ -129,7 +129,7 @@ are driven by `NODE_SPECS`.
 
 ## Styling
 
-Change colours, radii, typography and spacing in `style.rs`. Node header
+Change colours in `style/palette.rs`, and radii, typography, spacing and the egui theme in `style/mod.rs`. Widgets live in `style/controls.rs`. Node header
 colours live in `pal::HEADER_*` and are assigned per node in `catalog.rs`.
 Body padding is `style::BODY_MARGIN`; default widths are `BODY_W` and
 `VIEWER_W`.

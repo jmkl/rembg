@@ -1,11 +1,12 @@
 //! Multi-layer viewer node.
 
-use egui::{RichText, Ui};
+use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
 
 use crate::editor::GraphEditor;
 use crate::model::{Kind, Node};
-use crate::style::pal;
+use crate::style::controls::muted;
+use crate::style::font;
 use crate::widgets::preview_layers;
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
@@ -30,5 +31,5 @@ pub(crate) fn show_body(
         1 => "1 layer".to_owned(),
         count => format!("{count} layers"),
     };
-    ui.add(egui::Label::new(RichText::new(text).size(10.0).color(pal::MUTED)).selectable(false));
+    ui.add(egui::Label::new(muted(text, font::SMALL)).selectable(false));
 }

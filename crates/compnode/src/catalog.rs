@@ -2,12 +2,11 @@
 
 use egui::{Color32, Pos2, Ui};
 use egui_snarl::{NodeId, Snarl};
-use elegance::glyphs;
 
 use crate::editor::GraphEditor;
 use crate::model::{FilterKind, Kind, Node};
 use crate::nodes;
-use crate::style::{NODE_W, pal};
+use crate::style::{NODE_W, icons, pal};
 
 pub(crate) type BodyFn = fn(&mut GraphEditor, NodeId, &mut Ui, &mut Snarl<Node>, f32);
 pub(crate) type CreateFn = fn(&mut Snarl<Node>, Pos2, Kind);
@@ -570,7 +569,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Image,
         title: "Image",
-        icon: glyphs::FOLDER_OPEN,
+        icon: icons::FOLDER_OPEN,
         keywords: &[
             "load", "file", "picture", "texture", "source", "asset", "input",
         ],
@@ -591,7 +590,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::RemoveBg,
         title: "Remove Background",
-        icon: glyphs::NETWORK,
+        icon: icons::NETWORK,
         keywords: &["background", "matte", "birefnet", "cutout", "alpha"],
         accent: pal::HEADER_REMOVE_BG,
         inputs: 1,
@@ -610,7 +609,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::RemoveBgV2,
         title: "Remove Background (v2)",
-        icon: glyphs::NETWORK,
+        icon: icons::NETWORK,
         keywords: &["background", "matte", "rmbg", "cutout", "alpha", "v2"],
         accent: pal::HEADER_REMOVE_BG,
         inputs: 1,
@@ -629,7 +628,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::FaceRestore,
         title: "Face Restore",
-        icon: glyphs::PENCIL,
+        icon: icons::PENCIL,
         keywords: &["face", "restore", "gfpgan", "upscale", "enhance"],
         accent: pal::HEADER_FACE_RESTORE,
         inputs: 1,
@@ -648,7 +647,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Output,
         title: "Output",
-        icon: glyphs::EYE,
+        icon: icons::EYE,
         keywords: &["output", "view", "layers", "preview"],
         accent: pal::HEADER_VIEWER,
         inputs: 1,
@@ -667,7 +666,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Route),
         title: "Route",
-        icon: glyphs::ARROW_RIGHT,
+        icon: icons::ARROW_RIGHT,
         keywords: &["route", "pass", "passthrough", "identity"],
         accent: pal::HEADER_ROUTE,
         inputs: 1,
@@ -686,7 +685,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Group),
         title: "Group",
-        icon: glyphs::NETWORK,
+        icon: icons::NETWORK,
         keywords: &["group", "mix", "stack", "composite"],
         accent: pal::HEADER_GROUP,
         inputs: 1,
@@ -705,7 +704,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Blend),
         title: "Blend",
-        icon: glyphs::COPY,
+        icon: icons::COPY,
         keywords: &["blend", "mix", "composite", "overlay"],
         accent: pal::HEADER_BLEND,
         inputs: 2,
@@ -730,7 +729,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Mask),
         title: "Mask",
-        icon: glyphs::EYE_OFF,
+        icon: icons::EYE_OFF,
         keywords: &["mask", "alpha", "cutout"],
         accent: pal::HEADER_MASK,
         inputs: 2,
@@ -755,7 +754,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Hsv),
         title: "Hue / Saturation",
-        icon: glyphs::FILTER,
+        icon: icons::FILTER,
         keywords: &["hue", "saturation", "value", "color"],
         accent: pal::HEADER_HSV,
         inputs: 1,
@@ -774,7 +773,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Curves),
         title: "Curves",
-        icon: glyphs::PENCIL,
+        icon: icons::PENCIL,
         keywords: &["curves", "levels", "lut"],
         accent: pal::HEADER_CURVES,
         inputs: 1,
@@ -793,7 +792,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Exposure),
         title: "Exposure",
-        icon: glyphs::ZOOM_IN,
+        icon: icons::ZOOM_IN,
         keywords: &["exposure", "brightness", "gamma"],
         accent: pal::HEADER_EXPOSURE,
         inputs: 1,
@@ -812,7 +811,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::ColorBalance),
         title: "Color Balance",
-        icon: glyphs::FILTER,
+        icon: icons::FILTER,
         keywords: &["color", "balance", "tone"],
         accent: pal::HEADER_COLOR_BALANCE,
         inputs: 1,
@@ -831,7 +830,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::GradientMap),
         title: "Gradient Map",
-        icon: glyphs::FILTER,
+        icon: icons::FILTER,
         keywords: &["gradient", "map", "duotone"],
         accent: pal::HEADER_GRADIENT_MAP,
         inputs: 1,
@@ -850,7 +849,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Invert),
         title: "Invert",
-        icon: glyphs::REFRESH,
+        icon: icons::REFRESH,
         keywords: &["invert", "negative"],
         accent: pal::HEADER_INVERT,
         inputs: 1,
@@ -869,7 +868,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Gradient),
         title: "Gradient",
-        icon: glyphs::DOWNLOAD,
+        icon: icons::DOWNLOAD,
         keywords: &["gradient", "background", "generate"],
         accent: pal::HEADER_GRADIENT,
         inputs: 0,
@@ -885,7 +884,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     NodeSpec {
         kind: Kind::Filter(FilterKind::Noise),
         title: "Noise",
-        icon: glyphs::REFRESH,
+        icon: icons::REFRESH,
         keywords: &["noise", "texture", "procedural"],
         accent: pal::HEADER_NOISE,
         inputs: 0,

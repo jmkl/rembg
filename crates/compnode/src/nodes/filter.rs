@@ -9,6 +9,8 @@ use crate::graph::invalidate_node;
 use crate::model::{FilterKind, Kind, Node};
 use crate::ops;
 use crate::params::{self, CurvePoint, Params};
+use crate::style::controls::{Button, ColorField, Select, Slider};
+use crate::style::pal;
 use crate::widgets::{error_line, preview};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, kind: Kind) {
@@ -75,7 +77,7 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
         } => {
             let mut value = params::f32(params, field.key, *min);
             let response = ui.add(
-                elegance::Slider::new(&mut value, *min..=*max)
+                Slider::new(&mut value, *min..=*max)
                     .label(field.label)
                     .suffix(*suffix)
                     .step(*step)
@@ -91,7 +93,7 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
         FieldKind::Number { min, max, step } => {
             let mut value = params::f32(params, field.key, *min);
             let response = ui.add(
-                elegance::Slider::new(&mut value, *min..=*max)
+                Slider::new(&mut value, *min..=*max)
                     .label(field.label)
                     .step(*step)
                     .decimals(decimals_for(*step)),
@@ -105,11 +107,9 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
         }
         FieldKind::Color => {
             let rgb = params::color(params, field.key, "#000000");
-            let mut color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            let mut color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
             let response = ui.add(
-                elegance::ColorPicker::new((field.key, field.label), &mut color)
-                    .label(field.label)
-                    .hex_input(true),
+                ColorField::new((field.key, field.label), &mut color).label(field.label),
             );
             if response.changed() {
                 params::set_string(
@@ -131,7 +131,7 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
             .to_owned();
             let mut selected = current.clone();
             let response = ui.add(
-                elegance::Select::new((field.key, field.label), &mut selected)
+                Select::new((field.key, field.label), &mut selected)
                     .label(field.label)
                     .options(options.iter().map(|o| (o.value.to_owned(), o.label)))
                     .width(ui.available_width()),
@@ -170,7 +170,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
-    painter.rect_filled(rect, 4.0, Color32::from_gray(24));
+    painter.rect_filled(rect, 4.0, pal::CURVE_BG);
     // Grid.
     for step in 1..4 {
         let t = step as f32 / 4.0;
@@ -178,17 +178,17 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
         let y = rect.top() + rect.height() * (1.0 - t);
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            egui::Stroke::new(1.0, Color32::from_gray(40)),
+            egui::Stroke::new(1.0, pal::CURVE_GRID),
         );
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, Color32::from_gray(40)),
+            egui::Stroke::new(1.0, pal::CURVE_GRID),
         );
     }
     // Diagonal reference.
     painter.line_segment(
         [rect.left_bottom(), rect.right_top()],
-        egui::Stroke::new(1.0, Color32::from_gray(60)),
+        egui::Stroke::new(1.0, pal::CURVE_DIAGONAL),
     );
 
     // Map normalized point to screen.
@@ -212,7 +212,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
         if let Some(previous) = prev {
             painter.line_segment(
                 [previous, pos],
-                egui::Stroke::new(1.5, Color32::from_rgb(0x7a, 0xb8, 0xff)),
+                egui::Stroke::new(1.5, pal::CURVE_LINE),
             );
         }
         prev = Some(pos);
@@ -221,8 +221,8 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     // Handles.
     for (index, point) in points.iter().enumerate() {
         let pos = to_screen(*point);
-        painter.circle_filled(pos, 5.0, Color32::from_rgb(0xff, 0xff, 0xff));
-        painter.circle_stroke(pos, 5.0, egui::Stroke::new(1.0, Color32::BLACK));
+        painter.circle_filled(pos, 5.0, pal::CURVE_HANDLE);
+        painter.circle_stroke(pos, 5.0, egui::Stroke::new(1.0, pal::CURVE_HANDLE_STROKE));
         let _ = index;
     }
 
@@ -312,9 +312,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     }
 
     // Reset button.
-    if ui
-        .add(elegance::Button::new("Reset").size(elegance::ButtonSize::Small))
-        .clicked()
+    if ui.add(Button::new("Reset").small()).clicked()
     {
         points = params::identity_curve();
         changed = true;

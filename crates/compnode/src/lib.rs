@@ -2,7 +2,7 @@
 //!
 //! The crate is split by responsibility:
 //!
-//! - [`style`] owns every visual constant and the egui/elegance theme setup.
+//! - [`style`] owns every visual constant and the egui/egui theme setup.
 //! - [`model`] contains graph data (nodes, previews, viewer layers).
 //! - [`catalog`] is the single node registry used by menus and the graph view.
 //! - [`nodes`] contains one body UI module per node kind.

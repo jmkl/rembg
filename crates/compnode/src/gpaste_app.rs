@@ -3,7 +3,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui::{Sense, vec2};
-use elegance::{ButtonSize, glyphs};
+use crate::style::controls::Button;
+use crate::style::{font, icons, pal};
 use gpaste::protocol::Message;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::{
@@ -177,17 +178,16 @@ fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
 
     // Delete "✕", only while the card is hovered.
     if hovered {
-        let danger = egui::Color32::from_rgb(0xe0, 0x6c, 0x60);
         if del_resp.hovered() {
             ui.painter()
-                .circle_filled(del_rect.center(), DEL * 0.5, danger.gamma_multiply(0.25));
+                .circle_filled(del_rect.center(), DEL * 0.5, pal::DANGER_SOFT);
         }
         ui.painter().text(
             del_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "✕",
-            egui::FontId::proportional(12.0),
-            if del_resp.hovered() { danger } else { weak_col },
+            icons::X,
+            icons::font(font::BUTTON),
+            if del_resp.hovered() { pal::DANGER } else { weak_col },
         );
     }
 
@@ -588,11 +588,15 @@ impl GPasTeApp {
                 // ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     let (icon, tip) = if self.sidebar_open {
-                        ("◀", "Collapse sidebar")
+                        (icons::ARROW_LEFT, "Collapse sidebar")
                     } else {
-                        ("☰", "Expand sidebar")
+                        (icons::MENU, "Expand sidebar")
                     };
-                    if ui.button(icon).on_hover_text(tip).clicked() {
+                    if ui
+                        .add(Button::icon(icon).outline())
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
                         self.sidebar_open = !self.sidebar_open;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -663,10 +667,6 @@ impl GPasTeApp {
             self.status = "Prompt deleted".into();
         }
     }
-    fn ebtn_add(&mut self, ic: char) -> elegance::Button {
-        elegance::Button::new(egui::RichText::new(ic)).size(ButtonSize::Small)
-    }
-
     fn ui_main(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
@@ -698,14 +698,14 @@ impl GPasTeApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if ui
-                                .add(self.ebtn_add(elegance::glyphs::SAVE).outline())
+                                .add(Button::icon(icons::SAVE).outline())
                                 .on_hover_text("Save current prompt")
                                 .clicked()
                             {
                                 self.save_current_prompt();
                             }
                             if ui
-                                .add(self.ebtn_add(elegance::glyphs::REFRESH).outline())
+                                .add(Button::icon(icons::REFRESH).outline())
                                 .on_hover_text("Clear texts")
                                 .clicked()
                             {
@@ -713,7 +713,7 @@ impl GPasTeApp {
                                 self.selected_image = None;
                             }
                             if ui
-                                .add(self.ebtn_add(glyphs::FOLDER_OPEN).outline())
+                                .add(Button::icon(icons::FOLDER_OPEN).outline())
                                 .on_hover_text("Pick image from folder")
                                 .clicked()
                             {
@@ -735,7 +735,7 @@ impl GPasTeApp {
                             }
 
                             if ui
-                                .add(self.ebtn_add(glyphs::DOWNLOAD).outline())
+                                .add(Button::icon(icons::DOWNLOAD).outline())
                                 .on_hover_text("Paste image from clipboard")
                                 .clicked()
                             {
@@ -750,7 +750,7 @@ impl GPasTeApp {
 
                             if self.selected_image.is_some()
                                 && ui
-                                    .add(self.ebtn_add(glyphs::TRASH).accent(elegance::Accent::Red))
+                                    .add(Button::icon(icons::TRASH).danger())
                                     .clicked()
                             {
                                 self.selected_image = None;
@@ -772,13 +772,11 @@ impl GPasTeApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if self.pending() {
-                                        let abort = elegance::Button::new(
-                                            egui::RichText::new("⏹ Abort")
-                                                .strong()
-                                                .color(egui::Color32::WHITE),
+                                        let abort = Button::new(
+                                            egui::RichText::new("⏹ Abort").strong(),
                                         )
-                                        .size(elegance::ButtonSize::Small)
-                                        .accent(elegance::Accent::Red);
+                                        .small()
+                                        .danger();
                                         if ui
                                             .add(abort)
                                             .on_hover_text(
@@ -788,11 +786,11 @@ impl GPasTeApp {
                                         {
                                             self.abort_request();
                                         }
-                                        ui.add(elegance::Spinner::new());
+                                        ui.add(egui::Spinner::new().color(pal::ACCENT));
                                     } else {
                                         let has_content = !self.prompt.trim().is_empty()
                                             || self.selected_image.is_some();
-                                        let send = elegance::Button::new(
+                                        let send = Button::new(
                                             egui::RichText::new("Send to ChatGPT").strong(),
                                         );
                                         if ui.add_enabled(has_content, send).clicked() {
@@ -917,7 +915,7 @@ fn image_slot(
                 tex.id(),
                 img_rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
+                pal::NO_TINT,
             );
         }
         _ => {

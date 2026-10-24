@@ -42,7 +42,6 @@ const LAYER_RADIUS: u8 = 8;
 const DRAG_HANDLE_DOT: f32 = 4.0;
 const DRAG_HANDLE_GAP: f32 = 3.0;
 const DRAG_HANDLE_SIZE: f32 = 24.0;
-const ACCENT: Color32 = Color32::from_rgb(0, 140, 255);
 
 const SCALE_HANDLES: [(i8, i8); 8] = [
     (-1, -1),
@@ -220,7 +219,7 @@ impl ImageCanvas {
     pub fn new(gpaste_app: GPasTeApp) -> Self {
         Self {
             canvas_size: vec2(1280.0, 720.0),
-            background: Color32::from_gray(245),
+            background: pal::CANVAS_BG,
             items: vec![],
             cache: LayerCache::default(),
             remembered: HashMap::new(),
@@ -862,7 +861,7 @@ impl ImageCanvas {
                 mesh.vertices.push(Vertex {
                     pos: to_screen(c[k]),
                     uv: uvs[k],
-                    color: Color32::WHITE,
+                    color: pal::NO_TINT,
                 });
             }
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
@@ -871,7 +870,7 @@ impl ImageCanvas {
         painter.rect_stroke(
             rect,
             CornerRadius::ZERO,
-            Stroke::new(1.0, Color32::from_gray(120)),
+            Stroke::new(1.0, pal::CANVAS_BORDER),
             StrokeKind::Inside,
         );
 
@@ -883,21 +882,21 @@ impl ImageCanvas {
             );
             let it = &self.items[i];
             let pts: Vec<Pos2> = it.corners().iter().map(|&c| to_screen(c)).collect();
-            gp.add(Shape::closed_line(pts, Stroke::new(1.5, ACCENT)));
+            gp.add(Shape::closed_line(pts, Stroke::new(1.5, pal::GIZMO)));
 
             let top_mid = to_screen(it.handle_pos(Handle::Scale(0, -1), rot_dist));
             let rot_pos = to_screen(it.handle_pos(Handle::Rotate, rot_dist));
-            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, ACCENT));
-            gp.circle(rot_pos, HANDLE_R, Color32::WHITE, Stroke::new(2.0, ACCENT));
+            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::GIZMO));
+            gp.circle(rot_pos, HANDLE_R, pal::GIZMO_HANDLE, Stroke::new(2.0, pal::GIZMO));
 
             for &(sx, sy) in &SCALE_HANDLES {
                 let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
                 let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
-                gp.rect_filled(r, CornerRadius::same(1), Color32::WHITE);
+                gp.rect_filled(r, CornerRadius::same(1), pal::GIZMO_HANDLE);
                 gp.rect_stroke(
                     r,
                     CornerRadius::same(1),
-                    Stroke::new(2.0, ACCENT),
+                    Stroke::new(2.0, pal::GIZMO),
                     StrokeKind::Inside,
                 );
             }
@@ -959,7 +958,7 @@ impl ImageCanvas {
             let is_dragged = self.list_drag == Some(id);
 
             let bg = if is_sel {
-                Color32::from_rgb(0x2a, 0x35, 0x4a)
+                pal::SIDEBAR_LAYER_SELECTED
             } else if is_dragged {
                 pal::SIDEBAR_LAYER_BG_HOVER
             } else if resp.hovered() {

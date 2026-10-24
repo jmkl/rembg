@@ -5,7 +5,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::{App, CreationContext};
-use egui::{Color32, Frame, Pos2};
+use egui::Color32;
 use egui_snarl::{NodeId, Snarl, ui::SnarlWidget};
 use gpaste::protocol::Message;
 
@@ -20,6 +20,7 @@ use crate::model::{Kind, Node};
 use crate::session;
 use crate::settings::{self, Settings};
 use crate::settings_window::{self, SettingsAction};
+use crate::style::controls::{Button, sidebar_frame};
 use crate::style::{install_theme, pal, snarl_style};
 use crate::title_bar::{self, Actions};
 use crate::worker::{InferenceConfig, JobDone, WorkerRequest, spawn_worker};
@@ -692,7 +693,7 @@ impl CompNodeApp {
                             .hint_text("https://…"),
                     );
                     if ui
-                        .add(elegance::Button::new("Add").size(elegance::ButtonSize::Small))
+                        .add(Button::new("Add").small())
                         .clicked()
                         && !self.url_text.trim().is_empty()
                     {
@@ -722,11 +723,7 @@ impl CompNodeApp {
                                     .map(|name| name.to_string_lossy().into_owned())
                                     .unwrap_or_default();
                                 if ui
-                                    .add(
-                                        elegance::Button::new(name)
-                                            .size(elegance::ButtonSize::Small)
-                                            .full_width(),
-                                    )
+                                    .add(Button::new(name).small().full_width())
                                     .clicked()
                                 {
                                     let pos = egui::pos2(100.0, 100.0);
@@ -1248,11 +1245,7 @@ impl App for CompNodeApp {
         egui::Panel::right("root_sidebar")
             .min_size(300.0)
             .max_size(screen_w * 0.8)
-            .frame(
-                Frame::new()
-                    .fill(pal::PANEL)
-                    .stroke(egui::Stroke::new(1.0, pal::NODE_STROKE)),
-            )
+            .frame(sidebar_frame())
             .show(ui, |ui| {
                 self.show_sidebar_contents(ui, &ctx);
             });

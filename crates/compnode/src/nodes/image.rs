@@ -1,6 +1,6 @@
 //! Image source node.
 
-use egui::{RichText, Ui};
+use egui::Ui;
 use egui_snarl::{InPinId, NodeId, Snarl};
 use rfd::FileDialog;
 
@@ -8,9 +8,9 @@ use crate::editor::GraphEditor;
 use crate::graph::{effective_dimensions, effective_texture, invalidate_downstream, upstream};
 use crate::model::{Kind, Node};
 use crate::nodes::IMAGE_EXTENSIONS;
-use crate::style::pal;
+use crate::style::controls::{Button, muted};
+use crate::style::font;
 use crate::widgets::{error_line, preview};
-use elegance::{Accent, Button};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::image(""));
@@ -59,17 +59,13 @@ pub(crate) fn show_body(
     };
 
     ui.add(
-        egui::Label::new(RichText::new(source_label).size(10.0).color(pal::MUTED))
+        egui::Label::new(muted(source_label, font::SMALL))
             .selectable(false)
             .truncate(),
     );
     if let Some((width, height)) = dimensions {
         ui.add(
-            egui::Label::new(
-                RichText::new(format!("{width} × {height} px"))
-                    .size(9.0)
-                    .color(pal::MUTED),
-            )
+            egui::Label::new(muted(format!("{width} × {height} px"), font::TINY))
             .selectable(false),
         );
     }
@@ -78,18 +74,12 @@ pub(crate) fn show_body(
     let mut pick = false;
     let mut reload = false;
     ui.columns(2, |cols| {
-        pick = cols[0].add(
-            Button::new("Replace")
-                .accent(Accent::Green)
-                .size(elegance::ButtonSize::Small)
-                .full_width(),
-        ).clicked();
-        reload = cols[1].add(
-            Button::new("Reload")
-                .accent(Accent::Red)
-                .size(elegance::ButtonSize::Small)
-                .full_width(),
-        ).clicked();
+        pick = cols[0]
+            .add(Button::new("Replace").success().small().full_width())
+            .clicked();
+        reload = cols[1]
+            .add(Button::new("Reload").danger().small().full_width())
+            .clicked();
     });
 
     if pick

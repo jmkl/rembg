@@ -5,11 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke};
+use egui::{Align, Align2, Layout, RichText};
 use rembg_core::{MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_SCRFD_FILE};
 
 use crate::settings::{self, Settings};
-use crate::style::pal;
+use crate::style::controls::{Button, Checkbox, danger_text, muted, section_title, window_frame};
+use crate::style::font;
 
 pub(crate) enum SettingsAction {
     None,
@@ -28,11 +29,6 @@ pub(crate) fn show(
 
     let mut window_open = *open;
     let mut action = SettingsAction::None;
-    let frame = Frame::new()
-        .fill(pal::PANEL)
-        .stroke(Stroke::new(1.0, pal::NODE_STROKE))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::same(14));
 
     egui::Window::new("Settings")
         .id(egui::Id::new("compnode_settings"))
@@ -41,20 +37,16 @@ pub(crate) fn show(
         .resizable(false)
         .default_width(540.0)
         .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .frame(frame)
+        .frame(window_frame())
         .show(ctx, |ui| {
             section(ui, "Inference");
-            ui.add(elegance::Checkbox::new(
+            ui.add(Checkbox::new(
                 &mut settings.cache_models,
                 "Keep inference models in memory between runs",
             ));
-            ui.label(
-                RichText::new(
-                    "When enabled, models load on first use and stay resident. When disabled, each run loads them and releases them afterwards.",
-                )
-                .small()
-                .color(pal::MUTED),
-            );
+            ui.label(hint(
+                "When enabled, models load on first use and stay resident. When disabled, each run loads them and releases them afterwards.",
+            ));
 
             ui.add_space(10.0);
             model_dir_row(ui, settings);
@@ -62,34 +54,20 @@ pub(crate) fn show(
 
             section(ui, "Workspace");
             workspace_root_row(ui, settings);
-            ui.label(
-                RichText::new(
-                    "Projects, exported images, masks and other workspace data are stored under this folder.",
-                )
-                .small()
-                .color(pal::MUTED),
-            );
+            ui.label(hint(
+                "Projects, exported images, masks and other workspace data are stored under this folder.",
+            ));
 
             ui.add_space(16.0);
             ui.separator();
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add(
-                        elegance::Button::new("Apply")
-                            .accent(elegance::Accent::Blue)
-                            .min_width(72.0),
-                    )
-                    .clicked()
+                if ui.add(Button::new("Apply").min_width(72.0)).clicked()
                 {
                     action = SettingsAction::Apply;
                 }
                 if ui
-                    .add(
-                        elegance::Button::new("Cancel")
-                            .outline()
-                            .min_width(72.0),
-                    )
+                    .add(Button::new("Cancel").outline().min_width(72.0))
                     .clicked()
                 {
                     action = SettingsAction::Cancel;
@@ -101,8 +79,12 @@ pub(crate) fn show(
     action
 }
 
+fn hint(text: impl Into<String>) -> RichText {
+    muted(text, font::SMALL)
+}
+
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).strong().size(13.0).color(pal::TEXT));
+    ui.label(section_title(title));
     ui.add_space(4.0);
 }
 
@@ -124,29 +106,17 @@ fn model_dir_row(ui: &mut egui::Ui, settings: &mut Settings) {
     }
 
     let dir = settings.model_dir();
-    ui.label(
-        RichText::new(format!(
-            "Expected: {}, {}, {}",
-            MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_SCRFD_FILE
-        ))
-        .small()
-        .color(pal::MUTED),
-    );
+    ui.label(hint(format!(
+        "Expected: {}, {}, {}",
+        MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_SCRFD_FILE
+    )));
     if dir.is_dir() {
-        ui.label(
-            RichText::new(format!("Using {}", dir.display()))
-                .small()
-                .color(pal::MUTED),
-        );
+        ui.label(hint(format!("Using {}", dir.display())));
     } else {
-        ui.label(
-            RichText::new(format!(
-                "Folder not found: {}. Inference will report the missing model.",
-                dir.display()
-            ))
-            .small()
-            .color(pal::DANGER),
-        );
+        ui.label(danger_text(format!(
+            "Folder not found: {}. Inference will report the missing model.",
+            dir.display()
+        )));
     }
 }
 
@@ -165,11 +135,7 @@ fn workspace_root_row(ui: &mut egui::Ui, settings: &mut Settings) {
 
     let root = settings.workspace_root();
     if root.exists() && !root.is_dir() {
-        ui.label(
-            RichText::new(format!("Not a folder: {}", root.display()))
-                .small()
-                .color(pal::DANGER),
-        );
+        ui.label(danger_text(format!("Not a folder: {}", root.display())));
     }
 }
 

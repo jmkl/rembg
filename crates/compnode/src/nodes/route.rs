@@ -1,6 +1,6 @@
 //! Route node - simple pass-through with centered title, no preview, no body.
 
-use egui::{RichText, Ui};
+use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
 
 use crate::editor::GraphEditor;
@@ -28,7 +28,7 @@ pub(crate) fn show_body(
                 egui::RichText::new("Route")
                     .size(14.0)
                     .strong()
-                    .color(crate::style::pal::HEADER_TEXT),
+                    .color(pal::HEADER_TEXT),
             )
             .selectable(false),
         );

@@ -3,20 +3,19 @@
 //! The menu is rendered by `app` with `PopupCloseBehavior::CloseOnClickOutside`
 //! so clicking the filter input does not dismiss it.
 
-use egui::{RichText, Ui};
+use egui::Ui;
 use egui_snarl::Snarl;
-use elegance::{MenuItem, TextInput};
 
 use crate::catalog::NODE_SPECS;
 use crate::model::Node;
-use crate::style::pal;
+use crate::style::controls::{MenuItem, muted};
+use crate::style::font;
 
 pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, pos: egui::Pos2) {
     ui.set_min_width(220.0);
     ui.add(
-        TextInput::new(filter)
-            .hint("Filter nodes…")
-            .compact(true)
+        egui::TextEdit::singleline(filter)
+            .hint_text("Filter nodes…")
             .desired_width(220.0)
             .id_salt("graph_node_filter"),
     );
@@ -32,7 +31,7 @@ pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, po
         }
         shown += 1;
         if ui
-            .add(MenuItem::new(spec.title).icon(spec.icon.to_string()))
+            .add(MenuItem::new(spec.title).icon(spec.icon))
             .clicked()
         {
             (spec.create)(snarl, pos, spec.kind);
@@ -41,13 +40,6 @@ pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, po
     }
 
     if shown == 0 {
-        ui.add(
-            egui::Label::new(
-                RichText::new("No matching nodes")
-                    .size(10.0)
-                    .color(pal::MUTED),
-            )
-            .selectable(false),
-        );
+        ui.add(egui::Label::new(muted("No matching nodes", font::SMALL)).selectable(false));
     }
 }

@@ -2,7 +2,7 @@
 
 use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
-use elegance::{Accent, Button, ButtonSize};
+use crate::style::controls::Button;
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;
@@ -32,12 +32,7 @@ pub(crate) fn show_body(
     let has_output = snarl[node].texture().is_some();
     let mut run = false;
     if busy {
-        ui.add(
-            Button::new("Processing...")
-                .size(ButtonSize::Medium)
-                .full_width()
-                .loading(true),
-        );
+        ui.add(Button::new("Processing...").full_width().loading(true));
     } else {
         let label = if has_output {
             "Re-run"
@@ -45,11 +40,9 @@ pub(crate) fn show_body(
             "Remove background (v2)"
         };
         let button = if has_output {
-            Button::new(label).size(ButtonSize::Medium).outline()
+            Button::new(label).outline()
         } else {
             Button::new(label)
-                .size(ButtonSize::Medium)
-                .accent(Accent::Blue)
         };
         run = ui.add(button.full_width()).clicked();
     }

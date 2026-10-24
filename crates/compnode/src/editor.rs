@@ -1,20 +1,20 @@
 //! Snarl view implementation and node interaction.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, RichText, Stroke, vec2};
+use egui::{Align2, FontId, Frame, Stroke, vec2};
 use egui_snarl::{
-    InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
+    InPin, NodeId, OutPin, OutPinId, Snarl,
     ui::{
         AnyPins, BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes,
     },
 };
-use elegance::glyphs;
 
 use crate::assets::AssetStore;
 use crate::catalog;
 use crate::graph::{connect_input, invalidate_downstream, invalidate_node};
 use crate::memory::ImageMemory;
 use crate::model::{Node, ViewerLayer};
-use crate::style::{BODY_MARGIN, pal};
+use crate::style::controls::{MenuItem, muted};
+use crate::style::{self, BODY_MARGIN, font, icons, pal};
 use crate::widgets::socket;
 use crate::worker::{Job, WorkerRequest};
 
@@ -456,16 +456,7 @@ impl SnarlViewer<Node> for GraphEditor {
         _outputs: &[OutPin],
         _snarl: &Snarl<Node>,
     ) -> Frame {
-        let selected = self.selected.contains(&node);
-        let stroke = if selected {
-            Stroke::new(2.0, pal::ACCENT)
-        } else {
-            Stroke::new(1.0, pal::NODE_STROKE)
-        };
-        default
-            .fill(pal::NODE)
-            .stroke(stroke)
-            .corner_radius(CornerRadius::same(4))
+        style::node_frame(default, self.selected.contains(&node))
     }
 
     fn header_frame(
@@ -476,16 +467,7 @@ impl SnarlViewer<Node> for GraphEditor {
         _outputs: &[OutPin],
         snarl: &Snarl<Node>,
     ) -> Frame {
-        default
-            .fill(catalog::spec(snarl[node].kind()).accent)
-            .stroke(Stroke::NONE)
-            .corner_radius(CornerRadius {
-                nw: 4,
-                ne: 4,
-                sw: 0,
-                se: 0,
-            })
-            .inner_margin(Margin::symmetric(6, 3))
+        style::node_header_frame(default, catalog::spec(snarl[node].kind()).accent)
     }
 
     fn show_header(
@@ -496,94 +478,74 @@ impl SnarlViewer<Node> for GraphEditor {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
+        const ROW_H: f32 = 22.0; // header content height
+        const HIT: f32 = 20.0; // square hit area of each icon
+        const PAD: f32 = 4.0; // margin from the node edge
+
         let open = snarl.get_node_info(node).is_none_or(|info| info.open);
-        let kind = snarl[node].kind();
-        let spec = catalog::spec(kind);
+        let spec = catalog::spec(snarl[node].kind());
 
-        // Width measured by show_body on the previous frame (see step 2).
-        let width_id = egui::Id::new(("node_real_width", node));
-        let node_width = ui.available_width().max(spec.body_width);
-        ui.set_min_width(node_width);
+        // The header spans the node: at least the body width, wider when the
+        // node frame is.
+        let width = ui.available_width().max(spec.body_width);
+        ui.set_min_width(width);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), egui::Sense::hover());
 
-        // Header may grow to the real node width, but never shrink below it.
-        ui.set_min_width(node_width);
-
-        let row_h = 22.0; // header content height
-        let icon = 20.0; // square hit area for each icon
-        let pad = 4.0; // margin from the node edge
-
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(node_width, row_h), egui::Sense::hover());
-
-        let left_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.left() + pad, rect.center().y - icon / 2.0),
-            egui::vec2(icon, icon),
+        let left = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + PAD, rect.center().y - HIT / 2.0),
+            vec2(HIT, HIT),
         );
-        let right_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - pad - icon, rect.center().y - icon / 2.0),
-            egui::vec2(icon, icon),
+        let right = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - PAD - HIT, rect.center().y - HIT / 2.0),
+            vec2(HIT, HIT),
         );
-        let title_rect = egui::Rect::from_min_max(
-            egui::pos2(left_rect.right(), rect.top()),
-            egui::pos2(right_rect.left(), rect.bottom()),
+        let title = egui::Rect::from_min_max(
+            egui::pos2(left.right(), rect.top()),
+            egui::pos2(right.left(), rect.bottom()),
         );
 
-        // Chevron (left)
-        let chevron = if open {
-            elegance::glyphs::CHEVRON_DOWN
-        } else {
-            elegance::glyphs::CHEVRON_RIGHT
-        };
-        let chevron_resp = ui.interact(
-            left_rect,
-            ui.id().with(("chev", node)),
-            egui::Sense::click(),
-        );
+        // Collapse chevron (left).
+        let chevron = if open { icons::CHEVRON_DOWN } else { icons::CHEVRON_RIGHT };
+        let response = ui.interact(left, ui.id().with(("chevron", node)), egui::Sense::click());
         ui.painter().text(
-            left_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            chevron.to_string(),
-            egui::FontId::proportional(13.0),
+            left.center(),
+            Align2::CENTER_CENTER,
+            chevron,
+            icons::font(13.0),
             pal::HEADER_TEXT,
         );
-        if chevron_resp
+        if response
             .on_hover_text(if open { "Collapse" } else { "Expand" })
             .clicked()
         {
             snarl.open_node(node, !open);
         }
 
-        // Title (center)
+        // Title (centre).
         ui.painter().text(
-            title_rect.center(),
-            egui::Align2::CENTER_CENTER,
+            title.center(),
+            Align2::CENTER_CENTER,
             spec.title,
-            egui::FontId::proportional(12.0),
+            FontId::proportional(font::BUTTON),
             pal::HEADER_TEXT,
         );
 
-        // Eye toggle (right)
+        // Preview toggle (right).
         let enabled = snarl[node].preview_enabled();
-        let glyph = if enabled {
-            elegance::glyphs::EYE
-        } else {
-            elegance::glyphs::EYE_OFF
-        };
-        let eye_resp = ui.interact(
-            right_rect,
-            ui.id().with(("eye", node)),
-            egui::Sense::click(),
-        );
+        let glyph = if enabled { icons::EYE } else { icons::EYE_OFF };
+        let response = ui.interact(right, ui.id().with(("eye", node)), egui::Sense::click());
         ui.painter().text(
-            right_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            glyph.to_string(),
-            egui::FontId::proportional(16.0),
+            right.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            icons::font(16.0),
             pal::HEADER_TEXT,
         );
-        if eye_resp.clicked() {
+        if response.clicked() {
             snarl[node].set_preview_enabled(!enabled);
         }
     }
+
     fn show_input(
         &mut self,
         pin: &InPin,
@@ -758,14 +720,10 @@ impl SnarlViewer<Node> for GraphEditor {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
-        ui.label(RichText::new("NODE").size(9.0).color(pal::MUTED));
+        ui.label(muted("NODE", font::TINY));
         ui.add_space(2.0);
         if ui
-            .add(
-                elegance::MenuItem::new("Delete node")
-                    .danger()
-                    .icon(glyphs::TRASH.to_string()),
-            )
+            .add(MenuItem::new("Delete node").danger().icon(icons::TRASH))
             .clicked()
         {
             snarl.remove_node(node);
