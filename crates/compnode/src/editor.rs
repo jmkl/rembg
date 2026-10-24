@@ -374,7 +374,7 @@ impl GraphEditor {
         while y <= viewport.bottom() {
             let mut x = x0;
             while x <= viewport.right() {
-                painter.circle_filled(egui::pos2(x, y), radius, pal::GRID);
+                painter.circle_filled(egui::pos2(x, y), radius, pal::SIDEBAR_LAYER_BG);
                 x += spacing;
             }
             y += spacing;
@@ -515,13 +515,20 @@ impl SnarlViewer<Node> for GraphEditor {
                 elegance::glyphs::CHEVRON_RIGHT
             };
             let chevron_response = ui.add(
-                egui::Button::new(RichText::new(chevron.to_string()).size(13.0).color(pal::HEADER_TEXT))
-                    .frame(false)
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .sense(egui::Sense::click()),
+                egui::Button::new(
+                    RichText::new(chevron.to_string())
+                        .size(13.0)
+                        .color(pal::HEADER_TEXT),
+                )
+                .frame(false)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE)
+                .sense(egui::Sense::click()),
             );
-            if chevron_response.on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+            if chevron_response
+                .on_hover_text(if open { "Collapse" } else { "Expand" })
+                .clicked()
+            {
                 snarl.open_node(node, !open);
             }
 
@@ -543,13 +550,21 @@ impl SnarlViewer<Node> for GraphEditor {
 
             // Preview toggle (EYE / EYE_OFF)
             let enabled = snarl[node].preview_enabled();
-            let glyph = if enabled { elegance::glyphs::EYE } else { elegance::glyphs::EYE_OFF };
+            let glyph = if enabled {
+                elegance::glyphs::EYE
+            } else {
+                elegance::glyphs::EYE_OFF
+            };
             let response = ui.add(
-                egui::Button::new(RichText::new(elegance::glyphs::EYE.to_string()).size(16.0).color(pal::HEADER_TEXT))
-                    .frame(false)
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .sense(egui::Sense::click()),
+                egui::Button::new(
+                    RichText::new(elegance::glyphs::EYE.to_string())
+                        .size(16.0)
+                        .color(pal::HEADER_TEXT),
+                )
+                .frame(false)
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::NONE)
+                .sense(egui::Sense::click()),
             );
             if response.clicked() {
                 snarl[node].set_preview_enabled(!enabled);

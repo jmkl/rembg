@@ -70,14 +70,14 @@ fn write_native<W: Write>(writer: &mut W, value: &Value) -> io::Result<()> {
 // Large image data URLs are split into smaller messages and reassembled by background.js.
 fn write_gui_value_to_chrome<W: Write>(writer: &mut W, value: Value) -> io::Result<()> {
     let is_send_prompt = value.get("type").and_then(Value::as_str) == Some("send_prompt");
-    let data_url = value
+
+    // Borrow the data URL instead of cloning it (it can be several MiB).
+    let large_data_url = value
         .get("image_data_url")
         .and_then(Value::as_str)
-        .map(str::to_owned);
+        .filter(|data| is_send_prompt && data.len() > CHUNK_IMAGE_THRESHOLD);
 
-    let Some(data_url) =
-        data_url.filter(|data| is_send_prompt && data.len() > CHUNK_IMAGE_THRESHOLD)
-    else {
+    let Some(data_url) = large_data_url else {
         return write_native(writer, &value);
     };
 
@@ -96,27 +96,24 @@ fn write_gui_value_to_chrome<W: Write>(writer: &mut W, value: Value) -> io::Resu
                 io::ErrorKind::InvalidData,
                 "send_prompt is missing request_id",
             )
-        })?
-        .to_owned();
+        })?;
 
-    let text = value
-        .get("text")
-        .cloned()
-        .unwrap_or_else(|| Value::String(String::new()));
-    let image_name = value.get("image_name").cloned().unwrap_or(Value::Null);
+    let text = value.get("text").unwrap_or(&Value::Null);
+    let image_name = value.get("image_name").unwrap_or(&Value::Null);
 
     write_native(
         writer,
         &serde_json::json!({
             "type": "send_prompt_start",
             "request_id": request_id,
-            "text": text,
+            "text": if text.is_null() { Value::String(String::new()) } else { text.clone() },
             "image_name": image_name,
             "image_data_url_prefix": format!("{prefix},"),
         }),
     )?;
 
     for (index, chunk) in encoded.as_bytes().chunks(NATIVE_CHUNK_SIZE).enumerate() {
+        // Base64 is pure ASCII, so every chunk boundary is a valid UTF-8 boundary.
         let chunk = std::str::from_utf8(chunk).map_err(io::Error::other)?;
         write_native(
             writer,
@@ -129,13 +126,12 @@ fn write_gui_value_to_chrome<W: Write>(writer: &mut W, value: Value) -> io::Resu
         )?;
     }
 
-    let chunk_count = encoded.len().div_ceil(NATIVE_CHUNK_SIZE);
     write_native(
         writer,
         &serde_json::json!({
             "type": "send_prompt_end",
             "request_id": request_id,
-            "chunk_count": chunk_count,
+            "chunk_count": encoded.len().div_ceil(NATIVE_CHUNK_SIZE),
         }),
     )
 }

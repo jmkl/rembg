@@ -15,6 +15,10 @@ pub enum Message {
         #[serde(default)]
         image_name: Option<String>,
     },
+    /// GUI -> extension: stop processing `request_id` (and stop ChatGPT if it is generating).
+    AbortPrompt {
+        request_id: String,
+    },
     PromptSent {
         request_id: String,
     },

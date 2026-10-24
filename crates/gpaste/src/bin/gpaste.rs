@@ -8,7 +8,6 @@ const ADDRESS: &str = "127.0.0.1:38471";
 fn main() -> eframe::Result<()> {
     let (to_gui_tx, to_gui_rx) = unbounded::<protocol::Message>();
     let (to_host_tx, to_host_rx) = unbounded::<protocol::Message>();
-    start_bridge_server(to_gui_tx, to_host_rx);
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -20,13 +19,19 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ChatGPT Bridge",
         options,
-        Box::new(move |_cc| Ok(Box::new(app::ChatGptApp::new(to_host_tx, to_gui_rx)))),
+        Box::new(move |cc| {
+            // The bridge thread wakes the UI whenever a message arrives, so the GUI
+            // never has to poll on a timer.
+            start_bridge_server(to_gui_tx, to_host_rx, cc.egui_ctx.clone());
+            Ok(Box::new(app::ChatGptApp::new(to_host_tx, to_gui_rx)))
+        }),
     )
 }
 
 fn start_bridge_server(
     incoming_tx: crossbeam_channel::Sender<protocol::Message>,
     outgoing_rx: crossbeam_channel::Receiver<protocol::Message>,
+    ctx: eframe::egui::Context,
 ) {
     thread::spawn(move || {
         let listener = loop {
@@ -64,7 +69,9 @@ fn start_bridge_server(
                     continue;
                 }
             };
+            let _ = stream.set_nodelay(true); // keep abort messages low-latency
             let read_tx = incoming_tx.clone();
+            let read_ctx = ctx.clone();
             let reader_thread = thread::spawn(move || {
                 use std::io::{BufRead, BufReader};
                 let mut reader = BufReader::new(read_stream);
@@ -78,6 +85,7 @@ fn start_bridge_server(
                                 if read_tx.send(message).is_err() {
                                     break;
                                 }
+                                read_ctx.request_repaint();
                             }
                             Err(error) => eprintln!("Invalid message from host: {error}"),
                         },
@@ -93,6 +101,7 @@ fn start_bridge_server(
                 connected: true,
                 detail: "native host".into(),
             });
+            ctx.request_repaint();
 
             loop {
                 match outgoing_rx.recv_timeout(Duration::from_millis(100)) {
@@ -123,6 +132,7 @@ fn start_bridge_server(
                 connected: false,
                 detail: "native host disconnected".into(),
             });
+            ctx.request_repaint();
         }
     });
 }

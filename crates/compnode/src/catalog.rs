@@ -661,8 +661,8 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
             label: "",
             multi: true,
         }],
-        create: nodes::viewer::create,
-        body: nodes::viewer::show_body,
+        create: nodes::output::create,
+        body: nodes::output::show_body,
     },
     NodeSpec {
         kind: Kind::Filter(FilterKind::Route),

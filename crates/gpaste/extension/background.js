@@ -4,6 +4,34 @@ let nativePort = null;
 let connected = false;
 const pendingRequests = new Map();
 const incomingImageChunks = new Map();
+// Ids the GUI aborted. Late chunks / async steps for these are dropped silently.
+const abortedRequests = new Set();
+
+function rememberAborted(requestId) {
+  abortedRequests.add(requestId);
+  if (abortedRequests.size > 64) {
+    abortedRequests.delete(abortedRequests.values().next().value);
+  }
+}
+
+async function abortPrompt(requestId) {
+  if (!requestId) return;
+  rememberAborted(requestId);
+  incomingImageChunks.delete(requestId);
+
+  const pending = pendingRequests.get(requestId);
+  pendingRequests.delete(requestId);
+
+  if (pending?.tabId == null) return; // not routed yet; routePrompt checks the set
+  try {
+    await chrome.tabs.sendMessage(pending.tabId, {
+      type: "abort_prompt",
+      request_id: requestId,
+    });
+  } catch (error) {
+    console.warn("[GPasTe] Could not deliver abort to the tab:", error);
+  }
+}
 
 function connectNative() {
   if (nativePort && connected) return true;
@@ -24,7 +52,13 @@ function connectNative() {
         return;
       }
 
+      if (message.type === "abort_prompt") {
+        void abortPrompt(message.request_id);
+        return;
+      }
+
       if (message.type === "send_prompt_start") {
+        if (abortedRequests.has(message.request_id)) return;
         incomingImageChunks.set(message.request_id, {
           request_id: message.request_id,
           text: message.text ?? "",
@@ -37,6 +71,7 @@ function connectNative() {
 
       if (message.type === "send_prompt_chunk") {
         const pending = incomingImageChunks.get(message.request_id);
+        if (abortedRequests.has(message.request_id)) return;
         if (
           !pending ||
           !Number.isInteger(message.index) ||
@@ -50,6 +85,10 @@ function connectNative() {
       }
 
       if (message.type === "send_prompt_end") {
+        if (abortedRequests.has(message.request_id)) {
+          incomingImageChunks.delete(message.request_id);
+          return;
+        }
         const pending = incomingImageChunks.get(message.request_id);
         incomingImageChunks.delete(message.request_id);
 
@@ -98,6 +137,7 @@ function connectNative() {
       if (nativePort === port) {
         nativePort = null;
         connected = false;
+        incomingImageChunks.clear(); // drop half-received uploads
       }
     });
 
@@ -149,23 +189,16 @@ async function routePrompt(message) {
     throw new Error("Provide prompt text, an image, or both.");
   if (pendingRequests.has(requestId))
     throw new Error(`Duplicate request_id: ${requestId}`);
-
-  // const tabs = await chrome.tabs.query({
-  //   active: true,
-  //   lastFocusedWindow: true,
-  // });
-  //  // const tab = tabs.find(
-  //   (item) =>
-  //     item.id != null &&
-  //     (item.url?.startsWith("https://chatgpt.com/") ||
-  //       item.url?.startsWith("https://chat.openai.com/")),
-  // );
+  if (abortedRequests.has(requestId)) return;
 
   const tabs = await chrome.tabs.query({
     url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   });
 
   const tab = tabs.find((item) => item.id != null);
+
+  // The GUI may have aborted while we were looking up the tab.
+  if (abortedRequests.has(requestId)) return;
 
   if (tab?.id == null) {
     throw new Error("No ChatGPT tab found. Open ChatGPT first.");
@@ -189,6 +222,7 @@ async function routePrompt(message) {
     }
   } catch (error) {
     pendingRequests.delete(requestId);
+    if (abortedRequests.has(requestId)) return; // expected, nothing to report
     throw new Error(
       `Could not send request to content.js. Reload the ChatGPT tab and try again. Details: ${error.message}`,
     );

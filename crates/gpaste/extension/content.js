@@ -1,8 +1,32 @@
 console.log("[GPasTe] Image + text sender loaded:", location.href);
 
+// { id, controller, submitted } for the request being processed, else null.
 let activeRequest = null;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Sleep that wakes up immediately (rejecting) when the signal aborts.
+const sleep = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+function stopGeneration() {
+  const stop = document.querySelector(
+    'button[data-testid="stop-button"], button[aria-label="Stop streaming"], button[aria-label="Stop generating"]',
+  );
+  if (stop instanceof HTMLButtonElement) {
+    stop.click();
+    console.log("[GPasTe] Clicked ChatGPT stop button.");
+  }
+}
 
 function findComposer() {
   return (
@@ -126,10 +150,11 @@ function dataUrlToFile(dataUrl, filename) {
   });
 }
 
-async function waitForFileInput(timeoutMs = 5000) {
+async function waitForFileInput(timeoutMs = 5000, signal) {
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
+    signal?.throwIfAborted();
     const inputs = [...document.querySelectorAll('input[type="file"]')];
 
     const imageInput =
@@ -139,7 +164,7 @@ async function waitForFileInput(timeoutMs = 5000) {
 
     if (imageInput) return imageInput;
 
-    await sleep(100);
+    await sleep(100, signal);
   }
 
   throw new Error(
@@ -147,7 +172,7 @@ async function waitForFileInput(timeoutMs = 5000) {
   );
 }
 
-async function attachImage(dataUrl, filename) {
+async function attachImage(dataUrl, filename, signal) {
   const file = dataUrlToFile(dataUrl, filename);
 
   console.log("[GPasTe] Attaching image:", {
@@ -156,7 +181,10 @@ async function attachImage(dataUrl, filename) {
     size: file.size,
   });
 
-  let input = await waitForFileInput(1500).catch(() => null);
+  let input = await waitForFileInput(1500, signal).catch((error) => {
+    if (signal?.aborted) throw error;
+    return null;
+  });
 
   // If ChatGPT has not created its file input yet, open the attachment menu.
   if (!input) {
@@ -179,10 +207,10 @@ async function attachImage(dataUrl, filename) {
 
     if (attachButton) {
       attachButton.click();
-      await sleep(300);
+      await sleep(300, signal);
     }
 
-    input = await waitForFileInput(5000);
+    input = await waitForFileInput(5000, signal);
   }
 
   const transfer = new DataTransfer();
@@ -197,7 +225,7 @@ async function attachImage(dataUrl, filename) {
   console.log("[GPasTe] Image file supplied to ChatGPT.");
 
   // Give ChatGPT time to process the attachment before submitting.
-  await sleep(1200);
+  await sleep(1200, signal);
 
   // A preview in the composer is a useful signal that the attachment
   // was accepted. Log the DOM if you need to debug upload issues.
@@ -211,17 +239,18 @@ async function attachImage(dataUrl, filename) {
   );
 }
 
-async function waitForEnabledSendButton(timeoutMs = 8000) {
+async function waitForEnabledSendButton(timeoutMs = 8000, signal) {
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
+    signal?.throwIfAborted();
     const button = findSendButton();
 
     if (button && !button.disabled) {
       return button;
     }
 
-    await sleep(100);
+    await sleep(100, signal);
   }
 
   console.error(
@@ -285,12 +314,14 @@ async function waitForImage({
   baselineCount,
   timeoutMs = 5 * 60 * 1000,
   stableMs = 2000,
+  signal,
 }) {
   const started = Date.now();
   let lastSrc = "";
   let lastChangeAt = Date.now();
 
   while (Date.now() - started < timeoutMs) {
+    signal?.throwIfAborted();
     const img = findGeneratedImage(baselineCount);
 
     if (img) {
@@ -305,17 +336,18 @@ async function waitForImage({
       }
     }
 
-    await sleep(500);
+    await sleep(500, signal);
   }
 
   throw new Error("Timed out waiting for generated image.");
 }
 
-async function imageToPngBase64(img) {
-  const response = await fetch(img.src, { credentials: "include" });
+async function imageToPngBase64(img, signal) {
+  const response = await fetch(img.src, { credentials: "include", signal });
   if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
 
   const bitmap = await createImageBitmap(await response.blob());
+  signal?.throwIfAborted();
 
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;
@@ -334,8 +366,8 @@ async function imageToPngBase64(img) {
   };
 }
 
-async function convertToBase64Image(img) {
-  const result = await imageToPngBase64(img);
+async function convertToBase64Image(img, signal) {
+  const result = await imageToPngBase64(img, signal);
 
   console.log("[GPasTe] Image converted:", {
     mimeType: result.mimeType,
@@ -346,30 +378,39 @@ async function convertToBase64Image(img) {
 
   return result;
 }
-async function processPrompt(message) {
+async function processPrompt(message, active) {
   const requestId = message.request_id;
+  const { signal } = active.controller;
   const text = message.text ?? message.prompt ?? "";
   const imageDataUrl = message.image_data_url;
 
   try {
     if (imageDataUrl) {
-      await attachImage(imageDataUrl, message.image_name || "gpaste-image.png");
+      await attachImage(
+        imageDataUrl,
+        message.image_name || "gpaste-image.png",
+        signal,
+      );
     }
 
     const composer = findComposer();
     if (!composer) throw new Error("ChatGPT composer not found.");
     if (text.trim()) insertPrompt(composer, text);
 
-    const sendButton = await waitForEnabledSendButton();
+    const sendButton = await waitForEnabledSendButton(8000, signal);
     const baselineCount = getAssistantImages().length;
 
+    // Last chance to bail out before anything is actually submitted.
+    signal.throwIfAborted();
     sendButton.click();
+    active.submitted = true;
     chrome.runtime.sendMessage({ type: "prompt_sent", request_id: requestId });
 
-    const img = await waitForImage({ baselineCount });
-    const info = await convertToBase64Image(img);
+    const img = await waitForImage({ baselineCount, signal });
+    const info = await convertToBase64Image(img, signal);
 
-    console.log("[GPasTe] Image copied to clipboard:", info);
+    signal.throwIfAborted();
+    console.log("[GPasTe] Image converted:", info.width, "x", info.height);
     chrome.runtime.sendMessage({
       type: "image_copied",
       request_id: requestId,
@@ -379,6 +420,10 @@ async function processPrompt(message) {
       height: info.height,
     });
   } catch (error) {
+    if (signal.aborted) {
+      console.log("[GPasTe] Request aborted:", requestId);
+      return; // the GUI already knows; stay silent
+    }
     console.error("[GPasTe] Failed:", error);
     chrome.runtime.sendMessage({
       type: "bridge_error",
@@ -386,11 +431,26 @@ async function processPrompt(message) {
       error: error.message || String(error),
     });
   } finally {
-    activeRequest = null;
+    // Only release the slot if an abort (or newer request) hasn't already done so.
+    if (activeRequest === active) activeRequest = null;
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "abort_prompt") {
+    const active = activeRequest;
+    if (active && active.id === message.request_id) {
+      activeRequest = null; // free the slot right away so a new send isn't rejected
+      active.controller.abort();
+      // If ChatGPT already started generating, stop it so the tab isn't left busy.
+      if (active.submitted) stopGeneration();
+      sendResponse({ aborted: true });
+    } else {
+      sendResponse({ aborted: false });
+    }
+    return;
+  }
+
   if (message.type !== "send_prompt") return;
 
   console.log("[GPasTe] Received request:", {
@@ -426,9 +486,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
-  activeRequest = message.request_id;
+  const active = {
+    id: message.request_id,
+    controller: new AbortController(),
+    submitted: false,
+  };
+  activeRequest = active;
 
   sendResponse({ accepted: true });
 
-  void processPrompt(message);
+  void processPrompt(message, active);
 });

@@ -64,8 +64,8 @@ pub mod base {
 }
 /// Muted Blender-inspired palette.
 pub(crate) mod pal {
-    use egui::Color32;
     use crate::style::base;
+    use egui::Color32;
 
     // --- Sidebar / panel palette ---
     pub const SIDEBAR_BORDER: Color32 = base::SLATE_700; // thin dark gray border
@@ -109,7 +109,7 @@ pub(crate) mod pal {
     pub const HEADER_INVERT: Color32 = base::NEUTRAL_600;
     pub const HEADER_GRADIENT: Color32 = base::CLAY;
     pub const HEADER_NOISE: Color32 = base::SAGE;
-
+}
 /// Condensed grotesque UI face (Apache 2.0 / OFL, from google/fonts).
 const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed-Variable.ttf");
 
