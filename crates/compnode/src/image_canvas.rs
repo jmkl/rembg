@@ -541,18 +541,16 @@ impl ImageCanvas {
     fn draw_drag_handle(&self, ui: &mut egui::Ui, rect: Rect) {
         let painter = ui.painter();
         let dot_r = DRAG_HANDLE_DOT * 0.5;
-        let start_x = rect.left() + (rect.width() - (DRAG_HANDLE_DOT * 2.0 + DRAG_HANDLE_GAP)) * 0.5;
-        let start_y = rect.top() + (rect.height() - (DRAG_HANDLE_DOT * 3.0 + DRAG_HANDLE_GAP * 2.0)) * 0.5;
+        let start_x =
+            rect.left() + (rect.width() - (DRAG_HANDLE_DOT * 2.0 + DRAG_HANDLE_GAP)) * 0.5;
+        let start_y =
+            rect.top() + (rect.height() - (DRAG_HANDLE_DOT * 3.0 + DRAG_HANDLE_GAP * 2.0)) * 0.5;
 
         for row in 0..3 {
             for col in 0..2 {
                 let cx = start_x + col as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
                 let cy = start_y + row as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
-                painter.circle_filled(
-                    egui::pos2(cx, cy),
-                    dot_r,
-                    pal::SIDEBAR_DRAG_HANDLE,
-                );
+                painter.circle_filled(egui::pos2(cx, cy), dot_r, pal::SIDEBAR_DRAG_HANDLE);
             }
         }
     }
@@ -562,72 +560,71 @@ impl ImageCanvas {
         let panel_rect = ui.max_rect();
         if ui.input(|i| {
             i.pointer.secondary_clicked()
-                && i.pointer.interact_pos().is_some_and(|p| panel_rect.contains(p))
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| panel_rect.contains(p))
         }) {
             self.clear_selection();
         }
 
-        let available_width = ui.available_width();
-        let inner_width = available_width - SIDEBAR_PADDING * 2.0;
+        // Root frame: gives the whole sidebar real padding on all sides.
+        egui::Frame::new()
+            .inner_margin(Margin::same(SIDEBAR_PADDING as i8))
+            .show(ui, |ui| {
+                // Width left after the frame's margin has been applied.
+                let inner_width = ui.available_width();
 
-        // Main container - no background/border, just padding
-        ui.horizontal(|ui| {
-            ui.set_width(inner_width);
-            ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-            ui.vertical(|ui| {
-                // ===== TOP CONTROLS: Width & Height =====
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     ui.set_width(inner_width);
-                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
 
-                    let input_w = (inner_width - 8.0) * 0.5;
+                    // ===== TOP CONTROLS: Width & Height =====
+                    ui.horizontal(|ui| {
+                        ui.set_width(inner_width);
+                        ui.spacing_mut().item_spacing.x = 8.0;
 
-                    // Width input
-                    let w_rect = ui.allocate_exact_size(
-                        vec2(input_w, INPUT_H),
-                        Sense::hover(),
-                    ).0;
-                    let mut w_val = self.canvas_size.x;
-                    self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
-                    self.canvas_size.x = w_val;
+                        let input_w = (inner_width - 8.0) * 0.5;
 
-                    // Height input
-                    let h_rect = ui.allocate_exact_size(
-                        vec2(input_w, INPUT_H),
-                        Sense::hover(),
-                    ).0;
-                    let mut h_val = self.canvas_size.y;
-                    self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
-                    self.canvas_size.y = h_val;
-                });
+                        let w_rect = ui
+                            .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                            .0;
+                        let mut w_val = self.canvas_size.x;
+                        self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
+                        self.canvas_size.x = w_val;
 
-                // ===== CANVAS / PREVIEW AREA =====
-                let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
-                let canvas_w = self.canvas_size.x * scale;
-                let canvas_h = self.canvas_size.y * scale;
-
-                // Canvas container frame (keep subtle border for canvas)
-                egui::Frame::new()
-                    .fill(Color32::TRANSPARENT)
-                    .corner_radius(CornerRadius::same(CANVAS_RADIUS))
-                    .stroke(Stroke::NONE)
-                    .inner_margin(0.0)
-                    .show(ui, |ui| {
-                        ui.set_min_size(vec2(inner_width, canvas_h));
-                        ui.allocate_ui_with_layout(
-                            vec2(inner_width, canvas_h),
-                            egui::Layout::top_down(egui::Align::Center),
-                            |ui| {
-                                self.canvas_ui(ui, scale);
-                            },
-                        );
+                        let h_rect = ui
+                            .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                            .0;
+                        let mut h_val = self.canvas_size.y;
+                        self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
+                        self.canvas_size.y = h_val;
                     });
 
-                // ===== LAYER LIST =====
-                ui.add_space(8.0);
-                self.layer_list_ui(ui, inner_width);
+                    // ===== CANVAS / PREVIEW AREA =====
+                    let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
+                    let canvas_h = self.canvas_size.y * scale;
+
+                    egui::Frame::new()
+                        .fill(Color32::TRANSPARENT)
+                        .corner_radius(CornerRadius::same(CANVAS_RADIUS))
+                        .stroke(Stroke::NONE)
+                        .inner_margin(0.0)
+                        .show(ui, |ui| {
+                            ui.set_min_size(vec2(inner_width, canvas_h));
+                            ui.allocate_ui_with_layout(
+                                vec2(inner_width, canvas_h),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    self.canvas_ui(ui, scale);
+                                },
+                            );
+                        });
+
+                    // ===== LAYER LIST =====
+                    ui.add_space(8.0);
+                    self.layer_list_ui(ui, inner_width);
+                });
             });
-        });
     }
 
     /// Draw a single input field (WIDTH/HEIGHT) with label inside - no bg/border
@@ -923,10 +920,8 @@ impl ImageCanvas {
             let id = self.items[idx].id;
             let name = self.items[idx].name.clone();
 
-            let (rect, resp) = ui.allocate_exact_size(
-                vec2(inner_width, ROW_H),
-                Sense::click_and_drag(),
-            );
+            let (rect, resp) =
+                ui.allocate_exact_size(vec2(inner_width, ROW_H), Sense::click_and_drag());
             rows.push(rect);
 
             if resp.clicked() || resp.drag_started() {
@@ -953,7 +948,8 @@ impl ImageCanvas {
                 pal::SIDEBAR_LAYER_BG
             };
 
-            ui.painter().rect_filled(rect, CornerRadius::same(LAYER_RADIUS), bg);
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(LAYER_RADIUS), bg);
 
             let border_color = if is_sel {
                 pal::SIDEBAR_ACCENT
@@ -976,7 +972,10 @@ impl ImageCanvas {
 
             // Layer name
             ui.painter().text(
-                egui::pos2(rect.left() + 12.0 + DRAG_HANDLE_SIZE + 16.0, rect.center().y),
+                egui::pos2(
+                    rect.left() + 12.0 + DRAG_HANDLE_SIZE + 16.0,
+                    rect.center().y,
+                ),
                 Align2::LEFT_CENTER,
                 name,
                 FontId::proportional(13.0),
