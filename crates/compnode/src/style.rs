@@ -8,58 +8,107 @@ use egui_snarl::ui::{
     BackgroundPattern, PinPlacement, SelectionStyle, SnarlStyle, WireLayer, WireStyle,
 };
 use elegance::Theme;
+/// `0xRRGGBB` -> Color32, so the palette reads like a normal hex color.
+const fn hex(rgb: u32) -> Color32 {
+    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
 
+/// Raw colors. Name = what it looks like, not where it is used.
+/// Scales run dark -> light (950 = darkest).
+pub mod base {
+    use super::hex;
+    use eframe::egui::Color32;
+
+    // Neutral grays
+    pub const NEUTRAL_950: Color32 = hex(0x1b1b1b);
+    pub const NEUTRAL_900: Color32 = hex(0x1e1e1e);
+    pub const NEUTRAL_850: Color32 = hex(0x242424);
+    pub const NEUTRAL_800: Color32 = hex(0x282828);
+    pub const NEUTRAL_700: Color32 = hex(0x3b3b3b);
+    pub const NEUTRAL_650: Color32 = hex(0x4a4a4a);
+    pub const NEUTRAL_600: Color32 = hex(0x505050);
+    pub const NEUTRAL_500: Color32 = hex(0x8b8b8b);
+    pub const NEUTRAL_300: Color32 = hex(0xd8d8d8);
+    pub const NEUTRAL_200: Color32 = hex(0xe0e0e0);
+    pub const NEUTRAL_100: Color32 = hex(0xf2f2f2);
+
+    // Slate (grays with a slight blue tint, used by the sidebar)
+    pub const SLATE_900: Color32 = hex(0x1c1f23);
+    pub const SLATE_800: Color32 = hex(0x22262b);
+    pub const SLATE_700: Color32 = hex(0x3a3d41);
+    pub const SLATE_600: Color32 = hex(0x5a5d61);
+    pub const SLATE_400: Color32 = hex(0x8a8d93);
+
+    // Accent / status colors
+    pub const BLUE_500: Color32 = hex(0x4776d1);
+    pub const GOLD_500: Color32 = hex(0xd1a84b);
+    pub const GOLD_950: Color32 = hex(0x241e0b);
+    pub const RED_400: Color32 = hex(0xe06c60);
+    pub const GREEN_400: Color32 = hex(0x6ab87a);
+
+    // Muted dark hues for node headers
+    pub const MOSS: Color32 = hex(0x3d5a47);
+    pub const STEEL_BLUE: Color32 = hex(0x394a63);
+    pub const BRONZE: Color32 = hex(0x5d4833);
+    pub const MAROON: Color32 = hex(0x593737);
+    pub const SLATE_PURPLE: Color32 = hex(0x4a4a5a);
+    pub const PLUM: Color32 = hex(0x5a3d5a);
+    pub const OLIVE: Color32 = hex(0x5a5a3d);
+    pub const MULBERRY: Color32 = hex(0x5a3d4a);
+    pub const DENIM: Color32 = hex(0x3d4a5a);
+    pub const SAND: Color32 = hex(0x5a503d);
+    pub const TEAL: Color32 = hex(0x3d5a5a);
+    pub const INDIGO: Color32 = hex(0x4a3d5a);
+    pub const CLAY: Color32 = hex(0x5a4a3d);
+    pub const SAGE: Color32 = hex(0x4a5a4a);
+}
 /// Muted Blender-inspired palette.
 pub(crate) mod pal {
     use egui::Color32;
+    use crate::style::base;
 
-    // --- Sidebar / panel palette (design spec) ---
-    pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x13, 0x16, 0x19);  // near-black charcoal
-    pub const SIDEBAR_BORDER: Color32 = Color32::from_rgb(0x3a, 0x3d, 0x41);  // thin dark gray border
-    pub const SIDEBAR_BORDER_LIGHT: Color32 = Color32::from_rgb(0x5a, 0x5d, 0x61);  // lighter border for inputs
-    pub const SIDEBAR_INPUT_BG: Color32 = Color32::from_rgb(0x1a, 0x1d, 0x21);  // input background
-    pub const SIDEBAR_CANVAS_BG: Color32 = Color32::from_rgb(0x18, 0x1b, 0x1f);  // canvas area background
-    pub const SIDEBAR_LAYER_BG: Color32 = Color32::from_rgb(0x1c, 0x1f, 0x23);  // layer row background
-    pub const SIDEBAR_LAYER_BG_HOVER: Color32 = Color32::from_rgb(0x22, 0x26, 0x2b);  // layer row hover
-    pub const SIDEBAR_TEXT: Color32 = Color32::from_rgb(0xe0, 0xe0, 0xe0);  // main text
-    pub const SIDEBAR_TEXT_MUTED: Color32 = Color32::from_rgb(0x8a, 0x8d, 0x93);  // muted text
-    pub const SIDEBAR_DRAG_HANDLE: Color32 = Color32::from_rgb(0x5a, 0x5d, 0x61);  // drag handle dots
-    pub const SIDEBAR_ACCENT: Color32 = Color32::from_rgb(0x47, 0x76, 0xd1);  // accent blue
+    // --- Sidebar / panel palette ---
+    pub const SIDEBAR_BORDER: Color32 = base::SLATE_700; // thin dark gray border
+    pub const SIDEBAR_LAYER_BG: Color32 = base::SLATE_900; // layer row background
+    pub const SIDEBAR_LAYER_BG_HOVER: Color32 = base::SLATE_800; // layer row hover
+    pub const SIDEBAR_TEXT: Color32 = base::NEUTRAL_200; // main text
+    pub const SIDEBAR_TEXT_MUTED: Color32 = base::SLATE_400; // muted text
+    pub const SIDEBAR_DRAG_HANDLE: Color32 = base::SLATE_600; // drag handle dots
+    pub const SIDEBAR_ACCENT: Color32 = base::BLUE_500; // accent blue
 
-    pub const BG: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x1e);
-    pub const GRID: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
-    pub const PANEL: Color32 = Color32::from_rgb(0x28, 0x28, 0x28);
-    pub const NODE: Color32 = Color32::from_rgb(0x24, 0x24, 0x24);
-    pub const NODE_STROKE: Color32 = Color32::from_rgb(0x3b, 0x3b, 0x3b);
-    pub const HEADER_TEXT: Color32 = Color32::from_rgb(0xf2, 0xf2, 0xf2);
-    pub const TEXT: Color32 = Color32::from_rgb(0xd8, 0xd8, 0xd8);
-    pub const MUTED: Color32 = Color32::from_rgb(0x8b, 0x8b, 0x8b);
-    pub const ACCENT: Color32 = Color32::from_rgb(0x47, 0x76, 0xd1);
-    pub const SOCKET: Color32 = Color32::from_rgb(0xd1, 0xa8, 0x4b);
-    pub const SOCKET_STROKE: Color32 = Color32::from_rgb(0x24, 0x1e, 0x0b);
-    pub const CHECK_A: Color32 = Color32::from_rgb(0x1b, 0x1b, 0x1b);
-    pub const CHECK_B: Color32 = Color32::from_rgb(0x24, 0x24, 0x24);
-    pub const DANGER: Color32 = Color32::from_rgb(0xe0, 0x6c, 0x60);
-    pub const SUCCESS: Color32 = Color32::from_rgb(0x6a, 0xb8, 0x7a);
+    // --- General UI ---
+    pub const BG: Color32 = base::NEUTRAL_900;
+    pub const PANEL: Color32 = base::NEUTRAL_800;
+    pub const NODE: Color32 = base::NEUTRAL_850;
+    pub const NODE_STROKE: Color32 = base::NEUTRAL_700;
+    pub const HEADER_TEXT: Color32 = base::NEUTRAL_100;
+    pub const TEXT: Color32 = base::NEUTRAL_300;
+    pub const MUTED: Color32 = base::NEUTRAL_500;
+    pub const ACCENT: Color32 = base::BLUE_500;
+    pub const SOCKET: Color32 = base::GOLD_500;
+    pub const SOCKET_STROKE: Color32 = base::GOLD_950;
+    pub const CHECK_A: Color32 = base::NEUTRAL_950;
+    pub const CHECK_B: Color32 = base::NEUTRAL_850;
+    pub const DANGER: Color32 = base::RED_400;
+    pub const SUCCESS: Color32 = base::GREEN_400;
 
-    // Node header colours. Register these in `catalog::NODE_SPECS`.
-    pub const HEADER_IMAGE: Color32 = Color32::from_rgb(0x3d, 0x5a, 0x47);
-    pub const HEADER_REMOVE_BG: Color32 = Color32::from_rgb(0x39, 0x4a, 0x63);
-    pub const HEADER_FACE_RESTORE: Color32 = Color32::from_rgb(0x5d, 0x48, 0x33);
-    pub const HEADER_VIEWER: Color32 = Color32::from_rgb(0x59, 0x37, 0x37);
-    pub const HEADER_ROUTE: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x4a);
-    pub const HEADER_GROUP: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x5a);
-    pub const HEADER_BLEND: Color32 = Color32::from_rgb(0x5a, 0x3d, 0x5a);
-    pub const HEADER_MASK: Color32 = Color32::from_rgb(0x5a, 0x5a, 0x3d);
-    pub const HEADER_HSV: Color32 = Color32::from_rgb(0x5a, 0x3d, 0x4a);
-    pub const HEADER_CURVES: Color32 = Color32::from_rgb(0x3d, 0x4a, 0x5a);
-    pub const HEADER_EXPOSURE: Color32 = Color32::from_rgb(0x5a, 0x50, 0x3d);
-    pub const HEADER_COLOR_BALANCE: Color32 = Color32::from_rgb(0x3d, 0x5a, 0x5a);
-    pub const HEADER_GRADIENT_MAP: Color32 = Color32::from_rgb(0x4a, 0x3d, 0x5a);
-    pub const HEADER_INVERT: Color32 = Color32::from_rgb(0x50, 0x50, 0x50);
-    pub const HEADER_GRADIENT: Color32 = Color32::from_rgb(0x5a, 0x4a, 0x3d);
-    pub const HEADER_NOISE: Color32 = Color32::from_rgb(0x4a, 0x5a, 0x4a);
-}
+    // --- Node header colours. Register these in `catalog::NODE_SPECS`. ---
+    pub const HEADER_IMAGE: Color32 = base::MOSS;
+    pub const HEADER_REMOVE_BG: Color32 = base::STEEL_BLUE;
+    pub const HEADER_FACE_RESTORE: Color32 = base::BRONZE;
+    pub const HEADER_VIEWER: Color32 = base::MAROON;
+    pub const HEADER_ROUTE: Color32 = base::NEUTRAL_650;
+    pub const HEADER_GROUP: Color32 = base::SLATE_PURPLE;
+    pub const HEADER_BLEND: Color32 = base::PLUM;
+    pub const HEADER_MASK: Color32 = base::OLIVE;
+    pub const HEADER_HSV: Color32 = base::MULBERRY;
+    pub const HEADER_CURVES: Color32 = base::DENIM;
+    pub const HEADER_EXPOSURE: Color32 = base::SAND;
+    pub const HEADER_COLOR_BALANCE: Color32 = base::TEAL;
+    pub const HEADER_GRADIENT_MAP: Color32 = base::INDIGO;
+    pub const HEADER_INVERT: Color32 = base::NEUTRAL_600;
+    pub const HEADER_GRADIENT: Color32 = base::CLAY;
+    pub const HEADER_NOISE: Color32 = base::SAGE;
 
 /// Condensed grotesque UI face (Apache 2.0 / OFL, from google/fonts).
 const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed-Variable.ttf");
