@@ -570,16 +570,11 @@ impl ImageCanvas {
         let available_width = ui.available_width();
         let inner_width = available_width - SIDEBAR_PADDING * 2.0;
 
-        // Main container frame
-        egui::Frame::new()
-            .fill(pal::SIDEBAR_BG)
-            .corner_radius(CornerRadius::same(12))
-            .stroke(Stroke::new(1.0, pal::SIDEBAR_BORDER))
-            .inner_margin(Margin::symmetric(SIDEBAR_PADDING as i8, SIDEBAR_PADDING as i8))
-            .show(ui, |ui| {
-                ui.set_width(inner_width);
-                ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-
+        // Main container - no background/border, just padding
+        ui.horizontal(|ui| {
+            ui.set_width(inner_width);
+            ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
+            ui.vertical(|ui| {
                 // ===== TOP CONTROLS: Width & Height =====
                 ui.horizontal(|ui| {
                     ui.set_width(inner_width);
@@ -611,11 +606,11 @@ impl ImageCanvas {
                 let canvas_w = self.canvas_size.x * scale;
                 let canvas_h = self.canvas_size.y * scale;
 
-                // Canvas container frame
+                // Canvas container frame (keep subtle border for canvas)
                 egui::Frame::new()
-                    .fill(pal::SIDEBAR_CANVAS_BG)
+                    .fill(Color32::TRANSPARENT)
                     .corner_radius(CornerRadius::same(CANVAS_RADIUS))
-                    .stroke(Stroke::new(1.0, pal::SIDEBAR_BORDER))
+                    .stroke(Stroke::NONE)
                     .inner_margin(0.0)
                     .show(ui, |ui| {
                         ui.set_min_size(vec2(inner_width, canvas_h));
@@ -632,27 +627,12 @@ impl ImageCanvas {
                 ui.add_space(8.0);
                 self.layer_list_ui(ui, inner_width);
             });
+        });
     }
 
-    /// Draw a single input field (WIDTH/HEIGHT) with label inside
+    /// Draw a single input field (WIDTH/HEIGHT) with label inside - no bg/border
     fn draw_input_field(&mut self, ui: &mut egui::Ui, rect: Rect, label: &str, value: &mut f32) {
-        let response = ui.allocate_rect(rect, Sense::click());
-
-        // Input background
-        let bg_color = if response.hovered() || response.has_focus() {
-            Color32::from_rgb(0x20, 0x24, 0x29)
-        } else {
-            pal::SIDEBAR_INPUT_BG
-        };
-        ui.painter().rect_filled(rect, CornerRadius::same(INPUT_RADIUS), bg_color);
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(INPUT_RADIUS),
-            Stroke::new(1.0, pal::SIDEBAR_BORDER_LIGHT),
-            StrokeKind::Inside,
-        );
-
-        // Label + value text
+        // Label + value text only
         let label_pos = egui::pos2(rect.left() + 12.0, rect.top() + 6.0);
         ui.painter().text(
             label_pos,
