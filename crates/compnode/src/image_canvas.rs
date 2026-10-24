@@ -32,11 +32,10 @@ use std::time::{Duration, Instant};
 const HANDLE_R: f32 = 8.0; // screen pixels
 const ROT_DIST: f32 = 32.0; // screen pixels
 const MIN_SIZE: f32 = 8.0; // canvas units
-const ROW_H: f32 = 36.0;
-// Sidebar design constants
-const SIDEBAR_PADDING: f32 = 16.0;
-const SIDEBAR_GAP: f32 = 12.0;
-const INPUT_H: f32 = 36.0;
+const SIDEBAR_PADDING: f32 = 8.0; // was 16
+const SIDEBAR_GAP: f32 = 8.0; // was 12
+const INPUT_H: f32 = 32.0; // was 36
+const ROW_H: f32 = 30.0; // was 36
 const INPUT_RADIUS: u8 = 8;
 const CANVAS_RADIUS: u8 = 12;
 const LAYER_RADIUS: u8 = 8;
@@ -570,74 +569,84 @@ impl ImageCanvas {
             self.clear_selection();
         }
 
-        // Root frame: gives the whole sidebar real padding on all sides.
         egui::Frame::new()
             .inner_margin(Margin::same(SIDEBAR_PADDING as i8))
             .show(ui, |ui| {
-                // Width left after the frame's margin has been applied.
-                let inner_width = ui.available_width();
+                // Initial height only (egui remembers the dragged size afterwards).
+                let top_default = self
+                    .top_section_height(ui.available_width())
+                    .min(ui.available_height() * 0.6);
 
-                ui.vertical(|ui| {
-                    egui::Panel::top("top_sidebar_panel")
-                        .resizable(true)
-                        .min_size(150.0)
-                        .show_collapsible(ui, &mut true, |ui| {
-                            ui.set_width(inner_width);
-                            ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-
-                            ui.horizontal(|ui| {
-                                ui.set_width(inner_width);
-                                ui.spacing_mut().item_spacing.x = 8.0;
-
-                                let input_w = (inner_width - 8.0) * 0.5;
-
-                                let w_rect = ui
-                                    .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                                    .0;
-                                let mut w_val = self.canvas_size.x;
-                                self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
-                                self.canvas_size.x = w_val;
-
-                                let h_rect = ui
-                                    .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                                    .0;
-                                let mut h_val = self.canvas_size.y;
-                                self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
-                                self.canvas_size.y = h_val;
+                // ── Top: size inputs + canvas + layers (drag the edge to resize) ──
+                egui::Panel::top("top_sidebar_panel")
+                    .frame(egui::Frame::new()) // no extra margin
+                    .resizable(true)
+                    .default_size(top_default)
+                    .min_size(120.0)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .scroll_source(egui::scroll_area::ScrollSource {
+                                drag: egui::scroll_area::DragScroll::Never,
+                                ..egui::scroll_area::ScrollSource::ALL
+                            })
+                            .show(ui, |ui| {
+                                let inner_width = ui.available_width();
+                                self.top_section_ui(ui, inner_width);
                             });
+                    });
 
-                            let scale = (inner_width / self.canvas_size.x).min(1.0).max(0.05);
-                            let canvas_h = self.canvas_size.y * scale;
-
-                            egui::Frame::new()
-                                .fill(Color32::TRANSPARENT)
-                                .corner_radius(CornerRadius::same(CANVAS_RADIUS))
-                                .stroke(Stroke::NONE)
-                                .inner_margin(0.0)
-                                .show(ui, |ui| {
-                                    ui.set_min_size(vec2(inner_width, canvas_h));
-                                    ui.allocate_ui_with_layout(
-                                        vec2(inner_width, canvas_h),
-                                        egui::Layout::top_down(egui::Align::Center),
-                                        |ui| {
-                                            self.canvas_ui(ui, scale);
-                                        },
-                                    );
-                                });
-
-                            ui.add_space(4.0);
-                            self.layer_list_ui(ui, inner_width);
-
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    self.gpasteapp.render_ui(ui);
-                                })
-                        });
-                });
+                // ── Bottom: GPasTe fills everything that is left ──
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new().inner_margin(Margin {
+                        top: 6,
+                        ..Margin::ZERO
+                    }))
+                    .show(ui, |ui| {
+                        self.gpasteapp.render_ui(ui);
+                    });
             });
     }
 
+    /// Rough first-launch height: inputs + canvas + 2..4 layer rows.
+    fn top_section_height(&self, width: f32) -> f32 {
+        let scale = (width / self.canvas_size.x).clamp(0.05, 1.0);
+        let rows = self.items.len().clamp(2, 4) as f32;
+        INPUT_H + self.canvas_size.y * scale + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 3.0
+    }
+
+    fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
+        ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let input_w = (inner_width - 8.0) * 0.5;
+
+            let w_rect = ui
+                .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                .0;
+            let mut w_val = self.canvas_size.x;
+            self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
+            self.canvas_size.x = w_val;
+
+            let h_rect = ui
+                .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
+                .0;
+            let mut h_val = self.canvas_size.y;
+            self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
+            self.canvas_size.y = h_val;
+        });
+
+        let scale = (inner_width / self.canvas_size.x).clamp(0.05, 1.0);
+        let canvas_h = self.canvas_size.y * scale;
+        ui.allocate_ui_with_layout(
+            vec2(inner_width, canvas_h),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| self.canvas_ui(ui, scale),
+        );
+
+        self.layer_list_ui(ui, inner_width);
+    }
     /// Draw a single input field (WIDTH/HEIGHT) with label inside - no bg/border
     fn draw_input_field(&mut self, ui: &mut egui::Ui, rect: Rect, label: &str, value: &mut f32) {
         // Label + value text only
@@ -915,7 +924,7 @@ impl ImageCanvas {
         }
 
         // Layer list without scroll - just render the rows
-        ui.spacing_mut().item_spacing.y = 8.0;
+        ui.spacing_mut().item_spacing.y = 4.0;
         self.layer_rows(ui, inner_width);
     }
 

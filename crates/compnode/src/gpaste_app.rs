@@ -58,6 +58,10 @@ pub struct GPasTeApp {
     saved_prompts: Vec<String>,
 }
 
+fn tight_frame() -> egui::Frame {
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 2))
+}
+
 /// Scale `size` down (never up) so it fits inside max_w x max_h, keeping aspect ratio.
 fn fit_size(size: egui::Vec2, max_w: f32, max_h: f32) -> egui::Vec2 {
     if size.x <= 0.0 || size.y <= 0.0 {
@@ -449,68 +453,74 @@ impl GPasTeApp {
     // ---------- UI pieces ----------
 
     fn ui_top_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("top_bar").show(ui, |ui| {
-            // ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let (icon, tip) = if self.sidebar_open {
-                    ("◀", "Collapse sidebar")
-                } else {
-                    ("☰", "Expand sidebar")
-                };
-                if ui.button(icon).on_hover_text(tip).clicked() {
-                    self.sidebar_open = !self.sidebar_open;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(&self.status).weak()).truncate());
+        egui::Panel::top("top_bar")
+            .frame(tight_frame())
+            .show(ui, |ui| {
+                // ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let (icon, tip) = if self.sidebar_open {
+                        ("◀", "Collapse sidebar")
+                    } else {
+                        ("☰", "Expand sidebar")
+                    };
+                    if ui.button(icon).on_hover_text(tip).clicked() {
+                        self.sidebar_open = !self.sidebar_open;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&self.status).weak()).truncate(),
+                        );
+                    });
                 });
+                ui.add_space(3.0);
             });
-            ui.add_space(3.0);
-        });
     }
 
     fn ui_sidebar(&mut self, ui: &mut egui::Ui) {
         let mut to_fill: Option<usize> = None;
         let mut to_delete: Option<usize> = None;
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Saved prompts");
-                ui.label(egui::RichText::new(format!("({})", self.saved_prompts.len())).weak());
-            });
-            ui.separator();
-
-            if self.saved_prompts.is_empty() {
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(
-                        "No saved prompts yet.\nWrite one and press “Save prompt”.",
-                    )
-                    .weak(),
-                );
-                return;
-            }
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for (index, prompt) in self.saved_prompts.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add(elegance::Button::new((elegance::glyphs::X).to_string()))
-                                .clicked()
-                            {
-                                to_delete = Some(index);
-                            }
-                            let response = ui
-                                .selectable_label(false, prompt_title(prompt))
-                                .on_hover_text(prompt);
-                            if response.clicked() {
-                                to_fill = Some(index);
-                            }
-                        });
-                    }
+        egui::CentralPanel::default()
+            .frame(tight_frame())
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Saved prompts");
+                    ui.label(egui::RichText::new(format!("({})", self.saved_prompts.len())).weak());
                 });
-        });
+                ui.separator();
+
+                if self.saved_prompts.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "No saved prompts yet.\nWrite one and press “Save prompt”.",
+                        )
+                        .weak(),
+                    );
+                    return;
+                }
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (index, prompt) in self.saved_prompts.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add(elegance::Button::new((elegance::glyphs::X).to_string()))
+                                    .clicked()
+                                {
+                                    to_delete = Some(index);
+                                }
+                                let response = ui
+                                    .selectable_label(false, prompt_title(prompt))
+                                    .on_hover_text(prompt);
+                                if response.clicked() {
+                                    to_fill = Some(index);
+                                }
+                            });
+                        }
+                    });
+            });
 
         if let Some(index) = to_fill {
             self.prompt = self.saved_prompts[index].clone();
@@ -530,202 +540,179 @@ impl GPasTeApp {
     fn ui_main(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    // ----- Prompt -----
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Prompt").strong());
-                    egui::ScrollArea::vertical()
-                        .id_salt("prompt_scroll")
-                        .max_height(100.0) // the height at which it starts scrolling
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.prompt)
-                                    .desired_rows(4) // minimum height
-                                    .hint_text("Type a prompt (optional if you attach an image)…")
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
+        egui::CentralPanel::default()
+            .frame(tight_frame())
+            .show(ui, |ui| {
+                // Height we have to fill, captured BEFORE entering the scroll area
+                // (inside it the available height is unbounded).
+                let avail_h = ui.available_height();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // ----- Prompt (label removed, the hint text says it) -----
+                        egui::ScrollArea::vertical()
+                            .id_salt("prompt_scroll")
+                            .max_height(100.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.prompt)
+                                        .desired_rows(3)
+                                        .hint_text(
+                                            "Type a prompt (optional if you attach an image)…",
+                                        )
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
 
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(self.ebtn_add(elegance::glyphs::SAVE).outline())
-                            .on_hover_text("Save current prompt")
-                            .clicked()
-                        {
-                            self.save_current_prompt();
-                        }
-                        if ui
-                            .add(self.ebtn_add(elegance::glyphs::REFRESH).outline())
-                            .on_hover_text("Clear texts")
-                            .clicked()
-                        {
-                            self.prompt.clear();
-                            self.selected_image = None;
-                        }
-                        if ui
-                            .add(self.ebtn_add(glyphs::FOLDER_OPEN).outline())
-                            .on_hover_text("Pick image from folder")
-                            .clicked()
-                        {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter(
-                                    "Images",
-                                    &["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"],
-                                )
-                                .pick_file()
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(self.ebtn_add(elegance::glyphs::SAVE).outline())
+                                .on_hover_text("Save current prompt")
+                                .clicked()
                             {
-                                match Self::load_image_file(&ctx, &path) {
+                                self.save_current_prompt();
+                            }
+                            if ui
+                                .add(self.ebtn_add(elegance::glyphs::REFRESH).outline())
+                                .on_hover_text("Clear texts")
+                                .clicked()
+                            {
+                                self.prompt.clear();
+                                self.selected_image = None;
+                            }
+                            if ui
+                                .add(self.ebtn_add(glyphs::FOLDER_OPEN).outline())
+                                .on_hover_text("Pick image from folder")
+                                .clicked()
+                            {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter(
+                                        "Images",
+                                        &["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"],
+                                    )
+                                    .pick_file()
+                                {
+                                    match Self::load_image_file(&ctx, &path) {
+                                        Ok(image) => {
+                                            self.selected_image = Some(image);
+                                            self.status = "Image selected".into();
+                                        }
+                                        Err(error) => self.status = error,
+                                    }
+                                }
+                            }
+
+                            if ui
+                                .add(self.ebtn_add(glyphs::DOWNLOAD).outline())
+                                .on_hover_text("Paste image from clipboard")
+                                .clicked()
+                            {
+                                match Self::paste_image_from_clipboard(&ctx) {
                                     Ok(image) => {
                                         self.selected_image = Some(image);
-                                        self.status = "Image selected".into();
+                                        self.status = "Image pasted from clipboard".into();
                                     }
                                     Err(error) => self.status = error,
                                 }
                             }
-                        }
 
-                        if ui
-                            .add(self.ebtn_add(glyphs::DOWNLOAD).outline())
-                            .on_hover_text("Paste image from clipboard")
-                            .clicked()
-                        {
-                            match Self::paste_image_from_clipboard(&ctx) {
-                                Ok(image) => {
-                                    self.selected_image = Some(image);
-                                    self.status = "Image pasted from clipboard".into();
-                                }
-                                Err(error) => self.status = error,
+                            if self.selected_image.is_some()
+                                && ui
+                                    .add(self.ebtn_add(glyphs::TRASH).accent(elegance::Accent::Red))
+                                    .clicked()
+                            {
+                                self.selected_image = None;
+                                self.status = "Image removed".into();
                             }
-                        }
 
-                        if self.selected_image.is_some()
-                            && ui
-                                .add(self.ebtn_add(glyphs::TRASH).accent(elegance::Accent::Red))
-                                .clicked()
-                        {
-                            self.selected_image = None;
-                            self.status = "Image removed".into();
-                        }
-
-                        if self.generated_texture.is_some()
-                            && ui
-                                .button("To Clipboard")
-                                .on_hover_text("Copy the full-resolution image to the clipboard")
-                                .clicked()
-                        {
-                            self.copy_generated_to_clipboard();
-                        }
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if self.pending() {
-                                let abort = elegance::Button::new(
-                                    egui::RichText::new("⏹ Abort")
-                                        .strong()
-                                        .color(egui::Color32::WHITE),
-                                )
-                                .size(elegance::ButtonSize::Small)
-                                .accent(elegance::Accent::Red);
-                                if ui
-                                    .add(abort)
+                            if self.generated_texture.is_some()
+                                && ui
+                                    .button("To Clipboard")
                                     .on_hover_text(
-                                        "Stop waiting and stop ChatGPT's generation (Esc)",
+                                        "Copy the full-resolution image to the clipboard",
                                     )
                                     .clicked()
-                                {
-                                    self.abort_request();
-                                }
-                                ui.add(elegance::Spinner::new());
-                            } else {
-                                let has_content =
-                                    !self.prompt.trim().is_empty() || self.selected_image.is_some();
-                                let send = elegance::Button::new(
-                                    egui::RichText::new("Send to ChatGPT").strong(),
+                            {
+                                self.copy_generated_to_clipboard();
+                            }
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if self.pending() {
+                                        let abort = elegance::Button::new(
+                                            egui::RichText::new("⏹ Abort")
+                                                .strong()
+                                                .color(egui::Color32::WHITE),
+                                        )
+                                        .size(elegance::ButtonSize::Small)
+                                        .accent(elegance::Accent::Red);
+                                        if ui
+                                            .add(abort)
+                                            .on_hover_text(
+                                                "Stop waiting and stop ChatGPT's generation (Esc)",
+                                            )
+                                            .clicked()
+                                        {
+                                            self.abort_request();
+                                        }
+                                        ui.add(elegance::Spinner::new());
+                                    } else {
+                                        let has_content = !self.prompt.trim().is_empty()
+                                            || self.selected_image.is_some();
+                                        let send = elegance::Button::new(
+                                            egui::RichText::new("Send to ChatGPT").strong(),
+                                        );
+                                        if ui.add_enabled(has_content, send).clicked() {
+                                            self.send_to_chatgpt();
+                                        }
+                                    }
+                                },
+                            );
+                        });
+
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            // Two equal slots side by side, each allocated in the layout flow.
+                            let gap = 8.0;
+                            let w = (ui.available_width() - gap) / 2.0;
+                            let used = ui.min_rect().height();
+                            let slot_h = (avail_h - used - 24.0).clamp(90.0, w * 1.2);
+                            let slot_size = vec2(w, slot_h);
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = gap;
+                                image_slot(
+                                    ui,
+                                    slot_size,
+                                    self.selected_image.as_ref().map(|i| &i.preview),
+                                    "No image attached.",
+                                    self.selected_image.as_ref().map(|i| i.name.as_str()),
                                 );
-                                if ui.add_enabled(has_content, send).clicked() {
-                                    self.send_to_chatgpt();
-                                }
+                                image_slot(
+                                    ui,
+                                    slot_size,
+                                    self.generated_texture.as_ref(),
+                                    "Nothing generated yet.",
+                                    None,
+                                );
+                            });
+                            if !self.image_status.is_empty() {
+                                ui.label(egui::RichText::new(&self.image_status).small().weak());
                             }
                         });
+
+                        if !self.image_status.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(&self.image_status);
+                        }
                     });
-
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        // Two equal slots side by side, each allocated in the layout flow.
-                        let gap = 12.0;
-                        let w = (ui.available_width() - gap) / 2.0;
-                        let slot_size = vec2(w, w * 0.9);
-
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = gap;
-
-                            // Slot 1: attached image
-                            ui.vertical(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(slot_size, Sense::hover());
-                                match &self.selected_image {
-                                    Some(image) => {
-                                        let t = image.preview.size_vec2();
-                                        let k =
-                                            (rect.width() / t.x).min(rect.height() / t.y).min(1.0);
-                                        let img_rect =
-                                            egui::Rect::from_center_size(rect.center(), t * k);
-                                        ui.put(
-                                            img_rect,
-                                            egui::Image::new((image.preview.id(), t * k)),
-                                        );
-                                        ui.label(egui::RichText::new(&image.name).weak());
-                                    }
-                                    None => {
-                                        ui.put(
-                                            rect,
-                                            egui::Label::new(
-                                                egui::RichText::new("No image attached.").weak(),
-                                            ),
-                                        );
-                                    }
-                                }
-                            });
-
-                            // Slot 2: generated image
-                            ui.vertical(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(slot_size, Sense::hover());
-                                match &self.generated_texture {
-                                    Some(texture) => {
-                                        let t = texture.size_vec2();
-                                        let k =
-                                            (rect.width() / t.x).min(rect.height() / t.y).min(1.0);
-                                        let img_rect =
-                                            egui::Rect::from_center_size(rect.center(), t * k);
-                                        ui.put(img_rect, egui::Image::new((texture.id(), t * k)));
-                                    }
-                                    None => {
-                                        ui.put(
-                                            rect,
-                                            egui::Label::new(
-                                                egui::RichText::new("Nothing generated yet.")
-                                                    .weak(),
-                                            ),
-                                        );
-                                    }
-                                }
-                            });
-                        });
-                    });
-
-                    if !self.image_status.is_empty() {
-                        ui.add_space(4.0);
-                        ui.label(&self.image_status);
-                    }
-                });
-        });
+            });
     }
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-
+        ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
         let paste_shortcut =
             ctx.input(|input| input.modifiers.ctrl && input.key_pressed(egui::Key::F));
         if paste_shortcut {
@@ -750,5 +737,42 @@ impl GPasTeApp {
         } else {
             self.ui_main(ui);
         }
+    }
+}
+/// Bordered preview box. Fits the texture inside, shows `empty_text` otherwise.
+fn image_slot(
+    ui: &mut egui::Ui,
+    size: egui::Vec2,
+    tex: Option<&egui::TextureHandle>,
+    empty_text: &str,
+    name: Option<&str>,
+) {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(6),
+        ui.visuals().widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+
+    match tex {
+        Some(tex) => {
+            let inner = rect.shrink(4.0);
+            let fitted = fit_size(tex.size_vec2(), inner.width(), inner.height());
+            let img_rect = egui::Rect::from_center_size(inner.center(), fitted);
+            ui.put(img_rect, egui::Image::new((tex.id(), fitted)));
+        }
+        None => {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                empty_text,
+                egui::FontId::proportional(12.0),
+                ui.visuals().weak_text_color(),
+            );
+        }
+    }
+    if let Some(name) = name {
+        let _ = resp.on_hover_text(name);
     }
 }
