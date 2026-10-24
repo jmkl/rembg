@@ -13,6 +13,54 @@ const fn hex(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
+pub mod base2 {
+    use super::hex;
+    use eframe::egui::Color32;
+
+    // Neutral grays
+    pub const NEUTRAL_950: Color32 = hex(0x1b1b1b);
+    pub const NEUTRAL_900: Color32 = hex(0x1e1e1e);
+    pub const NEUTRAL_850: Color32 = hex(0x242424);
+    pub const NEUTRAL_800: Color32 = hex(0x282828);
+    pub const NEUTRAL_700: Color32 = hex(0x3b3b3b);
+    pub const NEUTRAL_650: Color32 = hex(0x4a4a4a);
+    pub const NEUTRAL_600: Color32 = hex(0x505050);
+    pub const NEUTRAL_500: Color32 = hex(0x8b8b8b);
+    pub const NEUTRAL_300: Color32 = hex(0xd8d8d8);
+    pub const NEUTRAL_200: Color32 = hex(0xe0e0e0);
+    pub const NEUTRAL_100: Color32 = hex(0xf2f2f2);
+
+    // Slate (grays with a slight blue tint, used by the sidebar)
+    pub const SLATE_900: Color32 = hex(0x1c1f23);
+    pub const SLATE_800: Color32 = hex(0x22262b);
+    pub const SLATE_700: Color32 = hex(0x3a3d41);
+    pub const SLATE_600: Color32 = hex(0x5a5d61);
+    pub const SLATE_400: Color32 = hex(0x8a8d93);
+
+    // Accent / status colors
+    pub const BLUE_500: Color32 = hex(0x4776d1);
+    pub const GOLD_500: Color32 = hex(0xd1a84b);
+    pub const GOLD_950: Color32 = hex(0x241e0b);
+    pub const RED_400: Color32 = hex(0xe06c60);
+    pub const GREEN_400: Color32 = hex(0x6ab87a);
+
+    // Muted dark hues for node headers (darkened)
+    pub const MOSS: Color32 = hex(0x283b2e);
+    pub const STEEL_BLUE: Color32 = hex(0x253040);
+    pub const BRONZE: Color32 = hex(0x3c2f21);
+    pub const MAROON: Color32 = hex(0x3a2424);
+    pub const SLATE_PURPLE: Color32 = hex(0x30303b);
+    pub const PLUM: Color32 = hex(0x3b283b);
+    pub const OLIVE: Color32 = hex(0x3b3b28);
+    pub const MULBERRY: Color32 = hex(0x3b2830);
+    pub const DENIM: Color32 = hex(0x28303b);
+    pub const SAND: Color32 = hex(0x3b3428);
+    pub const TEAL: Color32 = hex(0x283b3b);
+    pub const INDIGO: Color32 = hex(0x30283b);
+    pub const CLAY: Color32 = hex(0x3b3028);
+    pub const SAGE: Color32 = hex(0x303b30);
+}
+
 /// Raw colors. Name = what it looks like, not where it is used.
 /// Scales run dark -> light (950 = darkest).
 pub mod base {
@@ -64,7 +112,7 @@ pub mod base {
 }
 /// Muted Blender-inspired palette.
 pub(crate) mod pal {
-    use crate::style::base;
+    use crate::style::base2 as base;
     use egui::Color32;
 
     // --- Sidebar / panel palette ---
@@ -111,16 +159,14 @@ pub(crate) mod pal {
     pub const HEADER_NOISE: Color32 = base::SAGE;
 }
 /// Condensed grotesque UI face (Apache 2.0 / OFL, from google/fonts).
-const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed-Variable.ttf");
+const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/Inter_18pt-Medium.ttf");
 
-/// Register Roboto Condensed as the primary proportional font.
-///
 /// Uses `Context::add_font` with the highest priority so elegance's icon
 /// font (installed with the lowest priority as a fallback) keeps covering the
 /// private-use-area glyphs.
 fn install_fonts(ctx: &egui::Context) {
     ctx.add_font(egui::epaint::text::FontInsert::new(
-        "RobotoCondensed",
+        "Inter",
         egui::FontData::from_static(ROBOTO_CONDENSED),
         vec![egui::epaint::text::InsertFontFamily {
             family: egui::FontFamily::Proportional,
@@ -137,9 +183,7 @@ pub(crate) fn install_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     install_fonts(ctx);
 
-    // Keep the Blender-ish greys, but let elegance drive every widget's shape,
-    // typography, focus ring and interaction states.
-    let mut theme = Theme::charcoal();
+    let mut theme = Theme::slate();
     theme.palette.bg = pal::PANEL;
     theme.palette.card = pal::NODE;
     theme.palette.input_bg = Color32::from_rgb(0x1a, 0x1a, 0x1a);
@@ -187,13 +231,14 @@ pub(crate) fn snarl_style() -> SnarlStyle {
     // `editor::GraphEditor::show_header`.
     style.collapsible = Some(false);
     style.header_drag_space = Some(egui::vec2(0.0, 0.0));
+    style.header_frame = Some(egui::Frame::new().inner_margin(egui::Margin::ZERO));
     // NOTE: `crisp_magnified_text` multiplies the whole egui style by
     // `max_scale`, so enabling it makes nodes render at 2x/2.5x. Keep it off
     // and let the layer transform do the zooming.
     style.crisp_magnified_text = Some(false);
 
     // Wires: Blender-ish smooth curves behind the nodes.
-    style.wire_style = Some(WireStyle::Bezier5);
+    style.wire_style = Some(WireStyle::Bezier3);
     style.wire_width = Some(2.0);
     style.wire_layer = Some(WireLayer::BehindNodes);
 

@@ -56,12 +56,12 @@ pub struct CompNodeApp {
     pub(crate) ctrl_v_was_down: bool,
     pub(crate) sidebar_width: Option<f32>,
     pub(crate) sidebar_maximized: bool,
-    pub(crate) sidebar_open: bool,
     pub(crate) images_need_load: bool,
     pub(crate) url_open: bool,
     pub(crate) url_text: String,
     pub(crate) input_folder_open: bool,
     pub(crate) image_canvas: ImageCanvas,
+    pub(crate) sidebar_restore: bool,
 }
 impl CompNodeApp {
     pub(crate) fn new(
@@ -112,9 +112,9 @@ impl CompNodeApp {
             ctrl_v_was_down: false,
             sidebar_width: None,
             sidebar_maximized: false,
-            sidebar_open: true,
             images_need_load: true,
             image_canvas: ImageCanvas::new(gpaste_app),
+            sidebar_restore: false,
         };
 
         if autosave_path.exists() {
@@ -896,6 +896,168 @@ impl CompNodeApp {
         }
         false
     }
+    fn show_sidebar_contents(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // --- Image canvas: sync with viewer node layers ---
+        // Sync canvas size so both previews use the same logical size.
+        for (_, node) in self.snarl.nodes_ids_mut() {
+            if let crate::model::Node::Output(viewer) = node {
+                let size = self.image_canvas.canvas_size();
+                if viewer.canvas_size != size {
+                    viewer.canvas_size = size;
+                }
+            }
+            if node
+                .filter_node()
+                .map(|f| f.kind == crate::model::FilterKind::Group)
+                .unwrap_or(false)
+            {
+                let size = self.image_canvas.canvas_size();
+                if node.canvas_size() != size {
+                    node.set_canvas_size(size);
+                }
+            }
+        }
+
+        // Only rebuild/sync layers when they changed (or a
+        // decode finished). Signature is allocation-free.
+        let selected_group = self.editor.selected_nodes().first().copied().filter(|id| {
+        self.snarl.get_node_info(*id).is_some()
+            && matches!(self.snarl[*id], crate::model::Node::Filter(ref f) if f.kind == crate::model::FilterKind::Group)
+          });
+        let layer_iter_sig = if let Some(gid) = selected_group {
+            // only this group's layers
+            self.snarl[gid]
+                .layers()
+                .into_iter()
+                .flatten()
+                .map(|l| {
+                    (
+                        l.source,
+                        l.source_path.as_deref(),
+                        l.texture.as_ref().map(|t| t.id()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            self.snarl
+                .node_ids()
+                .filter_map(|(_, node)| match node {
+                    crate::model::Node::Output(o) => Some(o),
+                    _ => None,
+                })
+                .flat_map(|o| o.layers.iter())
+                .map(|l| {
+                    (
+                        l.source,
+                        l.source_path.as_deref(),
+                        l.texture.as_ref().map(|t| t.id()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let sig = ImageCanvas::layers_signature(layer_iter_sig.into_iter());
+        if self.image_canvas.begin_sync(&ctx, sig) {
+            // Collect layers from the edited node (bottom-to-top).
+            let layers: Vec<(
+                egui_snarl::NodeId,
+                String,
+                Option<egui::TextureHandle>,
+                Option<PathBuf>,
+                (egui::Vec2, egui::Vec2, f32),
+                bool,
+            )> = if let Some(gid) = selected_group {
+                self.snarl[gid]
+                    .layers()
+                    .map(|ls| {
+                        ls.iter()
+                            .map(|l| {
+                                (
+                                    l.source,
+                                    l.source_name.clone(),
+                                    l.texture.clone(),
+                                    l.source_path.clone(),
+                                    (l.center, l.size, l.angle),
+                                    layer_uses_preview(&self.snarl, l.source),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                self.snarl
+                    .node_ids()
+                    .filter_map(|(_, node)| match node {
+                        crate::model::Node::Output(o) => Some(o),
+                        _ => None,
+                    })
+                    .flat_map(|o| o.layers.iter())
+                    .map(|l| {
+                        (
+                            l.source,
+                            l.source_name.clone(),
+                            l.texture.clone(),
+                            l.source_path.clone(),
+                            (l.center, l.size, l.angle),
+                            layer_uses_preview(&self.snarl, l.source),
+                        )
+                    })
+                    .collect()
+            };
+            self.image_canvas.sync_layers(&ctx, &layers);
+        }
+
+        // Write transforms/order back to the viewer layers once,
+        // after the canvas has been idle for 3s (not every frame).
+        if self.image_canvas.take_stable_commit(0.1) {
+            eprintln!("stable");
+            let canvas_transforms: std::collections::HashMap<
+                egui_snarl::NodeId,
+                (egui::Vec2, egui::Vec2, f32),
+            > = self
+                .image_canvas
+                .layers()
+                .map(|l| (l.id, (l.center, l.size, l.angle)))
+                .collect();
+            let canvas_layer_order: Vec<egui_snarl::NodeId> =
+                self.image_canvas.layers().map(|l| l.id).collect();
+
+            let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
+                self.snarl.get_node_info(*id).is_some()
+                    && self.snarl[*id]
+                        .filter_node()
+                        .map(|f| f.kind == crate::model::FilterKind::Group)
+                        .unwrap_or(false)
+            });
+            // fallback: single output node
+            let target_id = edited_id.or_else(|| {
+                self.snarl
+                    .node_ids()
+                    .find(|(_, n)| n.viewer_node().is_some())
+                    .map(|(id, _)| id)
+            });
+
+            if let Some(tid) = target_id {
+                if let Some(layers) = self.snarl[tid].layers_mut() {
+                    for layer in layers.iter_mut() {
+                        if let Some((center, size, angle)) = canvas_transforms.get(&layer.source) {
+                            layer.center = *center;
+                            layer.size = *size;
+                            layer.angle = *angle;
+                        }
+                    }
+                    layers.sort_by_key(|l| {
+                        canvas_layer_order
+                            .iter()
+                            .position(|id| *id == l.source)
+                            .unwrap_or(usize::MAX)
+                    });
+                }
+            }
+        }
+
+        // Render the image canvas widget in the sidebar.
+        self.image_canvas.show(ui);
+    }
 }
 
 impl App for CompNodeApp {
@@ -978,7 +1140,7 @@ impl App for CompNodeApp {
         let text_edit_focused = ctx.text_edit_focused();
 
         let (status_text, status_dot) = self.status_text(busy);
-        let (mut actions, title_bar_height) = title_bar::show(
+        let (mut actions, _) = title_bar::show(
             ui,
             &status_text,
             status_dot,
@@ -1081,18 +1243,29 @@ impl App for CompNodeApp {
                 refresh_viewer(&mut self.snarl, *id, &ctx, &mut self.editor.assets);
             }
         }
+        let screen_w = ctx.content_rect().width();
 
-        let snarl_response = egui::CentralPanel::default()
-            .frame(Frame::new().fill(pal::BG))
+        egui::Panel::right("root_sidebar")
+            .min_size(300.0)
+            .max_size(screen_w * 0.8)
+            .frame(
+                Frame::new()
+                    .fill(pal::PANEL)
+                    .stroke(egui::Stroke::new(1.0, pal::NODE_STROKE)),
+            )
             .show(ui, |ui| {
-                let view_id = self.editor.view_id();
-                SnarlWidget::new().id(view_id).style(self.style).show(
-                    &mut self.snarl,
-                    &mut self.editor,
-                    ui,
-                )
-            })
-            .inner;
+                self.show_sidebar_contents(ui, &ctx);
+            });
+
+        let central = egui::CentralPanel::default().show(ui, |ui| {
+            let view_id = self.editor.view_id();
+            SnarlWidget::new().id(view_id).style(self.style).show(
+                &mut self.snarl,
+                &mut self.editor,
+                ui,
+            )
+        });
+        let snarl_response = central.inner;
         self.editor.finish_frame(&ctx, &self.snarl, &snarl_response);
 
         // Build the graph menu ourselves instead of using Snarl's
@@ -1112,258 +1285,6 @@ impl App for CompNodeApp {
         }
 
         self.show_asset_dialogs(&ctx);
-
-        // Sidebar overlay: fixed below the title bar on the right.
-        let screen = ctx.input(|input| input.raw.screen_rect).unwrap_or_else(|| {
-            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1280.0, 720.0))
-        });
-        let title_bar_height = title_bar_height.max(0.0);
-        let sidebar_height = (screen.height() - title_bar_height).max(80.0);
-        if self.sidebar_open {
-            let default_width = screen.width() / 3.0;
-            let sidebar_width = if self.sidebar_maximized {
-                screen.width() * 2.0 / 3.0
-            } else {
-                self.sidebar_width.unwrap_or(default_width)
-            };
-
-            let sidebar_x = screen.right() - sidebar_width;
-            let sidebar_y = title_bar_height;
-            egui::Area::new(egui::Id::new("root_sidebar"))
-                .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(sidebar_x, sidebar_y))
-                .show(&ctx, |ui| {
-                    ui.set_min_size(egui::vec2(sidebar_width, sidebar_height));
-                    ui.set_max_size(egui::vec2(sidebar_width, sidebar_height));
-                    egui::Frame::new()
-                        .fill(pal::PANEL)
-                        .stroke(egui::Stroke::new(1.0, pal::NODE_STROKE))
-                        .show(ui, |ui| {
-                            ui.set_width(sidebar_width);
-                            ui.set_height(sidebar_height);
-                            let panel_min = ui.min_rect().min;
-
-                            let handle_rect = egui::Rect::from_min_size(
-                                panel_min + egui::vec2(0.0, 0.0),
-                                egui::vec2(5., sidebar_height),
-                            );
-                            let handle_response = ui.interact(
-                                handle_rect,
-                                egui::Id::new("sidebar_resize_handle"),
-                                egui::Sense::click_and_drag(),
-                            );
-                            if handle_response.clicked() {
-                                self.sidebar_open = false;
-                            }
-                            if handle_response.dragged() {
-                                self.sidebar_maximized = false;
-                                let delta = handle_response.drag_delta().x;
-                                let new_width =
-                                    (sidebar_width - delta).clamp(120.0, screen.width() * 0.8);
-                                self.sidebar_width = Some(new_width);
-                            }
-                            if handle_response.hovered() {
-                                ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                                ctx.layer_painter(egui::LayerId::new(
-                                    egui::Order::Foreground,
-                                    egui::Id::new("sidebar_resize_handle_layer"),
-                                ))
-                                .rect_filled(
-                                    handle_rect,
-                                    egui::CornerRadius::ZERO,
-                                    pal::ACCENT,
-                                );
-                            }
-                            // --- Image canvas: sync with viewer node layers ---
-                            // Sync canvas size so both previews use the same logical size.
-                            for (_, node) in self.snarl.nodes_ids_mut() {
-                                if let crate::model::Node::Output(viewer) = node {
-                                    let size = self.image_canvas.canvas_size();
-                                    if viewer.canvas_size != size {
-                                        viewer.canvas_size = size;
-                                    }
-                                }
-                                if node
-                                    .filter_node()
-                                    .map(|f| f.kind == crate::model::FilterKind::Group)
-                                    .unwrap_or(false)
-                                {
-                                    let size = self.image_canvas.canvas_size();
-                                    if node.canvas_size() != size {
-                                        node.set_canvas_size(size);
-                                    }
-                                }
-                            }
-
-                            // Only rebuild/sync layers when they changed (or a
-                            // decode finished). Signature is allocation-free.
-                            let selected_group = self.editor.selected_nodes().first().copied().filter(|id| {
-                                self.snarl.get_node_info(*id).is_some()
-                                    && matches!(self.snarl[*id], crate::model::Node::Filter(ref f) if f.kind == crate::model::FilterKind::Group)
-                            });
-                            let layer_iter_sig = if let Some(gid) = selected_group {
-                                // only this group's layers
-                                self.snarl[gid]
-                                    .layers()
-                                    .into_iter()
-                                    .flatten()
-                                    .map(|l| (l.source, l.source_path.as_deref(), l.texture.as_ref().map(|t| t.id())))
-                                    .collect::<Vec<_>>()
-                            } else {
-                                self.snarl
-                                    .node_ids()
-                                    .filter_map(|(_, node)| match node {
-                                        crate::model::Node::Output(o) => Some(o),
-                                        _ => None,
-                                    })
-                                    .flat_map(|o| o.layers.iter())
-                                    .map(|l| {
-                                        (
-                                            l.source,
-                                            l.source_path.as_deref(),
-                                            l.texture.as_ref().map(|t| t.id()),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                            };
-                            let sig = ImageCanvas::layers_signature(layer_iter_sig.into_iter());
-                            if self.image_canvas.begin_sync(&ctx, sig) {
-                                // Collect layers from the edited node (bottom-to-top).
-                                let layers: Vec<(
-                                    egui_snarl::NodeId,
-                                    String,
-                                    Option<egui::TextureHandle>,
-                                    Option<PathBuf>,
-                                    (egui::Vec2, egui::Vec2, f32),
-                                    bool,
-                                )> = if let Some(gid) = selected_group {
-                                    self.snarl[gid].layers()
-                                        .map(|ls| {
-                                            ls.iter()
-                                                .map(|l| {
-                                                    (
-                                                        l.source,
-                                                        l.source_name.clone(),
-                                                        l.texture.clone(),
-                                                        l.source_path.clone(),
-                                                        (l.center, l.size, l.angle),
-                                                        layer_uses_preview(&self.snarl, l.source),
-                                                    )
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default()
-                                } else {
-                                    self.snarl
-                                        .node_ids()
-                                        .filter_map(|(_, node)| match node {
-                                            crate::model::Node::Output(o) => Some(o),
-                                            _ => None,
-                                        })
-                                        .flat_map(|o| o.layers.iter())
-                                        .map(|l| {
-                                            (
-                                                l.source,
-                                                l.source_name.clone(),
-                                                l.texture.clone(),
-                                                l.source_path.clone(),
-                                                (l.center, l.size, l.angle),
-                                                layer_uses_preview(&self.snarl, l.source),
-                                            )
-                                        })
-                                        .collect()
-                                };
-                                self.image_canvas.sync_layers(&ctx, &layers);
-                            }
-
-                            // Write transforms/order back to the viewer layers once,
-                            // after the canvas has been idle for 3s (not every frame).
-                            if self.image_canvas.take_stable_commit(0.1) {
-                                eprintln!("stable");
-                                let canvas_transforms: std::collections::HashMap<
-                                    egui_snarl::NodeId,
-                                    (egui::Vec2, egui::Vec2, f32),
-                                > = self
-                                    .image_canvas
-                                    .layers()
-                                    .map(|l| (l.id, (l.center, l.size, l.angle)))
-                                    .collect();
-                                let canvas_layer_order: Vec<egui_snarl::NodeId> =
-                                    self.image_canvas.layers().map(|l| l.id).collect();
-
-                                let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
-                                    self.snarl.get_node_info(*id).is_some()
-                                        && self.snarl[*id]
-                                            .filter_node()
-                                            .map(|f| f.kind == crate::model::FilterKind::Group)
-                                            .unwrap_or(false)
-                                });
-                                // fallback: single output node
-                                let target_id = edited_id.or_else(|| {
-                                    self.snarl
-                                        .node_ids()
-                                        .find(|(_, n)| n.viewer_node().is_some())
-                                        .map(|(id, _)| id)
-                                });
-
-                                if let Some(tid) = target_id {
-                                    if let Some(layers) = self.snarl[tid].layers_mut() {
-                                        for layer in layers.iter_mut() {
-                                            if let Some((center, size, angle)) =
-                                                canvas_transforms.get(&layer.source)
-                                            {
-                                                layer.center = *center;
-                                                layer.size = *size;
-                                                layer.angle = *angle;
-                                            }
-                                        }
-                                        layers.sort_by_key(|l| {
-                                            canvas_layer_order
-                                                .iter()
-                                                .position(|id| *id == l.source)
-                                                .unwrap_or(usize::MAX)
-                                        });
-                                    }
-                                }
-                            }
-
-                            // Render the image canvas widget in the sidebar.
-                            self.image_canvas.show(ui);
-                        });
-                });
-        } else {
-            egui::Area::new(egui::Id::new("root_sidebar_expand"))
-                .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(screen.right() - 24.0, title_bar_height))
-                .show(&ctx, |ui| {
-                    let rect = ctx.content_rect();
-                    let handle_rect = egui::Rect::from_min_max(
-                        egui::pos2(rect.right() - 5.0, title_bar_height),
-                        rect.right_bottom(),
-                    );
-                    let handle_response = ui.interact(
-                        handle_rect,
-                        egui::Id::new("sidebar_open_handle"),
-                        egui::Sense::click(),
-                    );
-                    if handle_response.clicked() {
-                        self.sidebar_open = true;
-                    }
-                    if handle_response.hovered() {
-                        ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-
-                        ctx.layer_painter(egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("sidebar_resize_handle_layer"),
-                        ))
-                        .rect_filled(
-                            handle_rect,
-                            egui::CornerRadius::ZERO,
-                            pal::ACCENT,
-                        );
-                    }
-                });
-        }
 
         self.autosave_tick(&ctx);
 

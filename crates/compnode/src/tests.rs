@@ -60,9 +60,9 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         ctrl_v_was_down: false,
         sidebar_width: None,
         sidebar_maximized: false,
-        sidebar_open: true,
         images_need_load: true,
         image_canvas: ImageCanvas::new(GPasTeApp::new(tx, rx)),
+        sidebar_restore: false,
     }
 }
 

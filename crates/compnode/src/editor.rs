@@ -3,7 +3,9 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, RichText, Stroke, vec2};
 use egui_snarl::{
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
-    ui::{BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes},
+    ui::{
+        AnyPins, BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes,
+    },
 };
 use elegance::glyphs;
 
@@ -495,83 +497,93 @@ impl SnarlViewer<Node> for GraphEditor {
         snarl: &mut Snarl<Node>,
     ) {
         let open = snarl.get_node_info(node).is_none_or(|info| info.open);
-        let spec = catalog::spec(snarl[node].kind());
-        let node_width = spec.body_width;
+        let kind = snarl[node].kind();
+        let spec = catalog::spec(kind);
 
-        // Constrain header width to node width
+        // Width measured by show_body on the previous frame (see step 2).
+        let width_id = egui::Id::new(("node_real_width", node));
+        let node_width = ui.available_width().max(spec.body_width);
         ui.set_min_width(node_width);
-        ui.set_max_width(node_width);
 
-        // Header layout: collapse icon | title (centered) | preview toggle
-        ui.horizontal(|ui| {
-            ui.set_min_width(node_width);
-            ui.set_max_width(node_width);
+        // Header may grow to the real node width, but never shrink below it.
+        ui.set_min_width(node_width);
 
-            // Collapse/expand chevron
-            let open = snarl.get_node_info(node).is_none_or(|info| info.open);
-            let chevron = if open {
-                elegance::glyphs::CHEVRON_DOWN
-            } else {
-                elegance::glyphs::CHEVRON_RIGHT
-            };
-            let chevron_response = ui.add(
-                egui::Button::new(
-                    RichText::new(chevron.to_string())
-                        .size(13.0)
-                        .color(pal::HEADER_TEXT),
-                )
-                .frame(false)
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE)
-                .sense(egui::Sense::click()),
-            );
-            if chevron_response
-                .on_hover_text(if open { "Collapse" } else { "Expand" })
-                .clicked()
-            {
-                snarl.open_node(node, !open);
-            }
+        let row_h = 22.0; // header content height
+        let icon = 20.0; // square hit area for each icon
+        let pad = 4.0; // margin from the node edge
 
-            // Title (centered, takes remaining space)
-            let title = catalog::spec(snarl[node].kind()).title;
-            ui.add(
-                egui::Label::new(
-                    RichText::new(title)
-                        .size(12.0)
-                        .line_height(Some(1.5))
-                        .strong()
-                        .color(pal::HEADER_TEXT),
-                )
-                .selectable(false),
-            );
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(node_width, row_h), egui::Sense::hover());
 
-            // Spacer to push preview toggle to the right
-            ui.add_space(ui.available_width().max(0.0));
+        let left_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + pad, rect.center().y - icon / 2.0),
+            egui::vec2(icon, icon),
+        );
+        let right_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - pad - icon, rect.center().y - icon / 2.0),
+            egui::vec2(icon, icon),
+        );
+        let title_rect = egui::Rect::from_min_max(
+            egui::pos2(left_rect.right(), rect.top()),
+            egui::pos2(right_rect.left(), rect.bottom()),
+        );
 
-            // Preview toggle (EYE / EYE_OFF)
-            let enabled = snarl[node].preview_enabled();
-            let glyph = if enabled {
-                elegance::glyphs::EYE
-            } else {
-                elegance::glyphs::EYE_OFF
-            };
-            let response = ui.add(
-                egui::Button::new(
-                    RichText::new(elegance::glyphs::EYE.to_string())
-                        .size(16.0)
-                        .color(pal::HEADER_TEXT),
-                )
-                .frame(false)
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE)
-                .sense(egui::Sense::click()),
-            );
-            if response.clicked() {
-                snarl[node].set_preview_enabled(!enabled);
-            }
-        });
+        // Chevron (left)
+        let chevron = if open {
+            elegance::glyphs::CHEVRON_DOWN
+        } else {
+            elegance::glyphs::CHEVRON_RIGHT
+        };
+        let chevron_resp = ui.interact(
+            left_rect,
+            ui.id().with(("chev", node)),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            left_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            chevron.to_string(),
+            egui::FontId::proportional(13.0),
+            pal::HEADER_TEXT,
+        );
+        if chevron_resp
+            .on_hover_text(if open { "Collapse" } else { "Expand" })
+            .clicked()
+        {
+            snarl.open_node(node, !open);
+        }
+
+        // Title (center)
+        ui.painter().text(
+            title_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            spec.title,
+            egui::FontId::proportional(12.0),
+            pal::HEADER_TEXT,
+        );
+
+        // Eye toggle (right)
+        let enabled = snarl[node].preview_enabled();
+        let glyph = if enabled {
+            elegance::glyphs::EYE
+        } else {
+            elegance::glyphs::EYE_OFF
+        };
+        let eye_resp = ui.interact(
+            right_rect,
+            ui.id().with(("eye", node)),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            right_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph.to_string(),
+            egui::FontId::proportional(16.0),
+            pal::HEADER_TEXT,
+        );
+        if eye_resp.clicked() {
+            snarl[node].set_preview_enabled(!enabled);
+        }
     }
-
     fn show_input(
         &mut self,
         pin: &InPin,
@@ -724,6 +736,18 @@ impl SnarlViewer<Node> for GraphEditor {
 
     fn has_node_menu(&mut self, _node: &Node) -> bool {
         true
+    }
+    fn has_dropped_wire_menu(&mut self, _src_pins: AnyPins, _snarl: &mut Snarl<Node>) -> bool {
+        true
+    }
+
+    fn show_dropped_wire_menu(
+        &mut self,
+        pos: egui::Pos2,
+        ui: &mut egui::Ui,
+        src_pins: AnyPins,
+        snarl: &mut Snarl<Node>,
+    ) {
     }
 
     fn show_node_menu(
