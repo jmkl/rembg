@@ -190,7 +190,7 @@ fn apply_style(style: &mut egui::Style) {
         noninteractive: widget(pal::NODE, border, Stroke::new(1.0, pal::TEXT), 0.0),
         inactive: widget(pal::INPUT_BG, border, Stroke::new(1.0, pal::TEXT), 0.0),
         hovered: widget(
-            pal::HOVER_FILL,
+            pal::hover(pal::INPUT_BG),
             Stroke::new(1.0, pal::MUTED),
             Stroke::new(1.5, pal::TEXT),
             1.0,

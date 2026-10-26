@@ -180,7 +180,7 @@ fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
     if hovered {
         if del_resp.hovered() {
             ui.painter()
-                .circle_filled(del_rect.center(), DEL * 0.5, pal::DANGER_SOFT);
+                .circle_filled(del_rect.center(), DEL * 0.5, pal::DANGER_TINT);
         }
         ui.painter().text(
             del_rect.center(),
@@ -915,7 +915,7 @@ fn image_slot(
                 tex.id(),
                 img_rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                pal::NO_TINT,
+                pal::WHITE,
             );
         }
         _ => {

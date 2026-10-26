@@ -6,11 +6,18 @@
   "permissions": ["nativeMessaging", "tabs", "clipboardWrite"],
   "host_permissions": ["https://chatgpt.com/*"],
   "background": { "service_worker": "background.js" },
+  "action": {},
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
 }

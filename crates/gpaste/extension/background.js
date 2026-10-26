@@ -289,3 +289,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
 connectNative();
 console.log("[GPasTe] Background service worker started.");
+
+chrome.action.onClicked.addListener(() => {
+  console.log("[GPasTe] Reloaded.");
+  chrome.runtime.reload();
+});

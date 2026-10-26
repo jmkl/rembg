@@ -130,32 +130,32 @@ impl Button {
         match self.tone {
             Tone::Primary => (
                 [
-                    (pal::BTN_PRIMARY, none),
-                    (pal::BTN_PRIMARY_HOVER, none),
-                    (pal::BTN_PRIMARY_HOVER, none),
+                    (pal::ACCENT, none),
+                    (pal::hover(pal::ACCENT), none),
+                    (pal::hover(pal::ACCENT), none),
                 ],
-                pal::ON_ACCENT,
+                pal::WHITE,
             ),
             Tone::Success => (
                 [
-                    (pal::BTN_SUCCESS, none),
-                    (pal::BTN_SUCCESS_HOVER, none),
-                    (pal::BTN_SUCCESS_HOVER, none),
+                    (pal::SUCCESS, none),
+                    (pal::hover(pal::SUCCESS), none),
+                    (pal::hover(pal::SUCCESS), none),
                 ],
-                pal::ON_ACCENT,
+                pal::WHITE,
             ),
             Tone::Danger => (
                 [
-                    (pal::BTN_DANGER, none),
-                    (pal::BTN_DANGER_HOVER, none),
-                    (pal::BTN_DANGER_HOVER, none),
+                    (pal::DANGER, none),
+                    (pal::hover(pal::DANGER), none),
+                    (pal::hover(pal::DANGER), none),
                 ],
-                pal::ON_ACCENT,
+                pal::WHITE,
             ),
             Tone::Outline => (
                 [
                     (Color32::TRANSPARENT, Stroke::new(1.0, pal::NODE_STROKE)),
-                    (pal::HOVER_BG, Stroke::new(1.0, pal::MUTED)),
+                    (pal::hover(pal::PANEL), Stroke::new(1.0, pal::MUTED)),
                     (pal::ACTIVE_FILL, Stroke::new(1.0, pal::ACCENT)),
                 ],
                 pal::TEXT,
@@ -298,7 +298,7 @@ impl Widget for MenuItem<'_> {
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             if self.enabled && response.hovered() {
-                painter.rect_filled(rect, CornerRadius::same(4), pal::HOVER_BG);
+                painter.rect_filled(rect, CornerRadius::same(4), pal::hover(pal::PANEL));
             }
             let icon = if self.checked {
                 Some(icons::CHECK)
@@ -378,7 +378,7 @@ impl Widget for Checkbox<'_> {
             let (fill, stroke) = if checked {
                 (pal::ACCENT, Stroke::new(1.0, pal::ACCENT))
             } else if response.hovered() {
-                (pal::HOVER_FILL, Stroke::new(1.0, pal::MUTED))
+                (pal::hover(pal::INPUT_BG), Stroke::new(1.0, pal::MUTED))
             } else {
                 (pal::INPUT_BG, Stroke::new(1.0, pal::NODE_STROKE))
             };
@@ -396,7 +396,7 @@ impl Widget for Checkbox<'_> {
                     Align2::CENTER_CENTER,
                     icons::CHECK,
                     icons::font(font::ICON),
-                    pal::ON_ACCENT,
+                    pal::WHITE,
                 );
             }
             painter.galley(
@@ -705,7 +705,7 @@ impl Widget for ColorField<'_> {
 pub(crate) fn error_line(ui: &mut Ui, error: Option<&str>) {
     let Some(error) = error else { return };
     Frame::new()
-        .fill(pal::CALLOUT_DANGER_BG)
+        .fill(pal::DANGER_TINT)
         .stroke(Stroke::new(1.0, pal::CALLOUT_DANGER_BORDER))
         .corner_radius(CornerRadius::same(metrics::R_CONTROL))
         .inner_margin(Margin::symmetric(8, 5))
@@ -736,14 +736,14 @@ pub(crate) fn window_button(ui: &mut Ui, glyph: WindowGlyph, tooltip: &str) -> R
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             let fill = if glyph == WindowGlyph::Close {
-                pal::BTN_DANGER
+                pal::DANGER
             } else {
-                pal::HOVER_BG
+                pal::hover(pal::PANEL)
             };
             ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
         }
         let color = if response.hovered() && glyph == WindowGlyph::Close {
-            pal::ON_ACCENT
+            pal::WHITE
         } else {
             pal::TEXT
         };

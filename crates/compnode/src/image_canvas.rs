@@ -551,7 +551,7 @@ impl ImageCanvas {
             for col in 0..2 {
                 let cx = start_x + col as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
                 let cy = start_y + row as f32 * (DRAG_HANDLE_DOT + DRAG_HANDLE_GAP) + dot_r;
-                painter.circle_filled(egui::pos2(cx, cy), dot_r, pal::SIDEBAR_DRAG_HANDLE);
+                painter.circle_filled(egui::pos2(cx, cy), dot_r, pal::FAINT);
             }
         }
     }
@@ -655,7 +655,7 @@ impl ImageCanvas {
             Align2::LEFT_TOP,
             label,
             FontId::proportional(9.0),
-            pal::SIDEBAR_TEXT_MUTED,
+            pal::MUTED,
         );
 
         let value_str = format!("{:.0} px", value);
@@ -665,7 +665,7 @@ impl ImageCanvas {
             Align2::LEFT_CENTER,
             value_str,
             FontId::new(13.0, egui::FontFamily::Proportional),
-            pal::SIDEBAR_TEXT,
+            pal::TEXT,
         );
 
         // DragValue interaction - place it in the rect
@@ -828,7 +828,7 @@ impl ImageCanvas {
 
         // --- draw canvas + layers (back → front) ---
         // Checkerboard background matching the node preview widgets.
-        painter.rect_filled(rect, CornerRadius::ZERO, pal::CHECK_A);
+        painter.rect_filled(rect, CornerRadius::ZERO, pal::BG);
 
         let cell = 8.0;
         let mut y = rect.top();
@@ -840,7 +840,7 @@ impl ImageCanvas {
                     pos2(x, y),
                     pos2((x + cell).min(rect.right()), (y + cell).min(rect.bottom())),
                 );
-                painter.rect_filled(tile, CornerRadius::ZERO, pal::CHECK_B);
+                painter.rect_filled(tile, CornerRadius::ZERO, pal::NODE);
                 x += cell * 2.0;
             }
             y += cell;
@@ -861,7 +861,7 @@ impl ImageCanvas {
                 mesh.vertices.push(Vertex {
                     pos: to_screen(c[k]),
                     uv: uvs[k],
-                    color: pal::NO_TINT,
+                    color: pal::WHITE,
                 });
             }
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
@@ -870,7 +870,7 @@ impl ImageCanvas {
         painter.rect_stroke(
             rect,
             CornerRadius::ZERO,
-            Stroke::new(1.0, pal::CANVAS_BORDER),
+            Stroke::new(1.0, pal::MUTED),
             StrokeKind::Inside,
         );
 
@@ -882,21 +882,21 @@ impl ImageCanvas {
             );
             let it = &self.items[i];
             let pts: Vec<Pos2> = it.corners().iter().map(|&c| to_screen(c)).collect();
-            gp.add(Shape::closed_line(pts, Stroke::new(1.5, pal::GIZMO)));
+            gp.add(Shape::closed_line(pts, Stroke::new(1.5, pal::ACCENT)));
 
             let top_mid = to_screen(it.handle_pos(Handle::Scale(0, -1), rot_dist));
             let rot_pos = to_screen(it.handle_pos(Handle::Rotate, rot_dist));
-            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::GIZMO));
-            gp.circle(rot_pos, HANDLE_R, pal::GIZMO_HANDLE, Stroke::new(2.0, pal::GIZMO));
+            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::ACCENT));
+            gp.circle(rot_pos, HANDLE_R, pal::WHITE, Stroke::new(2.0, pal::ACCENT));
 
             for &(sx, sy) in &SCALE_HANDLES {
                 let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
                 let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
-                gp.rect_filled(r, CornerRadius::same(1), pal::GIZMO_HANDLE);
+                gp.rect_filled(r, CornerRadius::same(1), pal::WHITE);
                 gp.rect_stroke(
                     r,
                     CornerRadius::same(1),
-                    Stroke::new(2.0, pal::GIZMO),
+                    Stroke::new(2.0, pal::ACCENT),
                     StrokeKind::Inside,
                 );
             }
@@ -958,22 +958,22 @@ impl ImageCanvas {
             let is_dragged = self.list_drag == Some(id);
 
             let bg = if is_sel {
-                pal::SIDEBAR_LAYER_SELECTED
+                pal::ACTIVE_FILL
             } else if is_dragged {
-                pal::SIDEBAR_LAYER_BG_HOVER
+                pal::hover(pal::BG)
             } else if resp.hovered() {
-                pal::SIDEBAR_LAYER_BG_HOVER
+                pal::hover(pal::BG)
             } else {
-                pal::SIDEBAR_LAYER_BG
+                pal::BG
             };
 
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(LAYER_RADIUS), bg);
 
             let border_color = if is_sel {
-                pal::SIDEBAR_ACCENT
+                pal::ACCENT
             } else {
-                pal::SIDEBAR_BORDER
+                pal::NODE_STROKE
             };
             ui.painter().rect_stroke(
                 rect,
@@ -998,7 +998,7 @@ impl ImageCanvas {
                 Align2::LEFT_CENTER,
                 name,
                 FontId::proportional(13.0),
-                pal::SIDEBAR_TEXT,
+                pal::TEXT,
             );
         }
 
@@ -1012,7 +1012,7 @@ impl ImageCanvas {
                     rows[n - 1].bottom() + 4.0
                 };
                 ui.painter()
-                    .hline(rows[0].x_range(), y, Stroke::new(2.0, pal::SIDEBAR_ACCENT));
+                    .hline(rows[0].x_range(), y, Stroke::new(2.0, pal::ACCENT));
 
                 if ui.input(|i| i.pointer.primary_released()) {
                     self.move_layer(drag_id, slot);

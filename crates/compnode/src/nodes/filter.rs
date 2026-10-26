@@ -170,7 +170,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
-    painter.rect_filled(rect, 4.0, pal::CURVE_BG);
+    painter.rect_filled(rect, 4.0, pal::INPUT_BG);
     // Grid.
     for step in 1..4 {
         let t = step as f32 / 4.0;
@@ -178,17 +178,17 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
         let y = rect.top() + rect.height() * (1.0 - t);
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            egui::Stroke::new(1.0, pal::CURVE_GRID),
+            egui::Stroke::new(1.0, pal::NODE_STROKE),
         );
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, pal::CURVE_GRID),
+            egui::Stroke::new(1.0, pal::NODE_STROKE),
         );
     }
     // Diagonal reference.
     painter.line_segment(
         [rect.left_bottom(), rect.right_top()],
-        egui::Stroke::new(1.0, pal::CURVE_DIAGONAL),
+        egui::Stroke::new(1.0, pal::NODE_STROKE),
     );
 
     // Map normalized point to screen.
@@ -212,7 +212,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
         if let Some(previous) = prev {
             painter.line_segment(
                 [previous, pos],
-                egui::Stroke::new(1.5, pal::CURVE_LINE),
+                egui::Stroke::new(1.5, pal::ACCENT),
             );
         }
         prev = Some(pos);
@@ -221,8 +221,8 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     // Handles.
     for (index, point) in points.iter().enumerate() {
         let pos = to_screen(*point);
-        painter.circle_filled(pos, 5.0, pal::CURVE_HANDLE);
-        painter.circle_stroke(pos, 5.0, egui::Stroke::new(1.0, pal::CURVE_HANDLE_STROKE));
+        painter.circle_filled(pos, 5.0, pal::WHITE);
+        painter.circle_stroke(pos, 5.0, egui::Stroke::new(1.0, pal::BLACK));
         let _ = index;
     }
 

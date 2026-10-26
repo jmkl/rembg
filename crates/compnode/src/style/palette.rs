@@ -1,9 +1,15 @@
 //! Every colour in CompNode is defined here and nowhere else.
 //!
-//! * [`base`] holds raw swatches, named after what they look like.
-//!   Scales run dark -> light (950 = darkest).
-//! * [`pal`] holds semantic tokens (what a colour is *for*). All other modules
-//!   refer to `pal::*` only; none of them construct a `Color32` themselves.
+//! * [`base`] holds the raw swatches of the active theme: a conventional UI
+//!   palette — a neutral ramp (50 = lightest .. 950 = darkest), four accent
+//!   hues and eight muted node-header hues.
+//! * [`catppuccin`] and [`photoshop`] are alternate themes that declare
+//!   *exactly the same swatch names*, so switching theme is one `use` line
+//!   in [`pal`].
+//! * [`pal`] holds the semantic tokens (what a colour is *for*) plus the
+//!   [`pal::node_header`] hues. All other modules refer to `pal::*` only;
+//!   none of them construct a `Color32` themselves. Hover variants are
+//!   derived with [`pal::hover`] instead of being stored as swatches.
 
 use egui::Color32;
 
@@ -25,280 +31,166 @@ pub(crate) const fn mix(a: Color32, b: Color32, pct: u32) -> Color32 {
     )
 }
 
-pub(crate) mod catppuccin {
-    use super::{Color32, hex};
+// ------------------------------------------------------------------ themes ----
+// Every theme declares the same swatch names, so `pal` never cares which one
+// is active.
 
-    pub const WHITE: Color32 = hex(0xffffff);
-    pub const BLACK: Color32 = hex(0x000000);
-
-    // Neutrals: Macchiato crust -> text. Repeated values are intentional,
-    // Catppuccin has fewer steps than this scale.
-    pub const NEUTRAL_975: Color32 = hex(0x181926); // crust  (curve editor well)
-    pub const NEUTRAL_960: Color32 = hex(0x181926); // crust  (input fields)
-    pub const NEUTRAL_950: Color32 = hex(0x1e2030); // mantle (checkerboard dark)
-    pub const NEUTRAL_900: Color32 = hex(0x1e2030); // mantle (graph canvas)
-    pub const NEUTRAL_850: Color32 = hex(0x24273a); // base   (node body, popups)
-    pub const NEUTRAL_800: Color32 = hex(0x363a4f); // surface0 (title bar, sidebar)
-    pub const NEUTRAL_750: Color32 = hex(0x494d64); // surface1
-    pub const NEUTRAL_700: Color32 = hex(0x494d64); // surface1 (borders)
-    pub const NEUTRAL_650: Color32 = hex(0x5b6078); // surface2
-    pub const NEUTRAL_600: Color32 = hex(0x494d64); // surface1
-    pub const NEUTRAL_550: Color32 = hex(0x6e738d); // overlay0 (faint text)
-    pub const NEUTRAL_500: Color32 = hex(0x939ab7); // overlay2 (muted text)
-    pub const NEUTRAL_450: Color32 = hex(0x8087a2); // overlay1
-    pub const NEUTRAL_300: Color32 = hex(0xb8c0e0); // subtext1
-    pub const NEUTRAL_200: Color32 = hex(0xcad3f5); // text
-    pub const NEUTRAL_100: Color32 = hex(0xcad3f5); // text (header text)
-    pub const NEUTRAL_50: Color32 = hex(0xeff1f5); // latte base (light canvas)
-
-    // Sidebar surfaces
-    pub const SLATE_900: Color32 = hex(0x1e2030); // mantle
-    pub const SLATE_800: Color32 = hex(0x24273a); // base
-    pub const SLATE_700: Color32 = hex(0x494d64); // surface1
-    pub const SLATE_600: Color32 = hex(0x6e738d); // overlay0
-    pub const SLATE_400: Color32 = hex(0x939ab7); // overlay2
-    pub const SLATE_BLUE: Color32 = hex(0x475170); // selected layer row
-
-    // Accent / status colours
-    pub const BLUE_500: Color32 = hex(0x8aadf4); // blue (accent)
-    pub const BLUE_400: Color32 = hex(0xb7bdf8); // lavender (accent hover)
-    pub const SKY_300: Color32 = hex(0x91d7e3); // sky (curve line)
-    pub const AZURE_500: Color32 = hex(0x7dc4e4); // sapphire (gizmo)
-    pub const GOLD_500: Color32 = hex(0xeed49f); // yellow (sockets)
-    pub const GOLD_950: Color32 = hex(0x181926); // crust (socket outline)
-    pub const RED_400: Color32 = hex(0xed8796); // red (danger text)
-    pub const RED_600: Color32 = hex(0xed8796); // red (button)
-    pub const RED_700: Color32 = hex(0xee99a0); // maroon (button hover)
-    pub const GREEN_400: Color32 = hex(0xa6da95); // green (success)
-    pub const GREEN_600: Color32 = hex(0xa6da95); // green (button)
-    pub const GREEN_700: Color32 = hex(0x8bd5ca); // teal (button hover)
-
-    // Node headers: each accent mixed ~22-35% into base (#24273a)
-    pub const MOSS: Color32 = hex(0x52665a);
-    pub const STEEL_BLUE: Color32 = hex(0x48567b);
-    pub const BRONZE: Color32 = hex(0x6d5552);
-    pub const MAROON: Color32 = hex(0x6a495a);
-    pub const SLATE_PURPLE: Color32 = hex(0x575c7c);
-    pub const PLUM: Color32 = hex(0x6d5c76);
-    pub const OLIVE: Color32 = hex(0x6b645d);
-    pub const MULBERRY: Color32 = hex(0x5d517c);
-    pub const DENIM: Color32 = hex(0x435e76);
-    pub const SAND: Color32 = hex(0x6d6671);
-    pub const TEAL: Color32 = hex(0x48646c);
-    pub const INDIGO: Color32 = hex(0x38425f);
-    pub const CLAY: Color32 = hex(0x524449);
-    pub const SAGE: Color32 = hex(0x414e4e);
-}
-
-pub(crate) mod photoshop {
-    use super::{Color32, hex};
-
-    pub const WHITE: Color32 = hex(0xffffff);
-    pub const BLACK: Color32 = hex(0x000000);
-
-    pub const NEUTRAL_975: Color32 = hex(0x0f0f0f); // curve editor well
-    pub const NEUTRAL_960: Color32 = hex(0x141414); // input fields
-    pub const NEUTRAL_950: Color32 = hex(0x171717); // checkerboard dark
-    pub const NEUTRAL_900: Color32 = hex(0x1a1a1a); // graph canvas
-    pub const NEUTRAL_850: Color32 = hex(0x1f1f1f); // node body, popups
-    pub const NEUTRAL_800: Color32 = hex(0x232323); // title bar, sidebar, dialogs
-    pub const NEUTRAL_750: Color32 = hex(0x2a2a2a);
-    pub const NEUTRAL_700: Color32 = hex(0x333333); // borders
-    pub const NEUTRAL_650: Color32 = hex(0x3f3f3f);
-    pub const NEUTRAL_600: Color32 = hex(0x4a4a4a);
-    pub const NEUTRAL_550: Color32 = hex(0x6e6e6e); // faint text
-    pub const NEUTRAL_500: Color32 = hex(0x909090); // muted text
-    pub const NEUTRAL_450: Color32 = hex(0xa0a0a0);
-    pub const NEUTRAL_300: Color32 = hex(0xbdbdbd); // body text
-    pub const NEUTRAL_200: Color32 = hex(0xd4d4d4);
-    pub const NEUTRAL_100: Color32 = hex(0xececec); // headings, header text
-    pub const NEUTRAL_50: Color32 = hex(0xf5f5f5);
-
-    // Slate (near-neutral with a faint cool tint, used by the sidebar)
-    pub const SLATE_900: Color32 = hex(0x161718);
-    pub const SLATE_800: Color32 = hex(0x1d1e20);
-    pub const SLATE_700: Color32 = hex(0x333437);
-    pub const SLATE_600: Color32 = hex(0x5a5b5e);
-    pub const SLATE_400: Color32 = hex(0x909296);
-    pub const SLATE_BLUE: Color32 = hex(0x232f44); // selected layer row
-
-    // Accent / status colours
-    pub const BLUE_500: Color32 = hex(0x2680eb); // Photoshop selection blue
-    pub const BLUE_400: Color32 = hex(0x3b8ff0);
-    pub const SKY_300: Color32 = hex(0x6cb2ff);
-    pub const AZURE_500: Color32 = hex(0x0b9cff); // transform gizmo
-    pub const GOLD_500: Color32 = hex(0xe8a33d); // sockets
-    pub const GOLD_950: Color32 = hex(0x2a1d06);
-    pub const RED_400: Color32 = hex(0xea5a60);
-    pub const RED_600: Color32 = hex(0xd7373f);
-    pub const RED_700: Color32 = hex(0xb72a31);
-    pub const GREEN_400: Color32 = hex(0x33ab84);
-    pub const GREEN_600: Color32 = hex(0x268e6c);
-    pub const GREEN_700: Color32 = hex(0x1f7a5c);
-
-    // Muted dark hues for node headers
-    pub const MOSS: Color32 = hex(0x2f4033);
-    pub const STEEL_BLUE: Color32 = hex(0x2b3a50);
-    pub const BRONZE: Color32 = hex(0x45372a);
-    pub const MAROON: Color32 = hex(0x452b2b);
-    pub const SLATE_PURPLE: Color32 = hex(0x373745);
-    pub const PLUM: Color32 = hex(0x433043);
-    pub const OLIVE: Color32 = hex(0x424230);
-    pub const MULBERRY: Color32 = hex(0x432f3a);
-    pub const DENIM: Color32 = hex(0x2f3a48);
-    pub const SAND: Color32 = hex(0x433b2f);
-    pub const TEAL: Color32 = hex(0x2f4343);
-    pub const INDIGO: Color32 = hex(0x383048);
-    pub const CLAY: Color32 = hex(0x43372f);
-    pub const SAGE: Color32 = hex(0x384238);
-}
+/// The active theme: a conventional dark-UI palette (neutral ramp + primaries).
 pub(crate) mod base {
     use super::{Color32, hex};
 
     pub const WHITE: Color32 = hex(0xffffff);
     pub const BLACK: Color32 = hex(0x000000);
 
-    // Neutral grays
-    pub const NEUTRAL_975: Color32 = hex(0x181818);
-    pub const NEUTRAL_960: Color32 = hex(0x1a1a1a);
-    pub const NEUTRAL_950: Color32 = hex(0x1b1b1b);
-    pub const NEUTRAL_900: Color32 = hex(0x1e1e1e);
-    pub const NEUTRAL_850: Color32 = hex(0x242424);
-    pub const NEUTRAL_800: Color32 = hex(0x282828);
-    pub const NEUTRAL_750: Color32 = hex(0x3c3c3c);
-    pub const NEUTRAL_700: Color32 = hex(0x3b3b3b);
-    pub const NEUTRAL_650: Color32 = hex(0x4a4a4a);
-    pub const NEUTRAL_600: Color32 = hex(0x505050);
-    pub const NEUTRAL_550: Color32 = hex(0x6c6c6c);
-    pub const NEUTRAL_500: Color32 = hex(0x8b8b8b);
-    pub const NEUTRAL_450: Color32 = hex(0x787878);
-    pub const NEUTRAL_300: Color32 = hex(0xd8d8d8);
-    pub const NEUTRAL_200: Color32 = hex(0xe0e0e0);
-    pub const NEUTRAL_100: Color32 = hex(0xf2f2f2);
+    // Neutral ramp, light -> dark.
+    pub const NEUTRAL_50: Color32 = hex(0xfafafa); // light image canvas
+    pub const NEUTRAL_100: Color32 = hex(0xf5f5f5); // header text
+    pub const NEUTRAL_300: Color32 = hex(0xd4d4d4); // body text
+    pub const NEUTRAL_400: Color32 = hex(0xa3a3a3); // muted text
+    pub const NEUTRAL_500: Color32 = hex(0x737373); // faint text, handles
+    pub const NEUTRAL_700: Color32 = hex(0x404040); // borders, neutral header
+    pub const NEUTRAL_800: Color32 = hex(0x262626); // panels, node bodies
+    pub const NEUTRAL_900: Color32 = hex(0x171717); // graph canvas
+    pub const NEUTRAL_950: Color32 = hex(0x0a0a0a); // wells, input fields
+
+    // Accent / status primaries.
+    pub const BLUE: Color32 = hex(0x3b82f6); // accent, selection, gizmo
+    pub const GREEN: Color32 = hex(0x16a34a); // success
+    pub const RED: Color32 = hex(0xef4444); // danger
+    pub const AMBER: Color32 = hex(0xf59e0b); // sockets, warnings
+
+    // Muted node-header hues; node kinds share these (see `pal::node_header`).
+    pub const MOSS: Color32 = hex(0x2e4a38);
+    pub const STEEL_BLUE: Color32 = hex(0x2c3c56);
+    pub const BRONZE: Color32 = hex(0x4a3a28);
+    pub const MAROON: Color32 = hex(0x4a2f33);
+    pub const PLUM: Color32 = hex(0x453049);
+    pub const OLIVE: Color32 = hex(0x45452e);
+    pub const TEAL: Color32 = hex(0x2c4747);
+    pub const SAND: Color32 = hex(0x4a4234);
+}
+
+/// Alternate theme, kept for a future theme switcher: swap the `use` in `pal`.
+#[allow(dead_code)]
+pub(crate) mod catppuccin {
+    use super::{Color32, hex};
+
+    pub const WHITE: Color32 = hex(0xffffff);
+    pub const BLACK: Color32 = hex(0x000000);
+
+    // Catppuccin Macchiato, packed onto the same ramp.
+    pub const NEUTRAL_50: Color32 = hex(0xeff1f5);
+    pub const NEUTRAL_100: Color32 = hex(0xcad3f5);
+    pub const NEUTRAL_300: Color32 = hex(0xb8c0e0);
+    pub const NEUTRAL_400: Color32 = hex(0x939ab7);
+    pub const NEUTRAL_500: Color32 = hex(0x6e738d);
+    pub const NEUTRAL_700: Color32 = hex(0x494d64);
+    pub const NEUTRAL_800: Color32 = hex(0x24273a);
+    pub const NEUTRAL_900: Color32 = hex(0x1e2030);
+    pub const NEUTRAL_950: Color32 = hex(0x181926);
+
+    pub const BLUE: Color32 = hex(0x8aadf4);
+    pub const GREEN: Color32 = hex(0xa6da95);
+    pub const RED: Color32 = hex(0xed8796);
+    pub const AMBER: Color32 = hex(0xeed49f);
+
+    pub const MOSS: Color32 = hex(0x52665a);
+    pub const STEEL_BLUE: Color32 = hex(0x48567b);
+    pub const BRONZE: Color32 = hex(0x6d5552);
+    pub const MAROON: Color32 = hex(0x6a495a);
+    pub const PLUM: Color32 = hex(0x6d5c76);
+    pub const OLIVE: Color32 = hex(0x6b645d);
+    pub const TEAL: Color32 = hex(0x48646c);
+    pub const SAND: Color32 = hex(0x6d6671);
+}
+
+/// Alternate theme, kept for a future theme switcher: swap the `use` in `pal`.
+#[allow(dead_code)]
+pub(crate) mod photoshop {
+    use super::{Color32, hex};
+
+    pub const WHITE: Color32 = hex(0xffffff);
+    pub const BLACK: Color32 = hex(0x000000);
+
     pub const NEUTRAL_50: Color32 = hex(0xf5f5f5);
+    pub const NEUTRAL_100: Color32 = hex(0xececec);
+    pub const NEUTRAL_300: Color32 = hex(0xbdbdbd);
+    pub const NEUTRAL_400: Color32 = hex(0xa0a0a0);
+    pub const NEUTRAL_500: Color32 = hex(0x6e6e6e);
+    pub const NEUTRAL_700: Color32 = hex(0x333333);
+    pub const NEUTRAL_800: Color32 = hex(0x232323);
+    pub const NEUTRAL_900: Color32 = hex(0x1a1a1a);
+    pub const NEUTRAL_950: Color32 = hex(0x0f0f0f);
 
-    // Slate (grays with a slight blue tint, used by the sidebar)
-    pub const SLATE_900: Color32 = hex(0x1c1f23);
-    pub const SLATE_800: Color32 = hex(0x22262b);
-    pub const SLATE_700: Color32 = hex(0x3a3d41);
-    pub const SLATE_600: Color32 = hex(0x5a5d61);
-    pub const SLATE_400: Color32 = hex(0x8a8d93);
-    pub const SLATE_BLUE: Color32 = hex(0x2a354a);
+    pub const BLUE: Color32 = hex(0x2680eb);
+    pub const GREEN: Color32 = hex(0x33ab84);
+    pub const RED: Color32 = hex(0xea5a60);
+    pub const AMBER: Color32 = hex(0xe8a33d);
 
-    // Accent / status colours
-    pub const BLUE_500: Color32 = hex(0x4776d1);
-    pub const BLUE_400: Color32 = hex(0x5a89e0);
-    pub const SKY_300: Color32 = hex(0x7ab8ff);
-    pub const AZURE_500: Color32 = hex(0x008cff);
-    pub const GOLD_500: Color32 = hex(0xd1a84b);
-    pub const GOLD_950: Color32 = hex(0x241e0b);
-    pub const RED_400: Color32 = hex(0xe06c60);
-    pub const RED_600: Color32 = hex(0xdc2626);
-    pub const RED_700: Color32 = hex(0xb91c1c);
-    pub const GREEN_400: Color32 = hex(0x6ab87a);
-    pub const GREEN_600: Color32 = hex(0x16a34a);
-    pub const GREEN_700: Color32 = hex(0x15803d);
-
-    // Muted dark hues for node headers
-    pub const MOSS: Color32 = hex(0x283b2e);
-    pub const STEEL_BLUE: Color32 = hex(0x253040);
-    pub const BRONZE: Color32 = hex(0x3c2f21);
-    pub const MAROON: Color32 = hex(0x3a2424);
-    pub const SLATE_PURPLE: Color32 = hex(0x30303b);
-    pub const PLUM: Color32 = hex(0x3b283b);
-    pub const OLIVE: Color32 = hex(0x3b3b28);
-    pub const MULBERRY: Color32 = hex(0x3b2830);
-    pub const DENIM: Color32 = hex(0x28303b);
-    pub const SAND: Color32 = hex(0x3b3428);
-    pub const TEAL: Color32 = hex(0x283b3b);
-    pub const INDIGO: Color32 = hex(0x30283b);
-    pub const CLAY: Color32 = hex(0x3b3028);
-    pub const SAGE: Color32 = hex(0x303b30);
+    pub const MOSS: Color32 = hex(0x2f4033);
+    pub const STEEL_BLUE: Color32 = hex(0x2b3a50);
+    pub const BRONZE: Color32 = hex(0x45372a);
+    pub const MAROON: Color32 = hex(0x452b2b);
+    pub const PLUM: Color32 = hex(0x433043);
+    pub const OLIVE: Color32 = hex(0x424230);
+    pub const TEAL: Color32 = hex(0x2f4343);
+    pub const SAND: Color32 = hex(0x433b2f);
 }
 
 /// Semantic tokens (Blender-inspired muted dark palette).
+///
+/// 21 tokens; everything else in the UI derives from these via [`hover`] or
+/// [`mix`]. Point `base` at another theme module to re-skin the whole app.
 pub(crate) mod pal {
-    use super::{Color32, mix, photoshop as base};
+    use super::{Color32, base, mix};
 
     // --- Surfaces ---
-    pub const BG: Color32 = base::NEUTRAL_900; // graph canvas
+    pub const BG: Color32 = base::NEUTRAL_900; // graph canvas, layer rows
     pub const PANEL: Color32 = base::NEUTRAL_800; // title bar, side panels, dialogs
-    pub const NODE: Color32 = base::NEUTRAL_850; // node body, popups, cards
+    pub const NODE: Color32 = base::NEUTRAL_800; // node body, popups, cards
     pub const NODE_STROKE: Color32 = base::NEUTRAL_700; // borders and separators
-    pub const INPUT_BG: Color32 = base::NEUTRAL_960; // text fields, controls at rest
-    pub const FAINT_BG: Color32 = mix(NODE, base::WHITE, 2); // striped rows
-    pub const HOVER_BG: Color32 = mix(PANEL, base::WHITE, 8); // menu rows, ghost buttons
-    pub const HOVER_FILL: Color32 = mix(INPUT_BG, base::WHITE, 4); // controls on hover
-    pub const ACTIVE_FILL: Color32 = mix(INPUT_BG, ACCENT, 15); // controls pressed
+    pub const INPUT_BG: Color32 = base::NEUTRAL_950; // text fields, wells
+    pub const FAINT_BG: Color32 = mix(NODE, base::WHITE, 4); // striped rows
+    pub const ACTIVE_FILL: Color32 = mix(NODE, ACCENT, 18); // pressed / selected
 
     // --- Text ---
     pub const HEADER_TEXT: Color32 = base::NEUTRAL_100;
     pub const TEXT: Color32 = base::NEUTRAL_300;
-    pub const MUTED: Color32 = base::NEUTRAL_500;
-    pub const FAINT: Color32 = base::NEUTRAL_550;
-    pub const ON_ACCENT: Color32 = base::WHITE; // text on filled buttons
+    pub const MUTED: Color32 = base::NEUTRAL_400;
+    pub const FAINT: Color32 = base::NEUTRAL_500;
+    pub const WHITE: Color32 = base::WHITE; // glyphs, untinted textures
+    pub const BLACK: Color32 = base::BLACK; // strokes on light fills
 
     // --- Accent & status ---
-    pub const ACCENT: Color32 = base::BLUE_500;
-    pub const ACCENT_HOVER: Color32 = base::BLUE_400;
-    pub const SUCCESS: Color32 = base::GREEN_400;
-    pub const DANGER: Color32 = base::RED_400;
-    pub const DANGER_SOFT: Color32 = mix(NODE, DANGER, 25); // hover tint behind danger icons
-    pub const CALLOUT_DANGER_BG: Color32 = mix(NODE, DANGER, 14);
+    pub const ACCENT: Color32 = base::BLUE;
+    pub const SUCCESS: Color32 = base::GREEN;
+    pub const DANGER: Color32 = base::RED;
+    pub const DANGER_TINT: Color32 = mix(NODE, DANGER, 18); // error callout fill, danger-icon hover
     pub const CALLOUT_DANGER_BORDER: Color32 = mix(NODE, DANGER, 55);
 
-    // --- Filled buttons ---
-    pub const BTN_PRIMARY: Color32 = ACCENT;
-    pub const BTN_PRIMARY_HOVER: Color32 = ACCENT_HOVER;
-    pub const BTN_SUCCESS: Color32 = base::GREEN_600;
-    pub const BTN_SUCCESS_HOVER: Color32 = base::GREEN_700;
-    pub const BTN_DANGER: Color32 = base::RED_600;
-    pub const BTN_DANGER_HOVER: Color32 = base::RED_700;
+    // --- Node graph & canvas ---
+    pub const SOCKET: Color32 = base::AMBER;
+    pub const SOCKET_STROKE: Color32 = mix(SOCKET, BLACK, 75);
+    pub const CANVAS_BG: Color32 = base::NEUTRAL_50; // light image canvas
 
-    // --- Node graph ---
-    pub const SOCKET: Color32 = base::GOLD_500;
-    pub const SOCKET_STROKE: Color32 = base::GOLD_950;
-    pub const CHECK_A: Color32 = base::NEUTRAL_950; // preview checkerboard
-    pub const CHECK_B: Color32 = base::NEUTRAL_850;
-    pub const NO_TINT: Color32 = base::WHITE; // multiplier for textures
+    /// Hover fill for a surface (or a filled button): blend it 8% to white.
+    pub(crate) const fn hover(surface: Color32) -> Color32 {
+        mix(surface, base::WHITE, 8)
+    }
 
-    // --- Curve editor ---
-    pub const CURVE_BG: Color32 = base::NEUTRAL_975;
-    pub const CURVE_GRID: Color32 = base::NEUTRAL_800;
-    pub const CURVE_DIAGONAL: Color32 = base::NEUTRAL_750;
-    pub const CURVE_LINE: Color32 = base::SKY_300;
-    pub const CURVE_HANDLE: Color32 = base::WHITE;
-    pub const CURVE_HANDLE_STROKE: Color32 = base::BLACK;
+    /// Node header colours. Register these in `catalog::NODE_SPECS`.
+    pub(crate) mod node_header {
+        use super::{Color32, base};
 
-    // --- Sidebar / image canvas ---
-    pub const SIDEBAR_BORDER: Color32 = base::SLATE_700;
-    pub const SIDEBAR_LAYER_BG: Color32 = base::SLATE_900;
-    pub const SIDEBAR_LAYER_BG_HOVER: Color32 = base::SLATE_800;
-    pub const SIDEBAR_LAYER_SELECTED: Color32 = base::SLATE_BLUE;
-    pub const SIDEBAR_TEXT: Color32 = base::NEUTRAL_200;
-    pub const SIDEBAR_TEXT_MUTED: Color32 = base::SLATE_400;
-    pub const SIDEBAR_DRAG_HANDLE: Color32 = base::SLATE_600;
-    pub const SIDEBAR_ACCENT: Color32 = base::BLUE_500;
-    pub const CANVAS_BG: Color32 = base::NEUTRAL_50;
-    pub const CANVAS_BORDER: Color32 = base::NEUTRAL_450;
-    pub const GIZMO: Color32 = base::AZURE_500; // transform handles
-    pub const GIZMO_HANDLE: Color32 = base::WHITE;
-
-    // --- Node header colours. Register these in `catalog::NODE_SPECS`. ---
-    pub const HEADER_IMAGE: Color32 = base::MOSS;
-    pub const HEADER_REMOVE_BG: Color32 = base::STEEL_BLUE;
-    pub const HEADER_FACE_RESTORE: Color32 = base::BRONZE;
-    pub const HEADER_VIEWER: Color32 = base::MAROON;
-    pub const HEADER_ROUTE: Color32 = base::NEUTRAL_650;
-    pub const HEADER_GROUP: Color32 = base::SLATE_PURPLE;
-    pub const HEADER_BLEND: Color32 = base::PLUM;
-    pub const HEADER_MASK: Color32 = base::OLIVE;
-    pub const HEADER_HSV: Color32 = base::MULBERRY;
-    pub const HEADER_CURVES: Color32 = base::DENIM;
-    pub const HEADER_EXPOSURE: Color32 = base::SAND;
-    pub const HEADER_COLOR_BALANCE: Color32 = base::TEAL;
-    pub const HEADER_GRADIENT_MAP: Color32 = base::INDIGO;
-    pub const HEADER_INVERT: Color32 = base::NEUTRAL_600;
-    pub const HEADER_GRADIENT: Color32 = base::CLAY;
-    pub const HEADER_NOISE: Color32 = base::SAGE;
+        /// Neutral header for utility nodes (Route).
+        pub const NEUTRAL: Color32 = base::NEUTRAL_700;
+        pub const MOSS: Color32 = base::MOSS;
+        pub const STEEL_BLUE: Color32 = base::STEEL_BLUE;
+        pub const BRONZE: Color32 = base::BRONZE;
+        pub const MAROON: Color32 = base::MAROON;
+        pub const PLUM: Color32 = base::PLUM;
+        pub const OLIVE: Color32 = base::OLIVE;
+        pub const TEAL: Color32 = base::TEAL;
+        pub const SAND: Color32 = base::SAND;
+    }
 }

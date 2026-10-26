@@ -25,7 +25,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
     let to_screen = move |v: Vec2| (origin + v * scale).to_pos2();
 
     // Match ImageCanvas background: checkerboard.
-    painter.rect_filled(rect, CornerRadius::ZERO, pal::CHECK_A);
+    painter.rect_filled(rect, CornerRadius::ZERO, pal::BG);
 
     let cell = 8.0;
     let mut y = rect.top();
@@ -37,7 +37,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
                 pos2(x, y),
                 pos2((x + cell).min(rect.right()), (y + cell).min(rect.bottom())),
             );
-            painter.rect_filled(tile, CornerRadius::ZERO, pal::CHECK_B);
+            painter.rect_filled(tile, CornerRadius::ZERO, pal::NODE);
             x += cell * 2.0;
         }
         y += cell;
@@ -66,7 +66,7 @@ pub(crate) fn preview_layers(ui: &mut egui::Ui, layers: &[ViewerLayer], canvas_s
                 mesh.vertices.push(Vertex {
                     pos: to_screen(corners[k]),
                     uv: uvs[k],
-                    color: pal::NO_TINT,
+                    color: pal::WHITE,
                 });
             }
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
@@ -121,7 +121,7 @@ pub(crate) fn preview(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, 
 pub(crate) fn preview_background(ui: &mut egui::Ui, size: Vec2) -> (egui::Rect, egui::Painter) {
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), pal::CHECK_A);
+    painter.rect_filled(rect, CornerRadius::same(4), pal::BG);
 
     let cell = 8.0;
     let mut y = rect.top();
@@ -133,7 +133,7 @@ pub(crate) fn preview_background(ui: &mut egui::Ui, size: Vec2) -> (egui::Rect, 
                 pos2(x, y),
                 pos2((x + cell).min(rect.right()), (y + cell).min(rect.bottom())),
             );
-            painter.rect_filled(tile, CornerRadius::ZERO, pal::CHECK_B);
+            painter.rect_filled(tile, CornerRadius::ZERO, pal::NODE);
             x += cell * 2.0;
         }
         y += cell;
@@ -152,7 +152,7 @@ fn paint_preview_texture(painter: &egui::Painter, rect: egui::Rect, texture: &eg
         texture.id(),
         dst,
         egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-        pal::NO_TINT,
+        pal::WHITE,
     );
 }
 

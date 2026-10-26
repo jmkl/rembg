@@ -445,7 +445,7 @@ impl GraphEditor {
         while y <= viewport.bottom() {
             let mut x = x0;
             while x <= viewport.right() {
-                painter.circle_filled(egui::pos2(x, y), radius, pal::SIDEBAR_LAYER_BG);
+                painter.circle_filled(egui::pos2(x, y), radius, pal::BG);
                 x += spacing;
             }
             y += spacing;
