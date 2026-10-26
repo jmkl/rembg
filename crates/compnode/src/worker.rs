@@ -15,8 +15,9 @@ use rembg_core::{
     MODEL_SCRFD_FILE, RemoveBg,
 };
 
-use crate::cache::{OutputCache, cache_key, cache_key_layers};
-use crate::model::{JobOutput, RunTiming, ViewerLayer};
+use crate::cache::{OutputCache, cache_key, cache_key_layers, cache_key_refs};
+use crate::model::{FilterKind, JobOutput, RunTiming, ViewerLayer};
+use crate::params::Params;
 
 pub(crate) enum Job {
     RemoveBg {
@@ -48,6 +49,38 @@ pub(crate) enum Job {
         canvas: (u32, u32),
         source_name: String,
     },
+    /// Full-resolution render of any non-Group filter node.
+    Filter {
+        token: u64,
+        node: NodeId,
+        kind: FilterKind,
+        params: Params,
+        inputs: Vec<Vec<FilterInput>>,
+        canvas: (u32, u32),
+        source_name: String,
+    },
+}
+
+/// One full-resolution input to a filter render. Paths and encoded assets are
+/// loaded on the worker thread so the UI never blocks on a large decode.
+pub(crate) enum FilterInput {
+    Path(PathBuf),
+    Encoded(std::sync::Arc<Vec<u8>>),
+    Pixels(image::RgbaImage),
+}
+
+impl FilterInput {
+    fn load(self) -> Result<image::RgbaImage, String> {
+        match self {
+            Self::Path(path) => image::open(&path)
+                .map(|image| image.to_rgba8())
+                .map_err(|err| format!("Could not load {}: {err}", path.display())),
+            Self::Encoded(bytes) => image::load_from_memory(bytes.as_slice())
+                .map(|image| image.to_rgba8())
+                .map_err(|err| format!("Could not decode filter input: {err}")),
+            Self::Pixels(image) => Ok(image),
+        }
+    }
 }
 
 /// One layer of a full-resolution Group render: an on-disk source image plus
@@ -165,6 +198,71 @@ fn composite_full(
     };
     Ok(JobOutput {
         image: composited,
+        path,
+        timing: RunTiming {
+            total: started.elapsed(),
+            load: Duration::ZERO,
+            infer: Duration::ZERO,
+            cache_models: false,
+        },
+    })
+}
+
+/// Evaluate any non-Group filter at full resolution and persist the result in
+/// the output cache. The cache key hashes the resolved inputs, parameters and
+/// canvas size, so an unchanged filter reuses its previous full-resolution file.
+fn filter_full(
+    cache: &OutputCache,
+    kind: FilterKind,
+    params: &Params,
+    inputs: Vec<Vec<FilterInput>>,
+    canvas: (u32, u32),
+    source_name: &str,
+) -> Result<JobOutput, String> {
+    let started = Instant::now();
+    let mut resolved: Vec<Vec<image::RgbaImage>> = Vec::with_capacity(inputs.len());
+    for socket in inputs {
+        let mut images = Vec::with_capacity(socket.len());
+        for input in socket {
+            images.push(input.load()?);
+        }
+        resolved.push(images);
+    }
+
+    let mut params_bytes = serde_json::to_vec(params).unwrap_or_default();
+    params_bytes.extend_from_slice(&canvas.0.to_le_bytes());
+    params_bytes.extend_from_slice(&canvas.1.to_le_bytes());
+    let domain = format!("compnode-filter-v1:{}", kind.id());
+    let key = cache_key_refs(&domain, resolved.iter().flatten(), &params_bytes);
+
+    // Cache hit: reuse the stored full-resolution render.
+    let cached_path = cache.path_for(&key);
+    if cached_path.is_file()
+        && let Ok(image) = image::open(&cached_path).map(|image| image.to_rgba8())
+    {
+        return Ok(JobOutput {
+            image,
+            path: Some(cached_path),
+            timing: RunTiming {
+                total: started.elapsed(),
+                load: Duration::ZERO,
+                infer: Duration::ZERO,
+                cache_models: false,
+            },
+        });
+    }
+
+    let image = crate::ops::evaluate(kind, params, &resolved, canvas)?;
+    let suffix = format!("filter-{}", kind.id());
+    let path = match cache.store_named(&key, source_name, &suffix, &image) {
+        Ok(path) => Some(path),
+        Err(err) => {
+            eprintln!("compnode: {err}");
+            None
+        }
+    };
+    Ok(JobOutput {
+        image,
         path,
         timing: RunTiming {
             total: started.elapsed(),
@@ -321,6 +419,25 @@ pub(crate) fn spawn_worker(
                         source_name,
                     }) => {
                         let result = composite_full(&cache, &layers, canvas, &source_name);
+                        (token, node, result)
+                    }
+                    WorkerRequest::Job(Job::Filter {
+                        token,
+                        node,
+                        kind,
+                        params,
+                        inputs,
+                        canvas,
+                        source_name,
+                    }) => {
+                        let result = filter_full(
+                            &cache,
+                            kind,
+                            &params,
+                            inputs,
+                            canvas,
+                            &source_name,
+                        );
                         (token, node, result)
                     }
                 };

@@ -131,6 +131,12 @@ Legend:
       not be written by the worker.
 - [x] Remove Background and Face Restore show a last-run benchmark: total
       worker time, model load time, inference time, and model-cache state.
+- [x] Full-resolution filter output. Filters still eval at a small cap for the
+      node preview, but a debounced background render re-evaluates them at
+      full resolution from disk-backed inputs, persists the result in the
+      output cache, and records it as the node's output path. The sidebar
+      canvas and downstream nodes then use the full-resolution file; chained
+      filters render in upstream order; disconnected filters are skipped.
 - [x] Preview textures are downscaled to a 1024 px longest edge before upload;
       full-resolution pixels are reserved for inference.
 - [x] Full-resolution CPU images share a 512 MiB least-recently-used budget.

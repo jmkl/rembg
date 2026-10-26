@@ -1,5 +1,7 @@
 //! Snarl view implementation and node interaction.
 
+use std::path::PathBuf;
+
 use egui::{Align2, FontId, Frame, Stroke, vec2};
 use egui_snarl::{
     InPin, NodeId, OutPin, OutPinId, Snarl,
@@ -10,13 +12,13 @@ use egui_snarl::{
 
 use crate::assets::AssetStore;
 use crate::catalog;
-use crate::graph::{connect_input, invalidate_downstream, invalidate_node};
+use crate::graph::{connect_input, full_res_source_path, invalidate_downstream, invalidate_node};
 use crate::memory::ImageMemory;
 use crate::model::{Node, ViewerLayer};
 use crate::style::controls::{MenuItem, muted};
 use crate::style::{self, BODY_MARGIN, font, icons, pal};
 use crate::widgets::socket;
-use crate::worker::{Job, WorkerRequest};
+use crate::worker::{FilterInput, Job, WorkerRequest};
 
 pub(crate) struct GraphEditor {
     /// Current canvas scale, used to keep the dot grid a constant size.
@@ -194,11 +196,10 @@ impl GraphEditor {
         node: NodeId,
         ctx: &egui::Context,
     ) {
-        let path = crate::graph::effective_output_path(snarl, node);
-        let path = match path {
-            Some(p) => p,
-            None => {
-                snarl[node].set_error("No input connected");
+        let path = match processing_input_path(snarl, node) {
+            Ok(path) => path,
+            Err(message) => {
+                snarl[node].set_error(message);
                 return;
             }
         };
@@ -245,11 +246,10 @@ impl GraphEditor {
         };
         let (strength, only_center) = (data.strength, data.only_center);
 
-        let path = crate::graph::effective_output_path(snarl, node);
-        let path = match path {
-            Some(p) => p,
-            None => {
-                snarl[node].set_error("No input connected");
+        let path = match processing_input_path(snarl, node) {
+            Ok(path) => path,
+            Err(message) => {
+                snarl[node].set_error(message);
                 return;
             }
         };
@@ -308,8 +308,10 @@ impl GraphEditor {
 
         let mut layers = Vec::new();
         for layer in &filter.layers {
-            // Full-resolution render needs every layer backed by a file.
-            let Some(path) = crate::graph::effective_output_path(snarl, layer.source) else {
+            // Full-resolution render needs every layer backed by a file. A
+            // filter layer must have rendered its own output first; otherwise
+            // walking upstream would use the unfiltered image.
+            let Some(path) = full_res_source_path(snarl, layer.source) else {
                 return false;
             };
             layers.push(crate::worker::CompositeLayer {
@@ -331,6 +333,73 @@ impl GraphEditor {
             token,
             node,
             layers,
+            canvas,
+            source_name,
+        };
+        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+            if let Some(filter) = snarl[node].filter_node_mut() {
+                filter.job = Some(token);
+                filter.render_state = None;
+                filter.rendered = Some(signature);
+                filter.preview.error = None;
+            }
+            ctx.request_repaint();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Kick off a full-resolution render for any filter kind.
+    ///
+    /// Group nodes keep their layer-based composite path. Every other filter
+    /// evaluates its inputs at full resolution on the worker thread. Returns
+    /// `false` when an input is not ready yet (for example an upstream filter
+    /// has not finished its own full-resolution render), so the caller can
+    /// retry after the debounce window.
+    pub(crate) fn start_filter_render(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+        signature: u64,
+        ctx: &egui::Context,
+    ) -> bool {
+        let Some(filter) = snarl[node].filter_node() else {
+            return false;
+        };
+        let kind = filter.kind;
+        if kind == crate::model::FilterKind::Group {
+            return self.start_group_render(snarl, node, signature, ctx);
+        }
+        let params = filter.params.clone();
+        let sockets = catalog::spec(snarl[node].kind()).sockets.len();
+        let canvas = crate::eval::canvas_size(snarl);
+
+        let mut inputs: Vec<Vec<FilterInput>> = Vec::with_capacity(sockets);
+        for input in 0..sockets {
+            let remotes = snarl
+                .in_pin(egui_snarl::InPinId { node, input })
+                .remotes
+                .clone();
+            let mut socket = Vec::with_capacity(remotes.len());
+            for remote in remotes {
+                let Some(source) = filter_input(snarl, remote.node, &self.assets) else {
+                    return false;
+                };
+                socket.push(source);
+            }
+            inputs.push(socket);
+        }
+
+        let token = self.next_token;
+        self.next_token += 1;
+        let source_name = crate::graph::source_name(snarl, node);
+        let job = Job::Filter {
+            token,
+            node,
+            kind,
+            params,
+            inputs,
             canvas,
             source_name,
         };
@@ -390,11 +459,10 @@ impl GraphEditor {
         node: NodeId,
         ctx: &egui::Context,
     ) {
-        let path = crate::graph::effective_output_path(snarl, node);
-        let path = match path {
-            Some(p) => p,
-            None => {
-                snarl[node].set_error("No input connected");
+        let path = match processing_input_path(snarl, node) {
+            Ok(path) => path,
+            Err(message) => {
+                snarl[node].set_error(message);
                 return;
             }
         };
@@ -738,5 +806,74 @@ impl SnarlViewer<Node> for GraphEditor {
     ) {
         self.to_global = *to_global;
         self.zoom = to_global.scaling.max(0.05);
+    }
+}
+
+/// Full-resolution file that a processing node should consume: the output of
+/// its first upstream input.
+///
+/// Resolving from the input node (instead of walking from the processing node
+/// itself) guarantees that a directly-upstream filter's rendered result is
+/// used — never its low-res preview, the unfiltered image behind it, or the
+/// processing node's own previous output.
+fn processing_input_path(snarl: &Snarl<Node>, node: NodeId) -> Result<PathBuf, String> {
+    match crate::graph::upstream(snarl, node) {
+        Some(upstream) => full_res_source_path(snarl, upstream)
+            .ok_or_else(|| "The input has no full-resolution output yet".to_owned()),
+        None => Err("No input connected".to_owned()),
+    }
+}
+
+/// Full-resolution input for a filter render.
+///
+/// Filters must have their own rendered output: using their preview texture or
+/// walking past them would silently drop the filter effect. Image nodes follow
+/// their upstream wire first (they are pass-through when connected) and fall
+/// back to their file, asset bytes or decoded pixels.
+fn filter_input(snarl: &Snarl<Node>, node: NodeId, assets: &AssetStore) -> Option<FilterInput> {
+    let mut current = node;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return None;
+        }
+        match &snarl[current] {
+            Node::Filter(_) => {
+                let path = snarl[current].output_path()?;
+                return Some(FilterInput::Path(path.to_path_buf()));
+            }
+            Node::Image(image) => {
+                if let Some(upstream) = crate::graph::upstream(snarl, current) {
+                    current = upstream;
+                    continue;
+                }
+                if !image.path.is_empty() && std::path::Path::new(&image.path).is_file() {
+                    return Some(FilterInput::Path(PathBuf::from(&image.path)));
+                }
+                if let Some(asset_id) = image.asset_id.as_deref()
+                    && let Some(asset) = assets.get(asset_id)
+                {
+                    return Some(FilterInput::Encoded(asset.encoded.clone()));
+                }
+                return image
+                    .preview
+                    .cpu
+                    .as_ref()
+                    .map(|cpu| FilterInput::Pixels(cpu.clone()));
+            }
+            _ => {
+                if let Some(path) = snarl[current].output_path() {
+                    return Some(FilterInput::Path(path.to_path_buf()));
+                }
+                if let Some(cpu) = snarl[current].cpu() {
+                    return Some(FilterInput::Pixels(cpu.clone()));
+                }
+                if let Some(upstream) = crate::graph::upstream(snarl, current) {
+                    current = upstream;
+                    continue;
+                }
+                return None;
+            }
+        }
     }
 }

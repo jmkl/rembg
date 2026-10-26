@@ -1,5 +1,6 @@
 //! Application shell: window, menus, shortcuts, autosave and session state.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -164,24 +165,22 @@ impl CompNodeApp {
         }
     }
 
-    /// Debounced scheduler for full-resolution Group renders. A render is
+    /// Debounced scheduler for full-resolution filter renders. A render is
     /// submitted once the node's eval signature has been stable for a short
     /// time, so dragging sliders/transforms does not spam background jobs.
-    fn poll_group_renders(&mut self, ctx: &egui::Context) {
-        const GROUP_RENDER_DEBOUNCE: Duration = Duration::from_millis(600);
-        let group_ids: Vec<NodeId> = self
+    fn poll_filter_renders(&mut self, ctx: &egui::Context) {
+        const FILTER_RENDER_DEBOUNCE: Duration = Duration::from_millis(600);
+        let selected: Vec<NodeId> = self.editor.selected_nodes().to_vec();
+        let needed = filters_reaching_output(&self.snarl, &selected);
+        let filter_ids: Vec<NodeId> = self
             .snarl
             .node_ids()
-            .filter(|(_, node)| {
-                node.filter_node()
-                    .map(|f| f.kind == crate::model::FilterKind::Group)
-                    .unwrap_or(false)
-            })
+            .filter(|(id, node)| node.filter_node().is_some() && needed.contains(id))
             .map(|(id, _)| id)
             .collect();
 
-        for id in group_ids {
-            let (job, render_state, signature, rendered) = {
+        for id in filter_ids {
+            let (job, render_state, signature, rendered, ready) = {
                 let Some(filter) = self.snarl[id].filter_node() else {
                     continue;
                 };
@@ -190,9 +189,10 @@ impl CompNodeApp {
                     filter.render_state,
                     filter.signature,
                     filter.rendered,
+                    filter.preview.cpu.is_some() && filter.preview.error.is_none(),
                 )
             };
-            if job.is_some() {
+            if job.is_some() || !ready {
                 continue;
             }
             let Some(signature) = signature else {
@@ -207,12 +207,13 @@ impl CompNodeApp {
             }
             match render_state {
                 Some(state) if state.signature == signature => {
-                    if state.since.elapsed() >= GROUP_RENDER_DEBOUNCE {
-                        // On failure (e.g. a layer without an on-disk source)
-                        // reset the debounce so we retry after another window.
+                    if state.since.elapsed() >= FILTER_RENDER_DEBOUNCE {
+                        // On failure (e.g. an upstream filter has not rendered
+                        // yet) reset the debounce so we retry after another
+                        // window.
                         if !self
                             .editor
-                            .start_group_render(&mut self.snarl, id, signature, ctx)
+                            .start_filter_render(&mut self.snarl, id, signature, ctx)
                         {
                             if let Some(filter) = self.snarl[id].filter_node_mut() {
                                 filter.render_state = None;
@@ -1217,7 +1218,7 @@ impl App for CompNodeApp {
         // Evaluate filter nodes (cached by signature) before the viewer is
         // refreshed so it can pick up the new preview textures.
         let filters_changed = crate::eval::ensure_all(&mut self.snarl, &ctx);
-        self.poll_group_renders(&ctx);
+        self.poll_filter_renders(&ctx);
 
         let viewers: Vec<NodeId> = self
             .snarl
@@ -1329,6 +1330,43 @@ pub fn run() -> eframe::Result<()> {
 /// its low-res preview texture is the only correct content (plain filters).
 fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
     matches!(snarl[source], crate::model::Node::Filter(_)) && snarl[source].output_path().is_none()
+}
+
+/// Node ids that can reach an Output node through input wires, plus the layers
+/// of a selected Group node (the sidebar shows those instead of the Output).
+/// Full-resolution renders are only scheduled for these, so orphan filters
+/// never allocate large images.
+fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<NodeId> {
+    let mut needed = HashSet::new();
+    let mut stack: Vec<NodeId> = snarl
+        .node_ids()
+        .filter(|(_, node)| node.viewer_node().is_some())
+        .map(|(id, _)| id)
+        .collect();
+    stack.extend(selected.iter().copied().filter(|id| {
+        snarl.get_node_info(*id).is_some()
+            && matches!(
+                &snarl[*id],
+                crate::model::Node::Filter(filter)
+                    if filter.kind == crate::model::FilterKind::Group
+            )
+    }));
+    while let Some(id) = stack.pop() {
+        if !needed.insert(id) {
+            continue;
+        }
+        let sockets = crate::catalog::spec(snarl[id].kind()).sockets.len();
+        for input in 0..sockets {
+            let remotes = snarl
+                .in_pin(egui_snarl::InPinId { node: id, input })
+                .remotes
+                .clone();
+            for remote in remotes {
+                stack.push(remote.node);
+            }
+        }
+    }
+    needed
 }
 fn start_bridge_server(
     incoming_tx: crossbeam_channel::Sender<protocol::Message>,

@@ -9,12 +9,14 @@ use egui_snarl::ui::SnarlViewer;
 
 use crate::app::CompNodeApp;
 use crate::assets::AssetStore;
-use crate::cache::{OutputCache, cache_key};
+use crate::cache::{OutputCache, cache_key, cache_key_layers, cache_key_refs};
 use crate::editor::GraphEditor;
 use crate::gpaste_app::GPasTeApp;
-use crate::graph::{invalidate_node, refresh_viewer, rgba_to_texture, upstream_texture};
+use crate::graph::{
+    full_res_source_path, invalidate_node, refresh_viewer, rgba_to_texture, upstream_texture,
+};
 use crate::image_canvas::ImageCanvas;
-use crate::model::{Node, ViewerLayer};
+use crate::model::{FilterKind, Node, ViewerLayer};
 use crate::session::{self, SessionFile, SessionNodeData};
 use crate::settings::Settings;
 use crate::style::{install_theme, snarl_style};
@@ -432,4 +434,90 @@ fn every_node_kind_has_a_unique_catalog_entry() {
         assert!(titles.insert(spec.title), "duplicate title: {}", spec.title);
         assert!(spec.matches(spec.title));
     }
+}
+
+#[test]
+fn borrowed_cache_key_matches_the_owned_variant() {
+    let first = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 4]));
+    let second = image::RgbaImage::from_pixel(3, 1, image::Rgba([5, 6, 7, 8]));
+
+    let owned = cache_key_layers("test-domain", &[first.clone(), second.clone()], b"params");
+    let borrowed = cache_key_refs("test-domain", [&first, &second], b"params");
+
+    assert_eq!(owned, borrowed);
+    // Reordering the inputs must produce a different key.
+    let swapped = cache_key_refs("test-domain", [&second, &first], b"params");
+    assert_ne!(owned, swapped);
+}
+
+#[test]
+fn full_res_inputs_never_walk_past_a_filter() {
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        Node::image("C:/missing/input.png"),
+    );
+    let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        },
+    );
+
+    // An unrendered filter has no full-resolution output of its own; using the
+    // upstream file instead would silently drop the filter effect.
+    assert!(full_res_source_path(&snarl, filter).is_none());
+
+    snarl[filter].set_output_path(Some(PathBuf::from("C:/tmp/filter-output.png")));
+    assert_eq!(
+        full_res_source_path(&snarl, filter),
+        Some(PathBuf::from("C:/tmp/filter-output.png")),
+    );
+
+    // Once the filter has rendered, downstream nodes may read its output.
+    assert_eq!(
+        crate::graph::effective_output_path(&snarl, filter),
+        Some(PathBuf::from("C:/tmp/filter-output.png")),
+    );
+}
+
+#[test]
+fn filter_renders_are_reclaimed_after_invalidation() {
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        Node::image("C:/missing/input.png"),
+    );
+    let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        },
+    );
+
+    if let Some(node) = snarl[filter].filter_node_mut() {
+        node.output_path = Some(PathBuf::from("C:/tmp/filter-output.png"));
+        node.rendered = Some(42);
+    }
+    assert!(snarl[filter].output_path().is_some());
+
+    // Any upstream change drops the persisted output and forces the render to
+    // be re-claimed, even if the signature later returns to the same value.
+    invalidate_node(&mut snarl, filter);
+    assert!(snarl[filter].output_path().is_none());
+    assert!(snarl[filter]
+        .filter_node()
+        .unwrap()
+        .rendered
+        .is_none());
 }

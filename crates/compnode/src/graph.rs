@@ -92,6 +92,32 @@ pub(crate) fn effective_output_path(snarl: &Snarl<Node>, node: NodeId) -> Option
     }
 }
 
+/// Full-resolution file for a node used as a render input.
+///
+/// A filter must have rendered its own output: walking past it would silently
+/// use the unfiltered upstream image instead of the filter result. Image nodes
+/// are pass-through while an upstream wire exists, so the wire is followed
+/// before falling back to their own file.
+pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<PathBuf> {
+    let mut current = node;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return None;
+        }
+        match &snarl[current] {
+            Node::Filter(_) => {
+                return snarl[current].output_path().map(|path| path.to_path_buf());
+            }
+            Node::Image(_) => match upstream(snarl, current) {
+                Some(upstream) => current = upstream,
+                None => return snarl[current].output_path().map(|path| path.to_path_buf()),
+            },
+            _ => return effective_output_path(snarl, current),
+        }
+    }
+}
+
 /// Texture handle that `node` (or its nearest upstream ancestor) produces.
 /// Walk the wire upstream until we find a node that has rendered a preview.
 pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egui::TextureHandle> {

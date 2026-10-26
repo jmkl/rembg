@@ -216,7 +216,7 @@ fn resolve_image(
 ) -> Option<RgbaImage> {
     if snarl[id].filter().is_some() {
         ensure_filter(snarl, id, ctx, stack);
-        return snarl[id].cpu().cloned().map(|img| limit_image(&img));
+        return snarl[id].cpu().map(limit_image);
     }
 
     if let Some(cpu) = snarl[id].cpu() {

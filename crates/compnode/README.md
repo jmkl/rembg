@@ -44,6 +44,25 @@ finishes. Before that, their preview mirrors the image connected to their
 input. Connecting or disconnecting an input clears the node's processed result,
 so it immediately shows the new input or goes back to no preview.
 
+## Filter output resolution
+
+Filter nodes keep two outputs. The node body and the graph preview always show
+the fast eval image (capped at a 256 px longest edge) so slider dragging stays
+smooth. Once a filter's parameters have been stable for a short debounce, the
+worker re-evaluates it at full resolution in the background, persists the
+result in the output cache and records it as the node's output path:
+
+- the sidebar canvas loads that file through the layer cache (up to a 4096 px
+  longest edge), replacing the low-res preview once decoded;
+- downstream processing nodes read the same file, so Remove Background and
+  Face Restore consume the filtered pixels, not the unfiltered upstream image;
+- chained filters render in upstream order — a downstream filter waits until
+  its upstream filter has a full-resolution output;
+- identical inputs, parameters and canvas size hit the content-addressed disk
+  cache, so re-opening a session or undoing an edit restores instantly;
+- filters that cannot reach an Output node (or a selected Group) are never
+  rendered at full resolution.
+
 ## Inference timing
 
 Remove Background and Face Restore show the last successful run's:

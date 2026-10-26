@@ -793,6 +793,9 @@ impl Node {
                 node.signature = None;
                 node.job = None;
                 node.render_state = None;
+                // The full-resolution render must be re-claimed even when the
+                // signature later returns to an earlier value.
+                node.rendered = None;
                 if node.output_path.take().is_some() {
                     node.preview.clear();
                 }
