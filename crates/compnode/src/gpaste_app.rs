@@ -1,10 +1,10 @@
+use crate::style::controls::Button;
+use crate::style::{font, icons, pal};
 use arboard::Clipboard;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui::{Sense, vec2};
-use crate::style::controls::Button;
-use crate::style::{font, icons, pal};
 use gpaste::protocol::Message;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::{
@@ -21,7 +21,7 @@ const PROMPTS_FILE: &str = "saved_prompts.json";
 const MAX_PREVIEW: f32 = 300.0;
 const SLOT_H: f32 = 160.0;
 const SLOT_MIN_W: f32 = 110.0; // below this, the two holders stack vertically
-struct AttachedImage {
+pub(crate) struct AttachedImage {
     name: String,
     data_url: String,
     preview: egui::TextureHandle,
@@ -39,7 +39,7 @@ struct DecodedImage {
 
 pub struct GPasTeApp {
     prompt: String,
-    selected_image: Option<AttachedImage>,
+    pub selected_image: Option<AttachedImage>,
     status: String,
     /// Id of the request we are currently waiting on. `Some` == pending.
     /// Messages for any other id (e.g. an aborted request) are ignored.
@@ -189,7 +189,11 @@ fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
             egui::Align2::CENTER_CENTER,
             icons::X,
             icons::font(font::BUTTON),
-            if del_resp.hovered() { pal::DANGER } else { weak_col },
+            if del_resp.hovered() {
+                pal::DANGER
+            } else {
+                weak_col
+            },
         );
     }
 
@@ -372,7 +376,7 @@ impl GPasTeApp {
     }
 
     /// Build an attachment from already-decoded pixels (avoids decoding twice).
-    fn build_attachment(
+    pub(crate) fn build_attachment(
         ctx: &egui::Context,
         name: String,
         mime: &str,
@@ -542,6 +546,13 @@ impl GPasTeApp {
         ))
     }
 
+    /// Send the current canvas as an image to the gpaste image object that accepts
+    /// images the same way `paste_image_from_clipboard` does, then hand it to the
+    /// prompter as the selected attachment.
+    /// Send the current canvas as an image to the gpaste image object that accepts
+    /// images the same way `paste_image_from_clipboard` does, then hand it to the
+    /// prompter as the selected attachment.
+    ///
     fn send_to_chatgpt(&mut self) {
         if self.pending() {
             return;
@@ -628,9 +639,7 @@ impl GPasTeApp {
                             .weak(),
                     );
                 });
-                ui.add_space(2.0);
-
-                // ── Empty state ──
+                ui.add_space(2.0); // ── Empty state ──
                 if self.saved_prompts.is_empty() {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
@@ -739,7 +748,7 @@ impl GPasTeApp {
 
                             if ui
                                 .add(Button::icon(icons::DOWNLOAD).outline())
-                                .on_hover_text("Paste image from clipboard")
+                                .on_hover_text("Paste image from clipboard (Ctrl+F)")
                                 .clicked()
                             {
                                 match Self::paste_image_from_clipboard(&ctx) {
@@ -752,9 +761,7 @@ impl GPasTeApp {
                             }
 
                             if self.selected_image.is_some()
-                                && ui
-                                    .add(Button::icon(icons::TRASH).danger())
-                                    .clicked()
+                                && ui.add(Button::icon(icons::TRASH).danger()).clicked()
                             {
                                 self.selected_image = None;
                                 self.status = "Image removed".into();
@@ -775,11 +782,10 @@ impl GPasTeApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if self.pending() {
-                                        let abort = Button::new(
-                                            egui::RichText::new("⏹ Abort").strong(),
-                                        )
-                                        .small()
-                                        .danger();
+                                        let abort =
+                                            Button::new(egui::RichText::new("⏹ Abort").strong())
+                                                .small()
+                                                .danger();
                                         if ui
                                             .add(abort)
                                             .on_hover_text(
@@ -867,6 +873,7 @@ impl GPasTeApp {
         ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
         let paste_shortcut =
             ctx.input(|input| input.modifiers.ctrl && input.key_pressed(egui::Key::F));
+        // Ctrl+F pastes an image from the system clipboard into the GPasTe panel.
         if paste_shortcut {
             match Self::paste_image_from_clipboard(&ctx) {
                 Ok(image) => {

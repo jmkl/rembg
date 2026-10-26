@@ -17,12 +17,13 @@
 
 use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
-use crate::style::{pal, icons, font};
+use crate::style::{font, icons, pal};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, CursorIcon, FontId, Margin, Mesh, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, TextureHandle, TextureId, Vec2, epaint::Vertex, pos2, vec2,
 };
 use egui_snarl::NodeId;
+use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 use std::hash::{Hash, Hasher};
@@ -598,6 +599,7 @@ impl ImageCanvas {
                             })
                             .show(ui, |ui| {
                                 let inner_width = ui.available_width();
+
                                 self.top_section_ui(ui, inner_width);
                             });
                     });
@@ -623,6 +625,9 @@ impl ImageCanvas {
 
     fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
         ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
+        if ui.button("Attach Image").clicked() {
+            self.attach_canvas(ui.ctx());
+        }
 
         let scale = (inner_width / self.canvas_size.x).clamp(0.05, 1.0);
         let canvas_h = self.canvas_size.y * scale;
@@ -634,7 +639,6 @@ impl ImageCanvas {
 
         self.layer_list_ui(ui, inner_width);
     }
-
 
     // ---------------- canvas ----------------
 
@@ -805,7 +809,9 @@ impl ImageCanvas {
         }
 
         for it in &self.items {
-            if !it.visible { continue; }
+            if !it.visible {
+                continue;
+            }
             let Some(tex) = &it.tex else { continue };
             let c = it.corners();
             let uvs = [
@@ -1010,4 +1016,129 @@ impl ImageCanvas {
             self.last_activity = Instant::now();
         }
     }
+
+    /// Render all visible layers (back → front) at full canvas resolution.
+    fn render_composite(&self) -> RgbaImage {
+        let cw = self.canvas_size.x.round().max(1.0) as u32;
+        let ch = self.canvas_size.y.round().max(1.0) as u32;
+        let mut out = RgbaImage::from_pixel(cw, ch, Rgba([0, 0, 0, 0]));
+
+        for it in &self.items {
+            if !it.visible {
+                continue;
+            }
+            // Only layers with a decoded CPU image can be rasterized.
+            let Some(path) = it.source_path.as_deref() else {
+                continue;
+            };
+            let Some(src) = self.cpu_image(path) else {
+                continue;
+            };
+            let (sw, sh) = src.dimensions();
+
+            // Bounding box of the rotated rect, clamped to the canvas.
+            let cs = it.corners();
+            let min_x = cs
+                .iter()
+                .map(|c| c.x)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as u32;
+            let min_y = cs
+                .iter()
+                .map(|c| c.y)
+                .fold(f32::MAX, f32::min)
+                .floor()
+                .max(0.0) as u32;
+            let max_x = (cs
+                .iter()
+                .map(|c| c.x)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .max(0.0) as u32)
+                .min(cw);
+            let max_y = (cs
+                .iter()
+                .map(|c| c.y)
+                .fold(f32::MIN, f32::max)
+                .ceil()
+                .max(0.0) as u32)
+                .min(ch);
+
+            for y in min_y..max_y {
+                for x in min_x..max_x {
+                    let l = it.to_local(vec2(x as f32 + 0.5, y as f32 + 0.5));
+                    let u = l.x / it.size.x + 0.5;
+                    let v = l.y / it.size.y + 0.5;
+                    if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+                        continue;
+                    }
+                    let s = sample_bilinear(&src, u * sw as f32 - 0.5, v * sh as f32 - 0.5);
+                    blend_over(out.get_pixel_mut(x, y), s);
+                }
+            }
+        }
+        out
+    }
+
+    fn attach_canvas(&mut self, ctx: &egui::Context) {
+        let decoded = DynamicImage::ImageRgba8(self.render_composite());
+
+        let mut bytes = Vec::new();
+        if decoded
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        let attachment = GPasTeApp::build_attachment(
+            ctx,
+            "canvas.png".to_owned(),
+            "image/png",
+            &bytes,
+            &decoded,
+        );
+
+        self.gpasteapp.selected_image = Some(attachment);
+    }
+}
+
+fn sample_bilinear(img: &RgbaImage, x: f32, y: f32) -> [f32; 4] {
+    let (w, h) = img.dimensions();
+    let x = x.clamp(0.0, (w - 1) as f32);
+    let y = y.clamp(0.0, (h - 1) as f32);
+    let (x0, y0) = (x.floor() as u32, y.floor() as u32);
+    let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+    let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+
+    let px = |xx, yy| img.get_pixel(xx, yy).0.map(|c| c as f32);
+    let (a, b, c, d) = (px(x0, y0), px(x1, y0), px(x0, y1), px(x1, y1));
+    let mut o = [0.0; 4];
+    for i in 0..4 {
+        let top = a[i] + (b[i] - a[i]) * fx;
+        let bot = c[i] + (d[i] - c[i]) * fx;
+        o[i] = top + (bot - top) * fy;
+    }
+    o
+}
+
+/// Straight-alpha "source over" blend.
+fn blend_over(dst: &mut Rgba<u8>, s: [f32; 4]) {
+    let sa = s[3] / 255.0;
+    let da = dst.0[3] as f32 / 255.0;
+    let oa = sa + da * (1.0 - sa);
+    if oa <= 0.0 {
+        return;
+    }
+    for i in 0..3 {
+        let d = dst.0[i] as f32;
+        dst.0[i] = ((s[i] * sa + d * da * (1.0 - sa)) / oa)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+    }
+    dst.0[3] = (oa * 255.0).round() as u8;
 }

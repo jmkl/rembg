@@ -447,7 +447,7 @@ impl ChatGptApp {
     // ---------- UI pieces ----------
 
     fn ui_top_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("top_bar").show_inside(ui, |ui| {
+        egui::Panel::top("top_bar").show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let (icon, tip) = if self.sidebar_open {
@@ -475,7 +475,7 @@ impl ChatGptApp {
             .resizable(true)
             .default_size(250.0)
             .min_size(180.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.heading("Saved prompts");
@@ -527,7 +527,7 @@ impl ChatGptApp {
     fn ui_main(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -581,8 +581,8 @@ impl ChatGptApp {
                                 }
                                 ui.spinner();
                             } else {
-                                let has_content = !self.prompt.trim().is_empty()
-                                    || self.selected_image.is_some();
+                                let has_content =
+                                    !self.prompt.trim().is_empty() || self.selected_image.is_some();
                                 let send = egui::Button::new(
                                     egui::RichText::new("Send to ChatGPT").strong(),
                                 )
