@@ -17,11 +17,12 @@
 
 use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
-use crate::style::{font, icons, pal};
+use crate::style::{font, icons, metrics, pal};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, CursorIcon, FontId, Margin, Mesh, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, TextureHandle, TextureId, Vec2, epaint::Vertex, pos2, vec2,
 };
+use egui::Frame;
 use egui_snarl::NodeId;
 use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::{HashMap, HashSet};
@@ -214,6 +215,7 @@ pub struct ImageCanvas {
     /// `last_activity` value at the last transform write-back.
     committed_activity: Option<Instant>,
     gpasteapp: GPasTeApp,
+    canvas_win_w: f32,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -241,6 +243,7 @@ impl ImageCanvas {
             in_use: HashSet::new(),
             committed_activity: None,
             gpasteapp: gpaste_app,
+            canvas_win_w: 420.0,
         }
     }
 
@@ -565,8 +568,8 @@ impl ImageCanvas {
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, settings: &crate::settings::Settings) {
         self.canvas_size = egui::vec2(settings.canvas_width, settings.canvas_height);
-        // Right-click anywhere in the panel clears selection
-        let panel_rect = ui.max_rect();
+
+        let panel_rect = ui.max_rect(); // the sidebar
         if ui.input(|i| {
             i.pointer.secondary_clicked()
                 && i.pointer
@@ -576,20 +579,21 @@ impl ImageCanvas {
             self.clear_selection();
         }
 
+        // Everything left of the sidebar is where the canvas may float.
+        let content = ui.ctx().content_rect();
+        let area = Rect::from_min_max(content.min, pos2(panel_rect.left(), content.max.y));
+        self.floating_canvas(&ui.ctx().clone(), area);
+
         egui::Frame::new()
             .inner_margin(Margin::same(SIDEBAR_PADDING as i8))
             .show(ui, |ui| {
-                // Initial height only (egui remembers the dragged size afterwards).
-                let top_default = self
-                    .top_section_height(ui.available_width())
-                    .min(ui.available_height() * 0.6);
+                let top_default = self.top_section_height().min(ui.available_height() * 0.6);
 
-                // ── Top: size inputs + canvas + layers (drag the edge to resize) ──
                 egui::Panel::top("top_sidebar_panel")
-                    .frame(egui::Frame::new()) // no extra margin
+                    .frame(egui::Frame::new())
                     .resizable(true)
                     .default_size(top_default)
-                    .min_size(120.0)
+                    .min_size(60.0)
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
@@ -599,12 +603,10 @@ impl ImageCanvas {
                             })
                             .show(ui, |ui| {
                                 let inner_width = ui.available_width();
-
                                 self.top_section_ui(ui, inner_width);
                             });
                     });
 
-                // ── Bottom: GPasTe fills everything that is left ──
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().inner_margin(Margin {
                         top: 6,
@@ -616,30 +618,20 @@ impl ImageCanvas {
             });
     }
 
-    /// Rough first-launch height: inputs + canvas + 2..4 layer rows.
-    fn top_section_height(&self, width: f32) -> f32 {
-        let scale = (width / self.canvas_size.x).clamp(0.05, 1.0);
+    fn top_section_height(&self) -> f32 {
         let rows = self.items.len().clamp(2, 4) as f32;
-        self.canvas_size.y * scale + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 3.0
+        30.0 + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 2.0
     }
 
     fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
         ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
+
         if ui.button("Attach Image").clicked() {
             self.attach_canvas(ui.ctx());
         }
 
-        let scale = (inner_width / self.canvas_size.x).clamp(0.05, 1.0);
-        let canvas_h = self.canvas_size.y * scale;
-        ui.allocate_ui_with_layout(
-            vec2(inner_width, canvas_h),
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| self.canvas_ui(ui, scale),
-        );
-
         self.layer_list_ui(ui, inner_width);
     }
-
     // ---------------- canvas ----------------
 
     fn sel_index(&self) -> Option<usize> {
@@ -720,7 +712,39 @@ impl ImageCanvas {
             }
         }
     }
+    fn floating_canvas(&mut self, ctx: &egui::Context, area: Rect) {
+        let w = self.canvas_win_w.clamp(160.0, area.width().max(160.0));
+        let scale = w / self.canvas_size.x;
+        let h = self.canvas_size.y * scale;
 
+        egui::Window::new("Canvas")
+            .id(egui::Id::new("floating_canvas"))
+            .title_bar(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(pal::BG)
+                    .inner_margin(Margin::ZERO)
+                    .shadow(egui::Shadow::NONE),
+            )
+            .pivot(Align2::RIGHT_TOP)
+            .fixed_pos(pos2(area.right(), area.top() + metrics::TITLEBAR_H))
+            .fixed_size(vec2(w, h)) // we control the size; egui's resize is off
+            .show(ctx, |ui| {
+                self.canvas_ui(ui, scale);
+
+                // Resize grip on the left edge (drawn after the canvas so it wins hit-testing).
+                let r = ui.min_rect();
+                let grip = Rect::from_min_max(r.left_top(), pos2(r.left() + 6.0, r.bottom()));
+                let resp = ui.interact(grip, egui::Id::new("canvas_grip"), Sense::drag());
+                if resp.hovered() || resp.dragged() {
+                    ui.set_cursor_icon(CursorIcon::ResizeHorizontal);
+                }
+                if resp.dragged() {
+                    // Right edge is pinned, so dragging left (negative dx) widens the canvas.
+                    self.canvas_win_w -= resp.drag_delta().x;
+                }
+            });
+    }
     fn canvas_ui(&mut self, ui: &mut egui::Ui, scale: f32) {
         let (resp, painter) =
             ui.allocate_painter(self.canvas_size * scale, Sense::click_and_drag());
