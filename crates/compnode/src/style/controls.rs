@@ -9,8 +9,8 @@ use std::ops::RangeInclusive;
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Frame, Id, Margin, Pos2, Rect, Response, RichText,
-    Sense, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType, pos2,
-    vec2,
+    Sense, Shadow, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType,
+    pos2, vec2,
 };
 
 use super::{font, icons, metrics, pal};
@@ -55,7 +55,12 @@ pub(crate) fn sidebar_frame() -> Frame {
 }
 
 pub(crate) fn canvas_frame() -> Frame {
-    Frame::new().fill(pal::BG)
+    Frame::new().fill(pal::BG).shadow(Shadow {
+        offset: [10, 10],
+        blur: 12,
+        spread: 2,
+        color: Color32::from_black_alpha(100),
+    })
 }
 
 // ---------------------------------------------------------------- button ----
@@ -66,6 +71,7 @@ enum Tone {
     Success,
     Danger,
     Outline,
+    Trans,
 }
 
 /// Filled / outline button. Defaults to the primary (accent) look.
@@ -105,6 +111,10 @@ impl Button {
     }
     pub fn outline(mut self) -> Self {
         self.tone = Tone::Outline;
+        self
+    }
+    pub fn trans(mut self) -> Self {
+        self.tone = Tone::Trans;
         self
     }
     pub fn small(mut self) -> Self {
@@ -160,6 +170,17 @@ impl Button {
                 ],
                 pal::TEXT,
             ),
+            Tone::Trans => (
+                [
+                    (Color32::TRANSPARENT, Stroke::new(1.0, Color32::TRANSPARENT)),
+                    (
+                        pal::hover(pal::PANEL),
+                        Stroke::new(1.0, Color32::TRANSPARENT),
+                    ),
+                    (pal::ACTIVE_FILL, Stroke::new(1.0, Color32::TRANSPARENT)),
+                ],
+                pal::TEXT,
+            ),
         }
     }
 }
@@ -200,8 +221,18 @@ impl Widget for Button {
                 visual.expansion = 0.0;
                 visual.corner_radius = CornerRadius::same(metrics::R_CONTROL);
             }
-            let button = egui::Button::new(label).min_size(vec2(width, height));
-            let response = ui.add_enabled(!loading, button);
+            let button = egui::Button::new(label);
+            let response = ui
+                .add_enabled_ui(!loading, |ui| {
+                    if width > 0.0 {
+                        // Fixed or full width: add_sized centers the text in the rect.
+                        ui.add_sized(vec2(width, height), button)
+                    } else {
+                        // Hug the content; the text can't be off-center here.
+                        ui.add(button.min_size(vec2(0.0, height)))
+                    }
+                })
+                .inner;
             if loading {
                 let center = pos2(response.rect.left() + 14.0, response.rect.center().y);
                 egui::Spinner::new()

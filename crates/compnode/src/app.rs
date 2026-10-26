@@ -696,9 +696,7 @@ impl CompNodeApp {
                             .desired_width(360.0)
                             .hint_text("https://…"),
                     );
-                    if ui
-                        .add(Button::new("Add").small())
-                        .clicked()
+                    if ui.add(Button::new("Add").small()).clicked()
                         && !self.url_text.trim().is_empty()
                     {
                         let url = self.url_text.trim().to_owned();
@@ -726,10 +724,7 @@ impl CompNodeApp {
                                     .file_name()
                                     .map(|name| name.to_string_lossy().into_owned())
                                     .unwrap_or_default();
-                                if ui
-                                    .add(Button::new(name).small().full_width())
-                                    .clicked()
-                                {
+                                if ui.add(Button::new(name).small().full_width()).clicked() {
                                     let pos = egui::pos2(100.0, 100.0);
                                     match self.editor.assets.insert_path(&path) {
                                         Ok(asset_id) => self.add_image_asset(ctx, &asset_id, pos),
@@ -1009,8 +1004,7 @@ impl CompNodeApp {
 
         // Write transforms/order back to the viewer layers once,
         // after the canvas has been idle for 3s (not every frame).
-        if self.image_canvas.take_stable_commit(0.1) {
-            eprintln!("stable");
+        if self.image_canvas.take_stable_commit(0.3) {
             let canvas_transforms: std::collections::HashMap<
                 egui_snarl::NodeId,
                 (egui::Vec2, egui::Vec2, f32),

@@ -24,6 +24,8 @@ base64 = "0.22"
 percent-encoding = "2"
 ureq = "3"
 sha2 = "0.10"
-rembg-core = { path = "crates/rembg-core" }
 tiny_http = "0.12"
 ndarray = "0.17.2"
+
+[profile.dev]
+opt-level = 2

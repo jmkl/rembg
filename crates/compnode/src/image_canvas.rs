@@ -1,28 +1,21 @@
 //! `ImageCanvas` – a self-contained egui widget that mirrors a compnode viewer's layers.
 //!
-//! ```text
-//! ┌──────────────────────┐
-//! │  W: __x H: __         │  configurable canvas size
-//! ├──────────────────────┤
-//! │       CANVAS         │  scaled to fit the available width
-//! └──────────────────────┘
-//! ┌──────────────────────┐
-//! │ ▣ Layer 1            │  layer list: top row = front-most layer
-//! │ ▣ Layer 2            │  drag a row up/down to change stacking order
-//! └──────────────────────┘
-//! ```
-//!
 //! Gizmos on the selected layer: drag body = move, corners = uniform scale,
 //! edges = stretch, round handle = rotate (Shift = 15° snap).
+//!
+//! Multi-select: Shift/Ctrl-click toggles a layer (canvas or layer list),
+//! drag on empty canvas = marquee. With 2+ layers selected a group gizmo
+//! (move / uniform corner scale / rotate about the group center) is shown.
+//! Hold Alt while dragging to disable snapping.
 
 use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
+use crate::style::controls::Button;
 use crate::style::{font, icons, metrics, pal};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, CursorIcon, FontId, Margin, Mesh, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, TextureHandle, TextureId, Vec2, epaint::Vertex, pos2, vec2,
 };
-use egui::Frame;
 use egui_snarl::NodeId;
 use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::{HashMap, HashSet};
@@ -31,12 +24,12 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const HANDLE_R: f32 = 8.0; // screen pixels
-const ROT_DIST: f32 = 32.0; // screen pixels
-const MIN_SIZE: f32 = 8.0; // canvas units
-const SIDEBAR_PADDING: f32 = 8.0; // was 16
-const SIDEBAR_GAP: f32 = 8.0; // was 12
-const ROW_H: f32 = 30.0; // was 36
+const HANDLE_R: f32 = 8.0;
+const ROT_DIST: f32 = 32.0;
+const MIN_SIZE: f32 = 8.0;
+const SIDEBAR_PADDING: f32 = 8.0;
+const SIDEBAR_GAP: f32 = 8.0;
+const ROW_H: f32 = 30.0;
 #[allow(dead_code)]
 const INPUT_RADIUS: u8 = 8;
 #[allow(dead_code)]
@@ -45,6 +38,7 @@ const LAYER_RADIUS: u8 = 8;
 const DRAG_HANDLE_DOT: f32 = 4.0;
 const DRAG_HANDLE_GAP: f32 = 3.0;
 const DRAG_HANDLE_SIZE: f32 = 24.0;
+const SNAP_PX: f32 = 6.0;
 
 const SCALE_HANDLES: [(i8, i8); 8] = [
     (-1, -1),
@@ -56,6 +50,16 @@ const SCALE_HANDLES: [(i8, i8); 8] = [
     (-1, 1),
     (-1, 0),
 ];
+
+/// Corner handles of the group gizmo (no edge handles: stretching a group
+/// would shear rotated members).
+const GROUP_CORNERS: [(i8, i8); 4] = [(-1, -1), (1, -1), (1, 1), (-1, 1)];
+
+#[derive(Clone, Copy)]
+enum Guide {
+    V(f32), // vertical line at canvas x
+    H(f32), // horizontal line at canvas y
+}
 
 fn rot(v: Vec2, a: f32) -> Vec2 {
     let (s, c) = a.sin_cos();
@@ -78,9 +82,34 @@ enum Handle {
 #[derive(Clone, Copy)]
 enum Drag {
     None,
-    Move { grab: Vec2 },
+    Move {
+        grab: Vec2,
+    },
     Rotate,
-    Scale { sx: i8, sy: i8, start: Snap },
+    Scale {
+        sx: i8,
+        sy: i8,
+        start: Snap,
+    },
+    /// `grab` = pointer position at press; `min`/`max` = group bbox at press.
+    GroupMove {
+        grab: Vec2,
+        min: Vec2,
+        max: Vec2,
+    },
+    GroupRotate {
+        pivot: Vec2,
+        a0: f32,
+    },
+    GroupScale {
+        sx: i8,
+        sy: i8,
+        min: Vec2,
+        max: Vec2,
+    },
+    Marquee {
+        start: Vec2,
+    },
 }
 
 pub struct Item {
@@ -146,6 +175,17 @@ impl Item {
             .chain(SCALE_HANDLES.iter().map(|&(x, y)| Handle::Scale(x, y)))
             .find(|&h| (self.handle_pos(h, rot_dist) - p).length() <= tol)
     }
+
+    /// Axis-aligned bounding box of the (possibly rotated) layer.
+    fn aabb(&self) -> (Vec2, Vec2) {
+        let c = self.corners();
+        let (mut min, mut max) = (c[0], c[0]);
+        for p in &c[1..] {
+            min = vec2(min.x.min(p.x), min.y.min(p.y));
+            max = vec2(max.x.max(p.x), max.y.max(p.y));
+        }
+        (min, max)
+    }
 }
 
 fn cursor_for(h: Handle) -> CursorIcon {
@@ -165,6 +205,23 @@ fn fit_inside(dims: (u32, u32), canvas: Vec2) -> Vec2 {
     let (w, h) = (dims.0.max(1) as f32, dims.1.max(1) as f32);
     let k = (canvas.x * 0.8 / w).min(canvas.y * 0.8 / h).min(1.0);
     vec2(w * k, h * k)
+}
+
+fn group_handle_pos(bb: (Vec2, Vec2), h: Handle, rot_dist: f32) -> Vec2 {
+    let (min, max) = bb;
+    match h {
+        Handle::Scale(sx, sy) => vec2(
+            if sx < 0 { min.x } else { max.x },
+            if sy < 0 { min.y } else { max.y },
+        ),
+        Handle::Rotate => vec2((min.x + max.x) * 0.5, min.y - rot_dist),
+    }
+}
+
+fn group_hit(bb: (Vec2, Vec2), p: Vec2, tol: f32, rot_dist: f32) -> Option<Handle> {
+    std::iter::once(Handle::Rotate)
+        .chain(GROUP_CORNERS.iter().map(|&(x, y)| Handle::Scale(x, y)))
+        .find(|&h| (group_handle_pos(bb, h, rot_dist) - p).length() <= tol)
 }
 
 /// Read-only view of a layer (for exporting / inspecting from your app).
@@ -194,13 +251,20 @@ pub struct ImageCanvas {
     /// Last transform of every path that left the canvas, restored when the
     /// same file comes back.
     remembered: HashMap<PathBuf, Snap>,
+    /// Primary selection.
     selected: Option<NodeId>,
+    /// Additional selected layers (multi-select). `selected` is the primary.
+    extra: HashSet<NodeId>,
     /// Set when the user explicitly cleared the selection (right-click in the
     /// panel, or a click on empty canvas). Keeps the idle auto-select from
     /// re-selecting a layer and showing the gizmos again. Cleared as soon as a
     /// layer row or a canvas image is selected.
     selection_suppressed: bool,
     drag: Drag,
+    /// Transforms of the group members when the current group drag started.
+    group_start: Vec<(NodeId, Snap)>,
+    /// Live marquee rectangle in canvas coordinates.
+    marquee: Option<(Vec2, Vec2)>,
     list_drag: Option<NodeId>,
     /// Last time the user interacted with the canvas (drag/scale/rotate/reorder).
     last_activity: Instant,
@@ -216,6 +280,7 @@ pub struct ImageCanvas {
     committed_activity: Option<Instant>,
     gpasteapp: GPasTeApp,
     canvas_win_w: f32,
+    guides: Vec<Guide>,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -232,8 +297,11 @@ impl ImageCanvas {
             cache: LayerCache::default(),
             remembered: HashMap::new(),
             selected: None,
+            extra: HashSet::new(),
             selection_suppressed: false,
             drag: Drag::None,
+            group_start: Vec::new(),
+            marquee: None,
             list_drag: None,
             last_activity: Instant::now(),
             layer_count: 0,
@@ -243,7 +311,8 @@ impl ImageCanvas {
             in_use: HashSet::new(),
             committed_activity: None,
             gpasteapp: gpaste_app,
-            canvas_win_w: 420.0,
+            canvas_win_w: 1200.0,
+            guides: Vec::new(),
         }
     }
 
@@ -281,6 +350,7 @@ impl ImageCanvas {
     /// canvas does.
     pub fn clear_selection(&mut self) {
         self.selected = None;
+        self.extra.clear();
         self.selection_suppressed = true;
         self.drag = Drag::None;
         self.last_activity = Instant::now();
@@ -288,7 +358,26 @@ impl ImageCanvas {
 
     fn select(&mut self, id: NodeId) {
         self.selected = Some(id);
+        self.extra.clear();
         self.selection_suppressed = false;
+    }
+
+    /// Add/remove a layer from the selection (Shift/Ctrl-click).
+    fn toggle_select(&mut self, id: NodeId) {
+        self.selection_suppressed = false;
+        if self.selected == Some(id) {
+            // promote another layer to primary
+            self.selected = self.extra.iter().next().copied();
+            if let Some(n) = self.selected {
+                self.extra.remove(&n);
+            }
+        } else if !self.extra.remove(&id) {
+            if self.selected.is_none() {
+                self.selected = Some(id);
+            } else {
+                self.extra.insert(id);
+            }
+        }
     }
 
     /// Current logical canvas size.
@@ -303,15 +392,11 @@ impl ImageCanvas {
 
     /// Whether a drag (move/scale/rotate/list-reorder) is currently in progress.
     pub fn is_dragging(&self) -> bool {
-        matches!(
-            self.drag,
-            Drag::Move { .. } | Drag::Rotate | Drag::Scale { .. }
-        ) || self.list_drag.is_some()
+        !matches!(self.drag, Drag::None) || self.list_drag.is_some()
     }
 
     /// Whether the canvas has been idle (no drag/scale/rotate/reorder) for at
-    /// least `secs` seconds. Returns true when nothing is being moved/rotated
-    /// scaled/reordered and nothing has changed in the last `secs` seconds.
+    /// least `secs` seconds.
     pub fn is_stable(&self, secs: f32) -> bool {
         !self.is_dragging() && self.last_activity.elapsed().as_secs_f32() >= secs
     }
@@ -348,10 +433,7 @@ impl ImageCanvas {
     }
 
     /// Call once per frame with [`ImageCanvas::layers_signature`]. Returns
-    /// `true` only when [`ImageCanvas::sync_layers`] actually needs to run:
-    /// the layer set changed, a background decode finished, or the periodic
-    /// file-modification check is due. Otherwise the frame costs one
-    /// non-blocking channel poll and a few comparisons.
+    /// `true` only when [`ImageCanvas::sync_layers`] actually needs to run.
     pub fn begin_sync(&mut self, ctx: &egui::Context, sig: u64) -> bool {
         if self.cache.poll(ctx, &self.in_use) {
             self.dirty = true;
@@ -379,18 +461,14 @@ impl ImageCanvas {
 
     /// Sync canvas items with the layers an Output node currently exposes.
     ///
-    /// Each entry is `(source_node_id, source_name, preview_texture, filepath)`.
     /// Called every frame, so it must be cheap when nothing changed:
     ///
     /// * Items are matched by source node id; transforms of existing items are
     ///   never touched.
     /// * The image for a `filepath` is looked up in the canvas' own
-    ///   [`LayerCache`]. On a miss it is decoded on a background thread into a
-    ///   CPU image and a texture, then stored, so the same file is never
-    ///   decoded twice. While it loads, `preview_texture` is shown.
-    /// * When a layer disappears its transform is remembered by filepath; if
-    ///   the same file is connected again it gets its old center/size/angle
-    ///   back, and its image comes straight from the cache.
+    ///   [`LayerCache`]. On a miss it is decoded on a background thread.
+    ///   While it loads, `preview_texture` is shown.
+    /// * When a layer disappears its transform is remembered by filepath.
     pub fn sync_layers(
         &mut self,
         ctx: &egui::Context,
@@ -435,6 +513,15 @@ impl ImageCanvas {
                 self.selected = None;
             }
         }
+        let alive: HashSet<NodeId> = self.items.iter().map(|i| i.id).collect();
+        self.extra.retain(|id| alive.contains(id));
+        if self.selected.is_none() {
+            // promote a remaining extra layer to primary
+            self.selected = self.extra.iter().next().copied();
+            if let Some(n) = self.selected {
+                self.extra.remove(&n);
+            }
+        }
 
         let canvas_size = self.canvas_size;
         for (source_id, source_name, preview, path, saved, use_preview) in layers {
@@ -446,8 +533,7 @@ impl ImageCanvas {
                 .map(|c| (c.texture.clone(), c.dims));
 
             // Texture selection: the on-disk file is the highest-quality
-            // correct content *when it is the node's own output* (Image,
-            // Remove Background, Face Restore, or a rendered Group). For a
+            // correct content *when it is the node's own output*. For a
             // plain filter without its own output the preview texture is the
             // only correct content, so it wins even though it is low-res.
             let (display_tex, display_dims) = if use_preview {
@@ -526,7 +612,7 @@ impl ImageCanvas {
             && !self.selection_suppressed
             && self.last_activity.elapsed().as_secs_f32() >= 2.0
         {
-            self.selected = self.items.last().map(|i| i.id);
+            self.selected = self.items.iter().rev().find(|i| i.visible).map(|i| i.id);
         }
     }
 
@@ -564,6 +650,23 @@ impl ImageCanvas {
                 painter.circle_filled(egui::pos2(cx, cy), dot_r, pal::FAINT);
             }
         }
+    }
+
+    /// X and Y snap lines: canvas edges/center plus edges/center of other
+    /// visible layers (those in `skip` are ignored).
+    fn snap_targets(&self, skip: &[NodeId]) -> (Vec<f32>, Vec<f32>) {
+        let mut xs = vec![0.0, self.canvas_size.x / 2.0, self.canvas_size.x];
+        let mut ys = vec![0.0, self.canvas_size.y / 2.0, self.canvas_size.y];
+        for it in self
+            .items
+            .iter()
+            .filter(|i| !skip.contains(&i.id) && i.visible)
+        {
+            let (min, max) = it.aabb();
+            xs.extend([min.x, (min.x + max.x) * 0.5, max.x]);
+            ys.extend([min.y, (min.y + max.y) * 0.5, max.y]);
+        }
+        (xs, ys)
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, settings: &crate::settings::Settings) {
@@ -625,24 +728,91 @@ impl ImageCanvas {
 
     fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
         ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-
-        if ui.button("Attach Image").clicked() {
-            self.attach_canvas(ui.ctx());
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add(Button::new("Attach Image").trans().small())
+                .clicked()
+            {
+                self.attach_canvas(ui.ctx());
+            }
+        });
 
         self.layer_list_ui(ui, inner_width);
     }
-    // ---------------- canvas ----------------
 
-    fn sel_index(&self) -> Option<usize> {
-        let id = self.selected?;
-        self.items.iter().position(|i| i.id == id)
+    // ---------------- selection helpers ----------------
+
+    /// Indices (back → front) of all selected, visible layers.
+    fn selection_indices(&self) -> Vec<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| {
+                it.visible && (self.selected == Some(it.id) || self.extra.contains(&it.id))
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 
-    fn on_press(&mut self, p: Vec2, tol: f32, rot_dist: f32) {
+    /// Union of the members' axis-aligned bounding boxes.
+    fn group_bbox(&self, idxs: &[usize]) -> (Vec2, Vec2) {
+        let mut min = vec2(f32::MAX, f32::MAX);
+        let mut max = vec2(f32::MIN, f32::MIN);
+        for &i in idxs {
+            let (a, b) = self.items[i].aabb();
+            min = vec2(min.x.min(a.x), min.y.min(a.y));
+            max = vec2(max.x.max(b.x), max.y.max(b.y));
+        }
+        (min, max)
+    }
+
+    fn group_snaps(&self, idxs: &[usize]) -> Vec<(NodeId, Snap)> {
+        idxs.iter()
+            .map(|&i| (self.items[i].id, self.items[i].snap()))
+            .collect()
+    }
+
+    /// Handle under `p` for either the single-layer or the group gizmo.
+    fn gizmo_hit(&self, p: Vec2, tol: f32, rot_dist: f32) -> Option<Handle> {
+        let sel = self.selection_indices();
+        if sel.len() >= 2 {
+            group_hit(self.group_bbox(&sel), p, tol, rot_dist)
+        } else {
+            sel.first()
+                .and_then(|&i| self.items[i].hit_handle(p, tol, rot_dist))
+        }
+    }
+
+    // ---------------- canvas ----------------
+
+    fn on_press(&mut self, p: Vec2, tol: f32, rot_dist: f32, additive: bool) {
         self.last_activity = Instant::now();
-        // 1) gizmo handles of the current selection
-        if let Some(i) = self.sel_index() {
+        let sel = self.selection_indices();
+
+        // 1) gizmo handles
+        if sel.len() >= 2 {
+            let bb = self.group_bbox(&sel);
+            if let Some(h) = group_hit(bb, p, tol, rot_dist) {
+                self.group_start = self.group_snaps(&sel);
+                self.drag = match h {
+                    Handle::Rotate => {
+                        let c = (bb.0 + bb.1) * 0.5;
+                        let v = p - c;
+                        Drag::GroupRotate {
+                            pivot: c,
+                            a0: v.y.atan2(v.x),
+                        }
+                    }
+                    Handle::Scale(sx, sy) => Drag::GroupScale {
+                        sx,
+                        sy,
+                        min: bb.0,
+                        max: bb.1,
+                    },
+                };
+                return;
+            }
+        } else if let Some(&i) = sel.first() {
             let it = &self.items[i];
             if let Some(h) = it.hit_handle(p, tol, rot_dist) {
                 self.drag = match h {
@@ -656,29 +826,99 @@ impl ImageCanvas {
                 return;
             }
         }
-        // 2) top-most image under the cursor (selecting does not change the order)
-        if let Some(i) = (0..self.items.len())
+
+        // 2) top-most visible layer under the cursor
+        let hit = (0..self.items.len())
             .rev()
-            .find(|&i| self.items[i].contains(p))
-        {
-            let it = &self.items[i];
-            self.drag = Drag::Move {
-                grab: p - it.center,
-            };
-            self.select(it.id);
-        } else {
-            self.clear_selection();
+            .find(|&i| self.items[i].visible && self.items[i].contains(p));
+
+        match hit {
+            Some(i) => {
+                let id = self.items[i].id;
+                if additive {
+                    self.toggle_select(id);
+                    return;
+                }
+                let sel_now = self.selection_indices();
+                if sel_now.len() >= 2 && sel_now.contains(&i) {
+                    // drag the whole group without collapsing the selection
+                    let bb = self.group_bbox(&sel_now);
+                    self.group_start = self.group_snaps(&sel_now);
+                    self.drag = Drag::GroupMove {
+                        grab: p,
+                        min: bb.0,
+                        max: bb.1,
+                    };
+                } else {
+                    self.select(id);
+                    self.drag = Drag::Move {
+                        grab: p - self.items[i].center,
+                    };
+                }
+            }
+            None => {
+                if !additive {
+                    self.clear_selection();
+                    self.drag = Drag::Marquee { start: p };
+                }
+            }
         }
     }
 
-    fn on_drag(&mut self, p: Vec2, shift: bool) {
+    fn on_drag(&mut self, p: Vec2, shift: bool, alt: bool, tol: f32) {
         self.last_activity = Instant::now();
-        let Some(i) = self.sel_index() else { return };
+
+        match self.drag {
+            Drag::GroupMove { .. } | Drag::GroupRotate { .. } | Drag::GroupScale { .. } => {
+                self.on_group_drag(p, shift, alt, tol);
+                return;
+            }
+            Drag::Marquee { start } => {
+                self.on_marquee(start, p);
+                return;
+            }
+            _ => {}
+        }
+
+        let idxs = self.selection_indices();
+        let Some(&i) = idxs.first() else { return };
+
+        // Alt = no snapping (empty targets never match).
+        let (xs, ys) = if alt {
+            (Vec::new(), Vec::new())
+        } else {
+            self.snap_targets(&[self.items[i].id])
+        };
+        let mut guides: Vec<Guide> = Vec::new();
+
         let drag = self.drag;
         let it = &mut self.items[i];
         match drag {
-            Drag::None => {}
-            Drag::Move { grab } => it.center = p - grab,
+            Drag::Move { grab } => {
+                it.center = p - grab;
+                let (min, max) = it.aabb();
+                let cx = (min.x + max.x) * 0.5;
+                let cy = (min.y + max.y) * 0.5;
+
+                // left / center / right edges → best match
+                let sx = [min.x, cx, max.x]
+                    .iter()
+                    .filter_map(|&v| snap1(v, &xs, tol))
+                    .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()));
+                let sy = [min.y, cy, max.y]
+                    .iter()
+                    .filter_map(|&v| snap1(v, &ys, tol))
+                    .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()));
+
+                if let Some((d, t)) = sx {
+                    it.center.x += d;
+                    guides.push(Guide::V(t));
+                }
+                if let Some((d, t)) = sy {
+                    it.center.y += d;
+                    guides.push(Guide::H(t));
+                }
+            }
             Drag::Rotate => {
                 let d = p - it.center;
                 let mut a = d.y.atan2(d.x) + FRAC_PI_2;
@@ -706,12 +946,153 @@ impl ImageCanvas {
                 } else {
                     h = ((lp.y - ay) * fy).max(MIN_SIZE);
                 }
+
+                // Snap the moving edge(s). Only for unrotated layers, where the
+                // edges are axis-aligned in canvas space.
+                if start.angle.abs() < 1e-3 {
+                    let anchor = start.center + vec2(ax, ay);
+                    let ex = anchor.x + fx * w; // moving vertical edge
+                    let ey = anchor.y + fy * h; // moving horizontal edge
+                    let snap_x = if sx != 0 { snap1(ex, &xs, tol) } else { None };
+                    let snap_y = if sy != 0 { snap1(ey, &ys, tol) } else { None };
+
+                    if sx != 0 && sy != 0 {
+                        // corner = uniform scale: follow whichever axis is closer
+                        let use_x = match (snap_x, snap_y) {
+                            (Some(a), Some(b)) => Some(a.0.abs() <= b.0.abs()),
+                            (Some(_), None) => Some(true),
+                            (None, Some(_)) => Some(false),
+                            _ => None,
+                        };
+                        match use_x {
+                            Some(true) => {
+                                let (d, t) = snap_x.unwrap();
+                                let nw = (w + fx * d).max(MIN_SIZE);
+                                let s = nw / w0;
+                                w = w0 * s;
+                                h = h0 * s;
+                                guides.push(Guide::V(t));
+                            }
+                            Some(false) => {
+                                let (d, t) = snap_y.unwrap();
+                                let nh = (h + fy * d).max(MIN_SIZE);
+                                let s = nh / h0;
+                                w = w0 * s;
+                                h = h0 * s;
+                                guides.push(Guide::H(t));
+                            }
+                            None => {}
+                        }
+                    } else if let Some((d, t)) = snap_x {
+                        w = (w + fx * d).max(MIN_SIZE);
+                        guides.push(Guide::V(t));
+                    } else if let Some((d, t)) = snap_y {
+                        h = (h + fy * d).max(MIN_SIZE);
+                        guides.push(Guide::H(t));
+                    }
+                }
+
                 let anchor_world = start.center + rot(vec2(ax, ay), start.angle);
                 it.size = vec2(w, h);
                 it.center = anchor_world + rot(vec2(fx * w / 2.0, fy * h / 2.0), start.angle);
             }
+            _ => {}
         }
+        self.guides = guides;
     }
+
+    fn on_marquee(&mut self, start: Vec2, p: Vec2) {
+        let lo = vec2(start.x.min(p.x), start.y.min(p.y));
+        let hi = vec2(start.x.max(p.x), start.y.max(p.y));
+        self.marquee = Some((lo, hi));
+
+        let hit: Vec<NodeId> = self
+            .items
+            .iter()
+            .filter(|it| it.visible)
+            .filter(|it| {
+                let (mn, mx) = it.aabb();
+                mn.x <= hi.x && mx.x >= lo.x && mn.y <= hi.y && mx.y >= lo.y
+            })
+            .map(|it| it.id)
+            .collect();
+        self.selected = hit.first().copied();
+        self.extra = hit.into_iter().skip(1).collect();
+        self.selection_suppressed = self.selected.is_none();
+    }
+
+    fn on_group_drag(&mut self, p: Vec2, shift: bool, alt: bool, tol: f32) {
+        let start = std::mem::take(&mut self.group_start);
+        let mut guides: Vec<Guide> = Vec::new();
+        let drag = self.drag;
+
+        match drag {
+            Drag::GroupMove { grab, min, max } => {
+                let mut d = p - grab;
+                if !alt {
+                    let ids: Vec<NodeId> = start.iter().map(|(id, _)| *id).collect();
+                    let (xs, ys) = self.snap_targets(&ids);
+                    let (mn, mx) = (min + d, max + d);
+                    let best = |vals: [f32; 3], t: &[f32]| {
+                        vals.iter()
+                            .filter_map(|&v| snap1(v, t, tol))
+                            .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
+                    };
+                    if let Some((dx, t)) = best([mn.x, (mn.x + mx.x) * 0.5, mx.x], &xs[..]) {
+                        d.x += dx;
+                        guides.push(Guide::V(t));
+                    }
+                    if let Some((dy, t)) = best([mn.y, (mn.y + mx.y) * 0.5, mx.y], &ys[..]) {
+                        d.y += dy;
+                        guides.push(Guide::H(t));
+                    }
+                }
+                for (id, s) in &start {
+                    if let Some(it) = self.items.iter_mut().find(|i| i.id == *id) {
+                        it.center = s.center + d;
+                    }
+                }
+            }
+            Drag::GroupRotate { pivot, a0 } => {
+                let v = p - pivot;
+                let mut delta = v.y.atan2(v.x) - a0;
+                if shift {
+                    let step = 15f32.to_radians();
+                    delta = (delta / step).round() * step;
+                }
+                for (id, s) in &start {
+                    if let Some(it) = self.items.iter_mut().find(|i| i.id == *id) {
+                        it.center = pivot + rot(s.center - pivot, delta);
+                        it.angle = s.angle + delta;
+                    }
+                }
+            }
+            Drag::GroupScale { sx, sy, min, max } => {
+                let (fx, fy) = (sx as f32, sy as f32);
+                // the opposite corner stays fixed
+                let anchor = vec2(
+                    if sx > 0 { min.x } else { max.x },
+                    if sy > 0 { min.y } else { max.y },
+                );
+                let (w0, h0) = ((max.x - min.x).max(1.0), (max.y - min.y).max(1.0));
+                let k = (((p.x - anchor.x) * fx) / w0)
+                    .max(((p.y - anchor.y) * fy) / h0)
+                    .max(0.02);
+                for (id, s) in &start {
+                    if let Some(it) = self.items.iter_mut().find(|i| i.id == *id) {
+                        it.center = anchor + (s.center - anchor) * k;
+                        it.size = s.size * k;
+                        it.angle = s.angle;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        self.group_start = start;
+        self.guides = guides;
+    }
+
     fn floating_canvas(&mut self, ctx: &egui::Context, area: Rect) {
         let w = self.canvas_win_w.clamp(160.0, area.width().max(160.0));
         let scale = w / self.canvas_size.x;
@@ -745,6 +1126,7 @@ impl ImageCanvas {
                 }
             });
     }
+
     fn canvas_ui(&mut self, ui: &mut egui::Ui, scale: f32) {
         let (resp, painter) =
             ui.allocate_painter(self.canvas_size * scale, Sense::click_and_drag());
@@ -758,32 +1140,30 @@ impl ImageCanvas {
         let rot_dist = ROT_DIST / scale;
 
         // --- input (raw pointer: a plain click selects, no drag threshold) ---
-        let (pressed, down, pos, shift) = ui.input(|i| {
+        let (pressed, down, pos, shift, alt, additive) = ui.input(|i| {
             (
                 i.pointer.primary_pressed(),
                 i.pointer.primary_down(),
                 i.pointer.interact_pos(),
                 i.modifiers.shift,
+                i.modifiers.alt,
+                i.modifiers.shift || i.modifiers.command,
             )
         });
 
         // allow grabbing gizmo handles that stick out of the canvas (e.g. the rotate handle)
         let on_outside_handle = pos.is_some_and(|p| {
             rect.expand(HANDLE_R + ROT_DIST + 4.0).contains(p)
-                && self.sel_index().is_some_and(|i| {
-                    self.items[i]
-                        .hit_handle(to_canvas(p), tol, rot_dist)
-                        .is_some()
-                })
+                && self.gizmo_hit(to_canvas(p), tol, rot_dist).is_some()
         });
 
         if pressed && (resp.hovered() || on_outside_handle) {
             if let Some(p) = pos {
-                self.on_press(to_canvas(p), tol, rot_dist);
+                self.on_press(to_canvas(p), tol, rot_dist, additive);
             }
         } else if down {
             if let Some(p) = pos {
-                self.on_drag(to_canvas(p), shift);
+                self.on_drag(to_canvas(p), shift, alt, SNAP_PX / scale);
             }
         }
         if !down {
@@ -791,18 +1171,19 @@ impl ImageCanvas {
                 self.last_activity = Instant::now();
             }
             self.drag = Drag::None;
+            self.guides.clear(); // guides disappear on release
+            self.marquee = None;
+            self.group_start.clear();
         }
 
         // --- cursor feedback ---
         if matches!(self.drag, Drag::None) && (resp.hovered() || on_outside_handle) {
             if let Some(p) = pos.map(to_canvas) {
                 let mut icon = None;
-                if let Some(i) = self.sel_index() {
-                    if let Some(h) = self.items[i].hit_handle(p, tol, rot_dist) {
-                        icon = Some(cursor_for(h));
-                    }
+                if let Some(h) = self.gizmo_hit(p, tol, rot_dist) {
+                    icon = Some(cursor_for(h));
                 }
-                if icon.is_none() && self.items.iter().any(|it| it.contains(p)) {
+                if icon.is_none() && self.items.iter().any(|it| it.visible && it.contains(p)) {
                     icon = Some(CursorIcon::Move);
                 }
                 if let Some(c) = icon {
@@ -862,8 +1243,78 @@ impl ImageCanvas {
             StrokeKind::Inside,
         );
 
+        // --- snap guides ---
+        let guide_stroke = Stroke::new(1.0, Color32::from_rgb(255, 64, 160));
+        for g in &self.guides {
+            match *g {
+                Guide::V(x) => {
+                    let sx = to_screen(vec2(x, 0.0)).x;
+                    painter.vline(sx, rect.y_range(), guide_stroke);
+                }
+                Guide::H(y) => {
+                    let sy = to_screen(vec2(0.0, y)).y;
+                    painter.hline(rect.x_range(), sy, guide_stroke);
+                }
+            }
+        }
+
+        // --- marquee ---
+        if let Some((lo, hi)) = self.marquee {
+            let r = Rect::from_min_max(to_screen(lo), to_screen(hi));
+            painter.rect_filled(r, CornerRadius::ZERO, pal::ACCENT.gamma_multiply(0.15));
+            painter.rect_stroke(
+                r,
+                CornerRadius::ZERO,
+                Stroke::new(1.0, pal::ACCENT),
+                StrokeKind::Inside,
+            );
+        }
+
         // --- gizmo (painted with a larger clip so handles outside the canvas stay visible) ---
-        if let Some(i) = self.sel_index() {
+        let sel = self.selection_indices();
+        if sel.len() >= 2 {
+            let gp = ui.painter().with_clip_rect(
+                rect.expand(HANDLE_R + ROT_DIST + 4.0)
+                    .intersect(ui.clip_rect()),
+            );
+            // faint outline per member
+            for &i in &sel {
+                let pts: Vec<Pos2> = self.items[i]
+                    .corners()
+                    .iter()
+                    .map(|&c| to_screen(c))
+                    .collect();
+                gp.add(Shape::closed_line(
+                    pts,
+                    Stroke::new(1.0, pal::ACCENT.gamma_multiply(0.5)),
+                ));
+            }
+            let bb = self.group_bbox(&sel);
+            let r = Rect::from_min_max(to_screen(bb.0), to_screen(bb.1));
+            gp.rect_stroke(
+                r,
+                CornerRadius::ZERO,
+                Stroke::new(1.5, pal::ACCENT),
+                StrokeKind::Middle,
+            );
+
+            let top_mid = pos2(r.center().x, r.top());
+            let rot_pos = to_screen(group_handle_pos(bb, Handle::Rotate, rot_dist));
+            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::ACCENT));
+            gp.circle(rot_pos, HANDLE_R, pal::WHITE, Stroke::new(2.0, pal::ACCENT));
+
+            for &(sx, sy) in &GROUP_CORNERS {
+                let c = to_screen(group_handle_pos(bb, Handle::Scale(sx, sy), rot_dist));
+                let hr = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
+                gp.rect_filled(hr, CornerRadius::same(1), pal::WHITE);
+                gp.rect_stroke(
+                    hr,
+                    CornerRadius::same(1),
+                    Stroke::new(2.0, pal::ACCENT),
+                    StrokeKind::Inside,
+                );
+            }
+        } else if let Some(&i) = sel.first() {
             let gp = ui.painter().with_clip_rect(
                 rect.expand(HANDLE_R + ROT_DIST + 4.0)
                     .intersect(ui.clip_rect()),
@@ -921,6 +1372,8 @@ impl ImageCanvas {
             return;
         }
 
+        let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+
         let mut rows: Vec<Rect> = Vec::with_capacity(n);
         for d in 0..n {
             let idx = n - 1 - d; // top of the list = front-most layer
@@ -933,7 +1386,14 @@ impl ImageCanvas {
             rows.push(rect);
 
             if resp.clicked() || resp.drag_started() {
-                self.select(id);
+                if additive {
+                    self.toggle_select(id);
+                } else if !(self.selected == Some(id) || self.extra.contains(&id)) {
+                    // keep a multi-selection intact when dragging one of its rows
+                    self.select(id);
+                } else if resp.clicked() {
+                    self.select(id);
+                }
             }
             if resp.dragged() {
                 self.list_drag = Some(id);
@@ -943,7 +1403,7 @@ impl ImageCanvas {
                 ui.set_cursor_icon(CursorIcon::Grab);
             }
 
-            let is_sel = self.selected == Some(id);
+            let is_sel = self.selected == Some(id) || self.extra.contains(&id);
             let is_dragged = self.list_drag == Some(id);
 
             let bg = if is_sel {
@@ -953,7 +1413,7 @@ impl ImageCanvas {
             } else if resp.hovered() {
                 pal::hover(pal::BG)
             } else {
-                pal::BG
+                Color32::TRANSPARENT
             };
 
             ui.painter()
@@ -986,12 +1446,12 @@ impl ImageCanvas {
                 ),
                 Align2::LEFT_CENTER,
                 name,
-                FontId::proportional(11.0),
+                FontId::proportional(9.0),
                 if visible { pal::TEXT } else { pal::MUTED },
             );
 
             // Eye toggle (right-aligned, 16×16)
-            let eye_pos = rect.right() - 20.0;
+            let eye_pos = rect.right() - 5.0;
             let eye_rect = Rect::from_min_size(
                 egui::pos2(eye_pos - 16.0, rect.center().y - 6.0),
                 vec2(16.0, 16.0),
@@ -1001,12 +1461,7 @@ impl ImageCanvas {
             if eye_response.clicked() {
                 visible = !visible;
             }
-            ui.painter().rect_stroke(
-                eye_rect,
-                2.0,
-                Stroke::new(1.0, pal::NODE_STROKE),
-                StrokeKind::Outside,
-            );
+
             ui.painter().text(
                 eye_rect.center(),
                 Align2::CENTER_CENTER,
@@ -1016,7 +1471,16 @@ impl ImageCanvas {
             );
 
             // Update stored visibility
-            self.items[idx].visible = visible;
+            if self.items[idx].visible != visible {
+                self.items[idx].visible = visible;
+                if !visible && (self.selected == Some(id) || self.extra.contains(&id)) {
+                    // drop it from the selection (promotes another layer if any)
+                    self.toggle_select(id);
+                    if self.selected.is_none() {
+                        self.selection_suppressed = true; // don't let idle auto-select bring it back
+                    }
+                }
+            }
         }
 
         // --- drop indicator + apply the reorder on release ---
@@ -1040,6 +1504,8 @@ impl ImageCanvas {
             self.last_activity = Instant::now();
         }
     }
+
+    // ---------------- export / attach ----------------
 
     /// Render all visible layers (back → front) at full canvas resolution.
     fn render_composite(&self) -> RgbaImage {
@@ -1127,7 +1593,7 @@ impl ImageCanvas {
             &decoded,
         );
 
-        self.gpasteapp.selected_image = Some(attachment);
+        self.gpasteapp.set_selected_image(attachment);
     }
 }
 
@@ -1165,4 +1631,13 @@ fn blend_over(dst: &mut Rgba<u8>, s: [f32; 4]) {
             .clamp(0.0, 255.0) as u8;
     }
     dst.0[3] = (oa * 255.0).round() as u8;
+}
+
+/// Nearest target within `tol`: returns (delta to apply, target position).
+fn snap1(val: f32, targets: &[f32], tol: f32) -> Option<(f32, f32)> {
+    targets
+        .iter()
+        .map(|&t| (t - val, t))
+        .filter(|(d, _)| d.abs() <= tol)
+        .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
 }

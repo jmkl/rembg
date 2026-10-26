@@ -17,7 +17,7 @@ mod palette;
 mod tests;
 
 use egui::{
-    Color32, CornerRadius, FontData, FontId, Frame, Margin, Stroke, TextStyle, Vec2,
+    Color32, CornerRadius, FontData, FontId, Frame, Margin, Shadow, Stroke, TextStyle, Vec2,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     style::{Selection, WidgetVisuals, Widgets},
     vec2,
@@ -255,7 +255,7 @@ pub(crate) fn snarl_style() -> SnarlStyle {
     style.crisp_magnified_text = Some(false);
 
     // Wires: Blender-ish smooth curves behind the nodes.
-    style.wire_style = Some(WireStyle::Bezier3);
+    style.wire_style = Some(WireStyle::Line);
     style.wire_width = Some(2.0);
     style.wire_layer = Some(WireLayer::BehindNodes);
 
@@ -271,7 +271,15 @@ pub(crate) fn snarl_style() -> SnarlStyle {
 
     // Frames are also overridden per node (see `node_frame` /
     // `node_header_frame`); these are the fallbacks.
-    style.node_frame = Some(node_frame(Frame::new(), false));
+    style.node_frame = Some(node_frame(
+        Frame::new().shadow(Shadow {
+            offset: [0, 5],
+            blur: 12,
+            spread: 0,
+            color: Color32::from_black_alpha(50),
+        }),
+        false,
+    ));
     style.header_frame =
         Some(node_header_frame(Frame::new(), pal::NODE).inner_margin(Margin::ZERO));
 

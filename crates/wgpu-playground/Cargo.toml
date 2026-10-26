@@ -18,6 +18,3 @@ image = { version = "0.25", default-features = false, features = [
   "gif",
 ] }
 rfd = "0.15"
-
-[profile.dev]
-opt-level = 2

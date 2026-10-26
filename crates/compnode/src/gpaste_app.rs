@@ -39,7 +39,7 @@ struct DecodedImage {
 
 pub struct GPasTeApp {
     prompt: String,
-    pub selected_image: Option<AttachedImage>,
+    selected_image: Option<AttachedImage>,
     status: String,
     /// Id of the request we are currently waiting on. `Some` == pending.
     /// Messages for any other id (e.g. an aborted request) are ignored.
@@ -394,6 +394,10 @@ impl GPasTeApp {
             data_url: format!("data:{mime};base64,{}", STANDARD.encode(bytes)),
             preview,
         }
+    }
+
+    pub(crate) fn set_selected_image(&mut self, atcmt: AttachedImage) {
+        self.selected_image = Some(atcmt);
     }
 
     fn load_image_file(ctx: &egui::Context, path: &Path) -> Result<AttachedImage, String> {
