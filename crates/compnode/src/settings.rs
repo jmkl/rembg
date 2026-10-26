@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     /// Keep inference models in memory between runs. When disabled, each job
@@ -19,6 +19,10 @@ pub(crate) struct Settings {
     /// Base folder for projects, exported images, masks and similar workspace
     /// data. Automatic sessions stay in app data.
     pub workspace_root: PathBuf,
+    /// Canvas width in pixels. Default: 1280.
+    pub canvas_width: f32,
+    /// Canvas height in pixels. Default: 720.
+    pub canvas_height: f32,
 }
 
 impl Default for Settings {
@@ -27,6 +31,8 @@ impl Default for Settings {
             cache_models: true,
             model_dir: None,
             workspace_root: default_workspace_root(),
+            canvas_width: 1280.0,
+            canvas_height: 720.0,
         }
     }
 }

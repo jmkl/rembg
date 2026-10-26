@@ -30,7 +30,7 @@ impl RemoveBg {
     }
 
     pub fn process_image(&self, img: &DynamicImage) -> Result<RgbaImage> {
-        let total = Instant::now();
+        let _total = Instant::now();
 
         let (orig_w, orig_h) = (img.width(), img.height());
 

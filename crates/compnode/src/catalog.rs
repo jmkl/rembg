@@ -6,7 +6,7 @@ use egui_snarl::{NodeId, Snarl};
 use crate::editor::GraphEditor;
 use crate::model::{FilterKind, Kind, Node};
 use crate::nodes;
-use crate::style::{NODE_W, icons, pal};
+use crate::style::{NODE_W, NODE_W_S, icons, pal};
 
 pub(crate) type BodyFn = fn(&mut GraphEditor, NodeId, &mut Ui, &mut Snarl<Node>, f32);
 pub(crate) type CreateFn = fn(&mut Snarl<Node>, Pos2, Kind);
@@ -37,12 +37,14 @@ pub(crate) enum FieldKind {
 #[derive(Clone, Copy)]
 pub(crate) struct FieldSpec {
     pub key: &'static str,
+    #[allow(dead_code)]
     pub label: &'static str,
     pub kind: FieldKind,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct SocketSpec {
+    #[allow(dead_code)]
     pub label: &'static str,
     #[allow(dead_code)]
     pub multi: bool,
@@ -671,7 +673,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         accent: pal::node_header::NEUTRAL,
         inputs: 1,
         outputs: 1,
-        body_width: NODE_W,
+        body_width: NODE_W_S,
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,
@@ -680,7 +682,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
             multi: false,
         }],
         create: nodes::filter::create,
-        body: nodes::filter::show_body,
+        body: nodes::route::show_body,
     },
     NodeSpec {
         kind: Kind::Filter(FilterKind::Group),

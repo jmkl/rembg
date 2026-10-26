@@ -169,6 +169,7 @@ pub(crate) fn unique_session_path(path: &Path) -> PathBuf {
 /// Recovery snapshot written while you work. It lives outside the manual
 /// session file so autosaving never overwrites a document the user explicitly
 /// saved.
+#[allow(dead_code)]
 pub(crate) fn default_autosave_path() -> PathBuf {
     if let Some(base) = std::env::var_os("LOCALAPPDATA") {
         PathBuf::from(base)

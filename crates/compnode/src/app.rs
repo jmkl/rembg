@@ -56,13 +56,16 @@ pub struct CompNodeApp {
     pub(crate) url_rx: Receiver<FetchedImage>,
     pub(crate) paste_pending: bool,
     pub(crate) ctrl_v_was_down: bool,
+    #[allow(dead_code)]
     pub(crate) sidebar_width: Option<f32>,
+    #[allow(dead_code)]
     pub(crate) sidebar_maximized: bool,
     pub(crate) images_need_load: bool,
     pub(crate) url_open: bool,
     pub(crate) url_text: String,
     pub(crate) input_folder_open: bool,
     pub(crate) image_canvas: ImageCanvas,
+    #[allow(dead_code)]
     pub(crate) sidebar_restore: bool,
 }
 impl CompNodeApp {
@@ -1054,7 +1057,7 @@ impl CompNodeApp {
         }
 
         // Render the image canvas widget in the sidebar.
-        self.image_canvas.show(ui);
+        self.image_canvas.show(ui, &self.settings);
     }
 }
 

@@ -208,6 +208,7 @@ pub(crate) fn ensure_image_loaded(
 
 /// Image that a processing node should consume, or a message explaining why
 /// there is none yet.
+#[allow(dead_code)]
 pub(crate) fn upstream_image(
     snarl: &mut Snarl<Node>,
     node: NodeId,

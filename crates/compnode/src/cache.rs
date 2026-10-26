@@ -24,6 +24,7 @@ impl OutputCache {
         Self { dir }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn default_dir() -> PathBuf {
         if let Some(base) = std::env::var_os("LOCALAPPDATA") {
             PathBuf::from(base).join("rembg").join("studio-cache")

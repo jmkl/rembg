@@ -61,6 +61,7 @@ pub(crate) mod metrics {
 
 /// Uniform body width for all nodes.
 pub(crate) const NODE_W: f32 = 196.0;
+pub(crate) const NODE_W_S: f32 = 100.0;
 
 /// Shared node body padding. Keeping it here makes all nodes line up.
 pub(crate) const BODY_MARGIN: Margin = Margin::symmetric(10, 8);

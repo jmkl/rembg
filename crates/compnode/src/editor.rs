@@ -417,8 +417,7 @@ impl GraphEditor {
         }
     }
 
-    /// Blender-style dot grid, drawn in graph space with a screen-constant dot
-    /// size and an adaptive spacing so the dot count stays bounded.
+    #[allow(dead_code)]
     fn draw_background(
         &mut self,
         _background: Option<&BackgroundPattern>,
@@ -773,10 +772,10 @@ impl SnarlViewer<Node> for GraphEditor {
 
     fn show_dropped_wire_menu(
         &mut self,
-        pos: egui::Pos2,
-        ui: &mut egui::Ui,
-        src_pins: AnyPins,
-        snarl: &mut Snarl<Node>,
+        _pos: egui::Pos2,
+        _ui: &mut egui::Ui,
+        _src_pins: AnyPins,
+        _snarl: &mut Snarl<Node>,
     ) {
     }
 

@@ -17,6 +17,7 @@ use std::{
 };
 
 const PROMPTS_FILE: &str = "saved_prompts.json";
+#[allow(dead_code)]
 const MAX_PREVIEW: f32 = 300.0;
 const SLOT_H: f32 = 160.0;
 const SLOT_MIN_W: f32 = 110.0; // below this, the two holders stack vertically
@@ -65,6 +66,7 @@ fn tight_frame() -> egui::Frame {
 }
 
 /// Scale `size` down (never up) so it fits inside max_w x max_h, keeping aspect ratio.
+#[allow(dead_code)]
 fn fit_size(size: egui::Vec2, max_w: f32, max_h: f32) -> egui::Vec2 {
     if size.x <= 0.0 || size.y <= 0.0 {
         return size;
@@ -201,6 +203,7 @@ fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
 }
 
 /// First line of a prompt, shortened for the sidebar list.
+#[allow(dead_code)]
 fn prompt_title(prompt: &str) -> String {
     let first = prompt.lines().next().unwrap_or("").trim();
     let mut title: String = first.chars().take(36).collect();
@@ -675,7 +678,7 @@ impl GPasTeApp {
             .show(ui, |ui| {
                 // Height we have to fill, captured BEFORE entering the scroll area
                 // (inside it the available height is unbounded).
-                let avail_h = ui.available_height();
+                let _avail_h = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {

@@ -314,6 +314,7 @@ pub struct ViewerLayer {
 }
 
 impl ViewerLayer {
+    #[allow(dead_code)]
     pub fn new(source: NodeId, texture: Option<TextureHandle>) -> Self {
         Self {
             source,
@@ -643,6 +644,7 @@ impl Node {
 
     /// Store a decoded full-resolution image without touching its preview
     /// texture.
+    #[allow(dead_code)]
     pub(crate) fn set_cpu(&mut self, image: RgbaImage) {
         if let Some(preview) = self.preview_mut() {
             preview.cpu = Some(image);
@@ -650,6 +652,7 @@ impl Node {
     }
 
     /// Replace both the CPU image and its downscaled preview texture.
+    #[allow(dead_code)]
     pub(crate) fn set_image_data(&mut self, texture: TextureHandle, image: RgbaImage) {
         if let Some(preview) = self.preview_mut() {
             *preview = Preview::with_image(texture, image);

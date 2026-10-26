@@ -345,6 +345,8 @@ fn settings_roundtrip_preserves_paths() {
         cache_models: false,
         model_dir: Some(std::path::PathBuf::from("D:/models")),
         workspace_root: std::path::PathBuf::from("D:/workspace"),
+        canvas_width: 1280.0,
+        canvas_height: 720.0,
     };
     let text = serde_json::to_string(&settings).unwrap();
     let restored: Settings = serde_json::from_str(&text).unwrap();

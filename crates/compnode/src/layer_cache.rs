@@ -178,14 +178,17 @@ impl LayerCache {
         self.failed.retain(|p, _| in_use.contains(p));
     }
 
+    #[allow(dead_code)]
     pub fn is_pending(&self, path: &Path) -> bool {
         self.pending.contains(path)
     }
 
+    #[allow(dead_code)]
     pub fn error(&self, path: &Path) -> Option<&str> {
         self.failed.get(path).map(String::as_str)
     }
 
+    #[allow(dead_code)]
     pub fn contains(&self, path: &Path) -> bool {
         self.entries.contains_key(path)
     }
@@ -194,10 +197,12 @@ impl LayerCache {
         self.entries.get(path)
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use crossbeam_channel::unbounded;
 use gpaste::{app, protocol};
-use std::{env, net::TcpListener, thread, time::Duration};
+use std::{net::TcpListener, thread, time::Duration};
 
 const ADDRESS: &str = "127.0.0.1:38471";
 

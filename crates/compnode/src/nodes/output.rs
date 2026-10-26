@@ -18,7 +18,7 @@ pub(crate) fn show_body(
     node: NodeId,
     ui: &mut Ui,
     snarl: &mut Snarl<Node>,
-    width: f32,
+    _width: f32,
 ) {
     let Some(output) = snarl[node].viewer_node() else {
         return;

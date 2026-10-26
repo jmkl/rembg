@@ -17,7 +17,7 @@
 
 use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
-use crate::style::pal;
+use crate::style::{pal, icons, font};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, CursorIcon, FontId, Margin, Mesh, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, TextureHandle, TextureId, Vec2, epaint::Vertex, pos2, vec2,
@@ -34,9 +34,10 @@ const ROT_DIST: f32 = 32.0; // screen pixels
 const MIN_SIZE: f32 = 8.0; // canvas units
 const SIDEBAR_PADDING: f32 = 8.0; // was 16
 const SIDEBAR_GAP: f32 = 8.0; // was 12
-const INPUT_H: f32 = 32.0; // was 36
 const ROW_H: f32 = 30.0; // was 36
+#[allow(dead_code)]
 const INPUT_RADIUS: u8 = 8;
+#[allow(dead_code)]
 const CANVAS_RADIUS: u8 = 12;
 const LAYER_RADIUS: u8 = 8;
 const DRAG_HANDLE_DOT: f32 = 4.0;
@@ -89,6 +90,8 @@ pub struct Item {
     tex: Option<TextureHandle>,
     /// True once `tex` comes from the layer cache (not the placeholder).
     tex_is_full: bool,
+    /// Whether the layer is visible in the canvas.
+    visible: bool,
     /// Center in canvas coordinates
     center: Vec2,
     /// Size in canvas units (before rotation)
@@ -175,6 +178,7 @@ pub struct LayerInfo<'a> {
     pub angle: f32,
 }
 
+#[allow(dead_code)]
 struct Prompt {}
 
 pub struct ImageCanvas {
@@ -217,8 +221,9 @@ const FORCE_SYNC_EVERY: Duration = Duration::from_millis(750);
 
 impl ImageCanvas {
     pub fn new(gpaste_app: GPasTeApp) -> Self {
+        let canvas_size = egui::vec2(1280.0, 720.0);
         Self {
-            canvas_size: vec2(1280.0, 720.0),
+            canvas_size,
             background: pal::CANVAS_BG,
             items: vec![],
             cache: LayerCache::default(),
@@ -477,6 +482,7 @@ impl ImageCanvas {
                         name: format!("{} #{}", source_name, source_id.0),
                         tex: None,
                         tex_is_full: false,
+                        visible: true,
                         center: snap.map_or(canvas_size / 2.0, |s| s.center),
                         size: snap.map_or(vec2(200.0, 200.0), |s| s.size),
                         angle: snap.map_or(0.0, |s| s.angle),
@@ -556,7 +562,8 @@ impl ImageCanvas {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn show(&mut self, ui: &mut egui::Ui, settings: &crate::settings::Settings) {
+        self.canvas_size = egui::vec2(settings.canvas_width, settings.canvas_height);
         // Right-click anywhere in the panel clears selection
         let panel_rect = ui.max_rect();
         if ui.input(|i| {
@@ -611,30 +618,11 @@ impl ImageCanvas {
     fn top_section_height(&self, width: f32) -> f32 {
         let scale = (width / self.canvas_size.x).clamp(0.05, 1.0);
         let rows = self.items.len().clamp(2, 4) as f32;
-        INPUT_H + self.canvas_size.y * scale + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 3.0
+        self.canvas_size.y * scale + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 3.0
     }
 
     fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
         ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let input_w = (inner_width - 8.0) * 0.5;
-
-            let w_rect = ui
-                .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                .0;
-            let mut w_val = self.canvas_size.x;
-            self.draw_input_field(ui, w_rect, "WIDTH", &mut w_val);
-            self.canvas_size.x = w_val;
-
-            let h_rect = ui
-                .allocate_exact_size(vec2(input_w, INPUT_H), Sense::hover())
-                .0;
-            let mut h_val = self.canvas_size.y;
-            self.draw_input_field(ui, h_rect, "HEIGHT", &mut h_val);
-            self.canvas_size.y = h_val;
-        });
 
         let scale = (inner_width / self.canvas_size.x).clamp(0.05, 1.0);
         let canvas_h = self.canvas_size.y * scale;
@@ -646,38 +634,7 @@ impl ImageCanvas {
 
         self.layer_list_ui(ui, inner_width);
     }
-    /// Draw a single input field (WIDTH/HEIGHT) with label inside - no bg/border
-    fn draw_input_field(&mut self, ui: &mut egui::Ui, rect: Rect, label: &str, value: &mut f32) {
-        // Label + value text only
-        let label_pos = egui::pos2(rect.left() + 12.0, rect.top() + 6.0);
-        ui.painter().text(
-            label_pos,
-            Align2::LEFT_TOP,
-            label,
-            FontId::proportional(9.0),
-            pal::MUTED,
-        );
 
-        let value_str = format!("{:.0} px", value);
-        let value_pos = egui::pos2(rect.left() + 12.0, rect.center().y + 2.0);
-        ui.painter().text(
-            value_pos,
-            Align2::LEFT_CENTER,
-            value_str,
-            FontId::new(13.0, egui::FontFamily::Proportional),
-            pal::TEXT,
-        );
-
-        // DragValue interaction - place it in the rect
-        let mut dv = egui::DragValue::new(value)
-            .range(64.0..=8192.0)
-            .speed(1.0)
-            .fixed_decimals(0)
-            .custom_formatter(|v, _| format!("{:.0}", v))
-            .custom_parser(|s| s.parse::<f64>().ok());
-        let inner_rect = rect.shrink(8.0);
-        ui.put(inner_rect, dv);
-    }
 
     // ---------------- canvas ----------------
 
@@ -848,6 +805,7 @@ impl ImageCanvas {
         }
 
         for it in &self.items {
+            if !it.visible { continue; }
             let Some(tex) = &it.tex else { continue };
             let c = it.corners();
             let uvs = [
@@ -938,6 +896,7 @@ impl ImageCanvas {
             let idx = n - 1 - d; // top of the list = front-most layer
             let id = self.items[idx].id;
             let name = self.items[idx].name.clone();
+            let mut visible = self.items[idx].visible;
 
             let (rect, resp) =
                 ui.allocate_exact_size(vec2(inner_width, ROW_H), Sense::click_and_drag());
@@ -989,7 +948,7 @@ impl ImageCanvas {
             );
             self.draw_drag_handle(ui, handle_rect);
 
-            // Layer name
+            // Layer name (smaller text)
             ui.painter().text(
                 egui::pos2(
                     rect.left() + 12.0 + DRAG_HANDLE_SIZE + 16.0,
@@ -997,9 +956,37 @@ impl ImageCanvas {
                 ),
                 Align2::LEFT_CENTER,
                 name,
-                FontId::proportional(13.0),
+                FontId::proportional(11.0),
+                if visible { pal::TEXT } else { pal::MUTED },
+            );
+
+            // Eye toggle (right-aligned, 16×16)
+            let eye_pos = rect.right() - 20.0;
+            let eye_rect = Rect::from_min_size(
+                egui::pos2(eye_pos - 16.0, rect.center().y - 6.0),
+                vec2(16.0, 16.0),
+            );
+            let eye_id = egui::Id::new(format!("eye_{}", id.0));
+            let eye_response = ui.interact(eye_rect, eye_id, Sense::click());
+            if eye_response.clicked() {
+                visible = !visible;
+            }
+            ui.painter().rect_stroke(
+                eye_rect,
+                2.0,
+                Stroke::new(1.0, pal::NODE_STROKE),
+                StrokeKind::Outside,
+            );
+            ui.painter().text(
+                eye_rect.center(),
+                Align2::CENTER_CENTER,
+                if visible { icons::EYE } else { icons::EYE_OFF },
+                icons::font(font::ICON),
                 pal::TEXT,
             );
+
+            // Update stored visibility
+            self.items[idx].visible = visible;
         }
 
         // --- drop indicator + apply the reorder on release ---

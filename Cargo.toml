@@ -10,6 +10,7 @@ members = [
 ]
 resolver = "2"
 
+
 [workspace.dependencies]
 image = "0.25"
 anyhow = "1"
