@@ -1031,6 +1031,22 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         create: nodes::filter::create,
         body: nodes::filter::show_body,
     },
+    NodeSpec {
+        kind: Kind::Filter(FilterKind::Texts),
+        title: "Texts",
+        icon: icons::MENU,
+        keywords: &["text", "texts", "font", "caption", "title", "typography"],
+        accent: pal::node_header::SAND,
+        inputs: 0,
+        outputs: 1,
+        body_width: NODE_W,
+        multi_input: false,
+        hidden: false,
+        fields: NO_FIELDS,
+        sockets: NO_SOCKETS,
+        create: nodes::filter::create,
+        body: nodes::texts::show_body,
+    },
 ];
 
 pub(crate) fn spec(kind: Kind) -> &'static NodeSpec {

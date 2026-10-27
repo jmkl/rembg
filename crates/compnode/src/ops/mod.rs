@@ -5,9 +5,11 @@
 
 mod adjust;
 pub(crate) mod composite;
+mod effects;
 mod generate;
 mod rawfilter;
 mod rf;
+pub(crate) mod texts;
 use image::RgbaImage;
 
 use crate::model::FilterKind;
@@ -57,5 +59,6 @@ pub(crate) fn evaluate(
         FilterKind::Gradient => Ok(generate::gradient(params)),
         FilterKind::Noise => Ok(generate::noise(params, canvas)),
         FilterKind::RawFilter => Ok(rawfilter::raw_filter(first(0)?, params)),
+        FilterKind::Texts => texts::texts(params, canvas),
     }
 }

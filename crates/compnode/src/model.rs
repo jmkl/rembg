@@ -43,6 +43,7 @@ pub(crate) enum FilterKind {
     Gradient,
     Noise,
     RawFilter,
+    Texts,
 }
 
 impl FilterKind {
@@ -62,6 +63,7 @@ impl FilterKind {
             Self::Gradient => "gradient",
             Self::Noise => "noise",
             Self::RawFilter => "rawfilter",
+            Self::Texts => "texts",
         }
     }
 
@@ -81,6 +83,7 @@ impl FilterKind {
             "gradient" => Self::Gradient,
             "noise" => Self::Noise,
             "rawfilter" | "raw" => Self::RawFilter,
+            "texts" | "text" => Self::Texts,
             _ => return None,
         })
     }
@@ -161,6 +164,22 @@ impl FilterKind {
                 params::set_f32(&mut params, "sharpen_detail", 25.0);
                 params::set_f32(&mut params, "noise_reduction", 0.0);
                 params::set_f32(&mut params, "noise_reduction_detail", 50.0);
+            }
+            Self::Texts => {
+                params::set_string(&mut params, "font", "inter");
+                params::set_f32(&mut params, "line_gap", 0.0);
+                params::set_f32(&mut params, "letter_spacing", 0.0);
+                params::set_f32(&mut params, "outline_width", 1.0);
+                params::set_f32(&mut params, "outline_color", 0.0);
+                params::set_f32(&mut params, "outline2_width", 0.0);
+                params::set_f32(&mut params, "outline2_color", 0.0);
+                params::set_f32(&mut params, "shadow_opacity", 0.0);
+                params::set_f32(&mut params, "shadow_color", 0.0);
+                params::set_f32(&mut params, "shadow_x", 0.0);
+                params::set_f32(&mut params, "shadow_y", 0.0);
+                params::set_f32(&mut params, "shadow_blur", 0.0);
+                params::set_f32(&mut params, "depth", 8.0);
+                params::set_string(&mut params, "text", "Text");
             }
         }
         params
