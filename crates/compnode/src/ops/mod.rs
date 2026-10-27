@@ -6,6 +6,7 @@
 mod adjust;
 pub(crate) mod composite;
 mod generate;
+mod rawfilter;
 
 use image::RgbaImage;
 
@@ -55,5 +56,6 @@ pub(crate) fn evaluate(
         FilterKind::Invert => Ok(adjust::invert(first(0)?, params)),
         FilterKind::Gradient => Ok(generate::gradient(params)),
         FilterKind::Noise => Ok(generate::noise(params, canvas)),
+        FilterKind::RawFilter => Ok(rawfilter::raw_filter(first(0)?, params)),
     }
 }

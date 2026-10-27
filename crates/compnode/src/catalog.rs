@@ -363,6 +363,109 @@ const INVERT_FIELDS: &[FieldSpec] = &[FieldSpec {
     },
 }];
 
+const RAW_FILTER_FIELDS: &[FieldSpec] = &[
+    FieldSpec {
+        key: "temp",
+        label: "Temperature",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "tint",
+        label: "Tint",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "texture",
+        label: "Texture",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "clarity",
+        label: "Clarity",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "dehaze",
+        label: "Dehaze",
+        kind: FieldKind::Range {
+            min: -100.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "sharpen",
+        label: "Sharpen",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 150.0,
+            step: 1.0,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "sharpen_radius",
+        label: "Sharpen Radius",
+        kind: FieldKind::Range {
+            min: 0.5,
+            max: 3.0,
+            step: 0.1,
+            suffix: "",
+        },
+    },
+    FieldSpec {
+        key: "sharpen_detail",
+        label: "Sharpen Detail",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "noise_reduction",
+        label: "Noise Reduction",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+    FieldSpec {
+        key: "noise_reduction_detail",
+        label: "Noise Reduction Detail",
+        kind: FieldKind::Range {
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+            suffix: " %",
+        },
+    },
+];
+
 const BLEND_FIELDS: &[FieldSpec] = &[
     FieldSpec {
         key: "mode",
@@ -860,6 +963,35 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         multi_input: false,
         hidden: false,
         fields: INVERT_FIELDS,
+        sockets: &[SocketSpec {
+            label: "",
+            multi: false,
+        }],
+        create: nodes::filter::create,
+        body: nodes::filter::show_body,
+    },
+    NodeSpec {
+        kind: Kind::Filter(FilterKind::RawFilter),
+        title: "Raw Filter",
+        icon: icons::FILTER,
+        keywords: &[
+            "raw",
+            "develop",
+            "temperature",
+            "tint",
+            "texture",
+            "clarity",
+            "dehaze",
+            "sharpen",
+            "noise reduction",
+        ],
+        accent: pal::node_header::BRONZE,
+        inputs: 1,
+        outputs: 1,
+        body_width: NODE_W,
+        multi_input: false,
+        hidden: false,
+        fields: RAW_FILTER_FIELDS,
         sockets: &[SocketSpec {
             label: "",
             multi: false,

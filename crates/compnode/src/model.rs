@@ -42,6 +42,7 @@ pub(crate) enum FilterKind {
     Invert,
     Gradient,
     Noise,
+    RawFilter,
 }
 
 impl FilterKind {
@@ -60,6 +61,7 @@ impl FilterKind {
             Self::Invert => "invert",
             Self::Gradient => "gradient",
             Self::Noise => "noise",
+            Self::RawFilter => "rawfilter",
         }
     }
 
@@ -78,6 +80,7 @@ impl FilterKind {
             "invert" => Self::Invert,
             "gradient" => Self::Gradient,
             "noise" => Self::Noise,
+            "rawfilter" | "raw" => Self::RawFilter,
             _ => return None,
         })
     }
@@ -146,6 +149,18 @@ impl FilterKind {
                 params::set_f32(&mut params, "lacunarity", 2.0);
                 params::set_f32(&mut params, "distortion", 0.0);
                 params::set_f32(&mut params, "seed", 0.0);
+            }
+            Self::RawFilter => {
+                params::set_f32(&mut params, "temp", 0.0);
+                params::set_f32(&mut params, "tint", 0.0);
+                params::set_f32(&mut params, "texture", 0.0);
+                params::set_f32(&mut params, "clarity", 0.0);
+                params::set_f32(&mut params, "dehaze", 0.0);
+                params::set_f32(&mut params, "sharpen", 0.0);
+                params::set_f32(&mut params, "sharpen_radius", 1.0);
+                params::set_f32(&mut params, "sharpen_detail", 25.0);
+                params::set_f32(&mut params, "noise_reduction", 0.0);
+                params::set_f32(&mut params, "noise_reduction_detail", 50.0);
             }
         }
         params

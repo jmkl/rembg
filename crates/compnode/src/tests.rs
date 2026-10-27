@@ -16,7 +16,7 @@ use crate::graph::{
     full_res_source_path, invalidate_node, refresh_viewer, rgba_to_texture, upstream_texture,
 };
 use crate::image_canvas::ImageCanvas;
-use crate::model::{FilterKind, Node, ViewerLayer};
+use crate::model::{FilterKind, Kind, Node, ViewerLayer};
 use crate::session::{self, SessionFile, SessionNodeData};
 use crate::settings::Settings;
 use crate::style::{install_theme, snarl_style};
@@ -435,6 +435,86 @@ fn every_node_kind_has_a_unique_catalog_entry() {
         assert_eq!(crate::catalog::spec(spec.kind).title, spec.title);
         assert!(titles.insert(spec.title), "duplicate title: {}", spec.title);
         assert!(spec.matches(spec.title));
+    }
+}
+
+#[test]
+fn every_filter_field_has_a_default_value() {
+    for spec in crate::catalog::NODE_SPECS {
+        let Kind::Filter(kind) = spec.kind else {
+            continue;
+        };
+        let defaults = kind.defaults();
+        for field in spec.fields {
+            assert!(
+                defaults.contains_key(field.key),
+                "{} is missing a default for {}",
+                spec.title,
+                field.key,
+            );
+        }
+    }
+}
+
+#[test]
+fn raw_filter_defaults_are_a_no_op() {
+    let image = image::RgbaImage::from_fn(16, 16, |x, y| {
+        image::Rgba([(x * 11) as u8, (y * 13) as u8, ((x + y) * 7) as u8, 200])
+    });
+    let params = FilterKind::RawFilter.defaults();
+    let out = crate::ops::evaluate(
+        FilterKind::RawFilter,
+        &params,
+        &[vec![image.clone()]],
+        (16, 16),
+    )
+    .unwrap();
+    assert_eq!(out, image);
+}
+
+#[test]
+fn raw_filter_temperature_warms_the_image() {
+    let image = image::RgbaImage::from_pixel(4, 4, image::Rgba([128, 128, 128, 255]));
+    let mut params = FilterKind::RawFilter.defaults();
+    crate::params::set_f32(&mut params, "temp", 100.0);
+    let out = crate::ops::evaluate(FilterKind::RawFilter, &params, &[vec![image]], (4, 4)).unwrap();
+    let pixel = out.get_pixel(0, 0);
+    assert!(pixel[0] > 128, "red should increase: {pixel:?}");
+    assert!(pixel[2] < 128, "blue should decrease: {pixel:?}");
+}
+
+#[test]
+fn raw_filter_preserves_alpha_with_every_control_enabled() {
+    let image = image::RgbaImage::from_fn(24, 24, |x, y| {
+        image::Rgba([
+            (x * 9) as u8,
+            (y * 10) as u8,
+            ((x * y) % 255) as u8,
+            ((x * 7 + y * 3) % 255) as u8,
+        ])
+    });
+    let mut params = FilterKind::RawFilter.defaults();
+    for (key, value) in [
+        ("temp", 35.0),
+        ("tint", -20.0),
+        ("texture", 50.0),
+        ("clarity", 40.0),
+        ("dehaze", 30.0),
+        ("sharpen", 80.0),
+        ("sharpen_radius", 2.0),
+        ("sharpen_detail", 60.0),
+        ("noise_reduction", 50.0),
+        ("noise_reduction_detail", 40.0),
+    ] {
+        crate::params::set_f32(&mut params, key, value);
+    }
+
+    let out =
+        crate::ops::evaluate(FilterKind::RawFilter, &params, &[vec![image.clone()]], (24, 24))
+            .unwrap();
+    assert_eq!(out.dimensions(), image.dimensions());
+    for (source, processed) in image.pixels().zip(out.pixels()) {
+        assert_eq!(source[3], processed[3], "alpha must be untouched");
     }
 }
 

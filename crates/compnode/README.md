@@ -100,24 +100,24 @@ reloadable path are never released.
 
 ## Module layout
 
-| Module | Responsibility |
-| --- | --- |
-| `style/` | All styling: `palette.rs` (every colour), `icons.rs` (icon font), `controls.rs` (widget kit on vanilla egui), `mod.rs` (metrics, egui theme, Snarl style) |
-| `model.rs` | `Node`, `Preview`, `Process`, viewer layers, node accessors |
-| `catalog.rs` | Single registry of node kinds, menu metadata and body functions |
-| `nodes/` | One body UI module per node kind |
-| `graph.rs` | Connect, invalidate, image loading, preview textures, viewer refresh |
-| `memory.rs` | 512 MiB CPU image budget, LRU tracking, lazy reload decisions |
-| `editor.rs` | `SnarlViewer` implementation, chevrons, dot grid, node menu |
-| `graph_menu.rs` | Filterable right-click “add node” menu |
-| `app.rs` | Window, shortcuts, autosave, session actions |
-| `session.rs` | Session JSON, output paths, restore, unique filenames |
-| `cache.rs` | Content-addressed result cache |
-| `worker.rs` | Background inference thread and model residency policy |
-| `settings.rs` | Persisted settings, model/workspace path resolution |
-| `settings_window.rs` | Settings window UI |
-| `title_bar.rs` | Custom undecorated title bar and menus |
-| `widgets.rs` | Reusable preview, socket and error widgets |
+| Module               | Responsibility                                                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `style/`             | All styling: `palette.rs` (every colour), `icons.rs` (icon font), `controls.rs` (widget kit on vanilla egui), `mod.rs` (metrics, egui theme, Snarl style) |
+| `model.rs`           | `Node`, `Preview`, `Process`, viewer layers, node accessors                                                                                               |
+| `catalog.rs`         | Single registry of node kinds, menu metadata and body functions                                                                                           |
+| `nodes/`             | One body UI module per node kind                                                                                                                          |
+| `graph.rs`           | Connect, invalidate, image loading, preview textures, viewer refresh                                                                                      |
+| `memory.rs`          | 512 MiB CPU image budget, LRU tracking, lazy reload decisions                                                                                             |
+| `editor.rs`          | `SnarlViewer` implementation, chevrons, dot grid, node menu                                                                                               |
+| `graph_menu.rs`      | Filterable right-click “add node” menu                                                                                                                    |
+| `app.rs`             | Window, shortcuts, autosave, session actions                                                                                                              |
+| `session.rs`         | Session JSON, output paths, restore, unique filenames                                                                                                     |
+| `cache.rs`           | Content-addressed result cache                                                                                                                            |
+| `worker.rs`          | Background inference thread and model residency policy                                                                                                    |
+| `settings.rs`        | Persisted settings, model/workspace path resolution                                                                                                       |
+| `settings_window.rs` | Settings window UI                                                                                                                                        |
+| `title_bar.rs`       | Custom undecorated title bar and menus                                                                                                                    |
+| `widgets.rs`         | Reusable preview, socket and error widgets                                                                                                                |
 
 ## Selection
 
@@ -160,3 +160,16 @@ cargo fmt -p compnode
 cargo clippy -p compnode --all-targets -- -D warnings
 cargo test -p compnode
 ```
+
+                              default     min   max
+
+temp 0 -100 100
+tint 0 -100 100
+texture 0 -100 100
+clarity 0 -100 100
+dehaze 0 -100 100
+sharpen 0 0 150
+sharpen_radius 1.0 0.5 3.0
+sharpen_detail 25 0 100
+noise_reduction 0 0 100
+noise_reduction_detail 50 0 100
