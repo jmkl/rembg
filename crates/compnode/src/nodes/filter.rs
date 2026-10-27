@@ -46,13 +46,14 @@ pub(crate) fn show_body(
     error_line(ui, error.as_deref());
 
     let fields = spec_for(kind).fields;
+    let defaults = kind.defaults();
     let mut changed = false;
     {
         let Some(filter) = snarl[node].filter_mut() else {
             return;
         };
         for field in fields {
-            changed |= show_field(ui, &mut filter.params, field);
+            changed |= show_field(ui, &mut filter.params, field, &defaults);
         }
         if kind == FilterKind::Curves {
             changed |= curve_editor(ui, &mut filter.params);
@@ -67,7 +68,7 @@ fn spec_for(kind: FilterKind) -> &'static NodeSpec {
     crate::catalog::spec(Kind::Filter(kind))
 }
 
-fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
+fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Params) -> bool {
     match &field.kind {
         FieldKind::Range {
             min,
@@ -81,7 +82,8 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
                     .label(field.label)
                     .suffix(*suffix)
                     .step(*step)
-                    .decimals(decimals_for(*step)),
+                    .decimals(decimals_for(*step))
+                    .default(params::f32(defaults, field.key, *min)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -96,7 +98,8 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
                 Slider::new(&mut value, *min..=*max)
                     .label(field.label)
                     .step(*step)
-                    .decimals(decimals_for(*step)),
+                    .decimals(decimals_for(*step))
+                    .default(params::f32(defaults, field.key, *min)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -108,9 +111,8 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec) -> bool {
         FieldKind::Color => {
             let rgb = params::color(params, field.key, "#000000");
             let mut color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-            let response = ui.add(
-                ColorField::new((field.key, field.label), &mut color).label(field.label),
-            );
+            let response =
+                ui.add(ColorField::new((field.key, field.label), &mut color).label(field.label));
             if response.changed() {
                 params::set_string(
                     params,
@@ -210,10 +212,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
             rect.bottom() - rect.height() * y,
         );
         if let Some(previous) = prev {
-            painter.line_segment(
-                [previous, pos],
-                egui::Stroke::new(1.5, pal::ACCENT),
-            );
+            painter.line_segment([previous, pos], egui::Stroke::new(1.5, pal::ACCENT));
         }
         prev = Some(pos);
     }
@@ -312,8 +311,7 @@ fn curve_editor(ui: &mut Ui, params: &mut Params) -> bool {
     }
 
     // Reset button.
-    if ui.add(Button::new("Reset").small()).clicked()
-    {
+    if ui.add(Button::new("Reset").small()).clicked() {
         points = params::identity_curve();
         changed = true;
     }

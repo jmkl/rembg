@@ -337,7 +337,10 @@ pub(crate) fn spawn_worker(
                         input,
                         source_name,
                     }) => {
-                        let domain = format!("rmbg-v1:{}", model_tag(&config.model_dir.join(MODEL_RMBG_FILE)));
+                        let domain = format!(
+                            "rmbg-v1:{}",
+                            model_tag(&config.model_dir.join(MODEL_RMBG_FILE))
+                        );
                         let cache_models = models.config.cache_models;
                         let started = Instant::now();
                         let result = remove_bg_v2(&mut models, &input).map(|run| {
@@ -430,14 +433,8 @@ pub(crate) fn spawn_worker(
                         canvas,
                         source_name,
                     }) => {
-                        let result = filter_full(
-                            &cache,
-                            kind,
-                            &params,
-                            inputs,
-                            canvas,
-                            &source_name,
-                        );
+                        let result =
+                            filter_full(&cache, kind, &params, inputs, canvas, &source_name);
                         (token, node, result)
                     }
                 };
@@ -639,10 +636,7 @@ fn process_birefnet(
     model.process_image(&img).map_err(|e| format!("{e:#}"))
 }
 
-fn remove_bg_v2(
-    models: &mut Models,
-    input: &image::RgbaImage,
-) -> Result<TimedImage, String> {
+fn remove_bg_v2(models: &mut Models, input: &image::RgbaImage) -> Result<TimedImage, String> {
     let path = models.config.model_dir.join(MODEL_RMBG_FILE);
     let mut load = Duration::ZERO;
 
@@ -678,10 +672,7 @@ fn load_rmbg(path: &Path) -> Result<RemoveBg, String> {
     RemoveBg::load_from(path).map_err(|e| format!("load {}: {e:#}", path.display()))
 }
 
-fn process_rmbg(
-    model: &RemoveBg,
-    input: &image::RgbaImage,
-) -> Result<image::RgbaImage, String> {
+fn process_rmbg(model: &RemoveBg, input: &image::RgbaImage) -> Result<image::RgbaImage, String> {
     let img = image::DynamicImage::ImageRgba8(input.clone());
     model.process_image(&img).map_err(|e| format!("{e:#}"))
 }

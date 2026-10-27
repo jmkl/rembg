@@ -239,7 +239,7 @@ impl GPasTeApp {
             generated_size: None,
             generated_rgba: None,
             image_status: String::new(),
-            sidebar_open: true,
+            sidebar_open: false,
             saved_prompts: Self::load_prompts(),
         }
     }
@@ -600,77 +600,68 @@ impl GPasTeApp {
     // ---------- UI pieces ----------
 
     fn ui_top_bar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("top_bar")
-            .frame(tight_frame())
-            .show(ui, |ui| {
-                // ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    let (icon, tip) = if self.sidebar_open {
-                        (icons::ARROW_LEFT, "Collapse sidebar")
-                    } else {
-                        (icons::MENU, "Expand sidebar")
-                    };
-                    if ui
-                        .add(Button::icon(icon).outline())
-                        .on_hover_text(tip)
-                        .clicked()
-                    {
-                        self.sidebar_open = !self.sidebar_open;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&self.status).weak()).truncate(),
-                        );
-                    });
-                });
-                ui.add_space(3.0);
+        ui.horizontal(|ui| {
+            let (icon, tip) = if self.sidebar_open {
+                (icons::ARROW_LEFT, "Hide saved prompts")
+            } else {
+                (icons::MENU, "Show saved prompts")
+            };
+
+            if ui
+                .add(Button::icon(icon).outline())
+                .on_hover_text(tip)
+                .clicked()
+            {
+                self.sidebar_open = !self.sidebar_open;
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(&self.status).weak()).truncate());
             });
+        });
+
+        ui.separator();
     }
 
     fn ui_sidebar(&mut self, ui: &mut egui::Ui) {
         let mut to_fill: Option<usize> = None;
         let mut to_delete: Option<usize> = None;
 
-        egui::CentralPanel::default()
-            .frame(tight_frame())
-            .show(ui, |ui| {
-                // ── Header ──
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Saved prompts").strong().size(14.0));
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Saved prompts").strong().size(14.0));
+            ui.label(
+                egui::RichText::new(self.saved_prompts.len().to_string())
+                    .small()
+                    .weak(),
+            );
+            ui.add_space(2.0); // ── Empty state ──
+            if self.saved_prompts.is_empty() {
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("No saved prompts yet").weak());
                     ui.label(
-                        egui::RichText::new(self.saved_prompts.len().to_string())
+                        egui::RichText::new("Write a prompt and press save")
                             .small()
                             .weak(),
                     );
                 });
-                ui.add_space(2.0); // ── Empty state ──
-                if self.saved_prompts.is_empty() {
-                    ui.add_space(24.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(egui::RichText::new("No saved prompts yet").weak());
-                        ui.label(
-                            egui::RichText::new("Write a prompt and press save")
-                                .small()
-                                .weak(),
-                        );
-                    });
-                    return;
-                }
+                return;
+            }
 
-                // ── Cards ──
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        for (index, prompt) in self.saved_prompts.iter().enumerate() {
-                            match prompt_card(ui, index, prompt) {
-                                CardAction::Open => to_fill = Some(index),
-                                CardAction::Delete => to_delete = Some(index),
-                                CardAction::None => {}
-                            }
+            // ── Cards ──
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    for (index, prompt) in self.saved_prompts.iter().enumerate() {
+                        match prompt_card(ui, index, prompt) {
+                            CardAction::Open => to_fill = Some(index),
+                            CardAction::Delete => to_delete = Some(index),
+                            CardAction::None => {}
                         }
-                    });
-            });
+                    }
+                });
+        });
 
         if let Some(index) = to_fill {
             self.prompt = self.saved_prompts[index].clone();
@@ -686,8 +677,8 @@ impl GPasTeApp {
     fn ui_main(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        egui::CentralPanel::default()
-            .frame(tight_frame())
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 // Height we have to fill, captured BEFORE entering the scroll area
                 // (inside it the available height is unbounded).

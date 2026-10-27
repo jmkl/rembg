@@ -1,8 +1,7 @@
 //! Small reusable drawing/widget helpers shared by node bodies.
 
 use egui::{
-    Align2, CornerRadius, FontId, Mesh, Pos2, Rect, Shape, Stroke, Vec2,
-    epaint::Vertex, pos2, vec2,
+    Align2, CornerRadius, FontId, Mesh, Pos2, Rect, Shape, Stroke, Vec2, epaint::Vertex, pos2, vec2,
 };
 use egui_snarl::ui::PinInfo;
 

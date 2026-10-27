@@ -65,8 +65,7 @@ pub(crate) fn show_body(
     );
     if let Some((width, height)) = dimensions {
         ui.add(
-            egui::Label::new(muted(format!("{width} × {height} px"), font::TINY))
-            .selectable(false),
+            egui::Label::new(muted(format!("{width} × {height} px"), font::TINY)).selectable(false),
         );
     }
     error_line(ui, snarl[node].error());

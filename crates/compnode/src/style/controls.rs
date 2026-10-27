@@ -450,6 +450,7 @@ pub(crate) struct Slider<'a> {
     suffix: &'a str,
     step: Option<f64>,
     decimals: usize,
+    default: Option<f32>,
 }
 
 impl<'a> Slider<'a> {
@@ -461,6 +462,7 @@ impl<'a> Slider<'a> {
             suffix: "",
             step: None,
             decimals: 0,
+            default: None,
         }
     }
     pub fn label(mut self, label: &'a str) -> Self {
@@ -477,6 +479,11 @@ impl<'a> Slider<'a> {
     }
     pub fn decimals(mut self, decimals: usize) -> Self {
         self.decimals = decimals;
+        self
+    }
+    /// Value restored when the track is double-clicked.
+    pub fn default(mut self, default: f32) -> Self {
+        self.default = Some(default);
         self
     }
 }
@@ -512,6 +519,12 @@ impl Widget for Slider<'_> {
                 v = lo as f64 + ((v - lo as f64) / step).round() * step;
             }
             *self.value = (v as f32).clamp(lo, hi);
+        }
+        // Double-click restores the default value.
+        if let Some(default) = self.default
+            && response.double_clicked()
+        {
+            *self.value = default;
         }
         if *self.value != before {
             response.mark_changed();

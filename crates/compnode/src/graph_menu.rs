@@ -30,10 +30,7 @@ pub(crate) fn show(ui: &mut Ui, snarl: &mut Snarl<Node>, filter: &mut String, po
             continue;
         }
         shown += 1;
-        if ui
-            .add(MenuItem::new(spec.title).icon(spec.icon))
-            .clicked()
-        {
+        if ui.add(MenuItem::new(spec.title).icon(spec.icon)).clicked() {
             (spec.create)(snarl, pos, spec.kind);
             ui.close();
         }

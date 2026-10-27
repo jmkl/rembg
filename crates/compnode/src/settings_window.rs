@@ -132,9 +132,17 @@ fn canvas_size_row(ui: &mut egui::Ui, settings: &mut Settings) {
     let mut h = settings.canvas_height;
     ui.horizontal(|ui| {
         ui.add(egui::Label::new("W"));
-        let w_resp = ui.add(egui::DragValue::new(&mut w).range(64.0..=8192.0).fixed_decimals(0));
+        let w_resp = ui.add(
+            egui::DragValue::new(&mut w)
+                .range(64.0..=8192.0)
+                .fixed_decimals(0),
+        );
         ui.add(egui::Label::new("H"));
-        let h_resp = ui.add(egui::DragValue::new(&mut h).range(64.0..=8192.0).fixed_decimals(0));
+        let h_resp = ui.add(
+            egui::DragValue::new(&mut h)
+                .range(64.0..=8192.0)
+                .fixed_decimals(0),
+        );
         if w_resp.changed() || h_resp.changed() {
             settings.canvas_width = w;
             settings.canvas_height = h;

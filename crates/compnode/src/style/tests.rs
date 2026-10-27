@@ -116,6 +116,46 @@ fn slider_follows_the_pointer_and_snaps_to_step() {
 }
 
 #[test]
+fn slider_double_click_resets_to_default() {
+    let ctx = ctx();
+    let mut value = 0.0_f32;
+    let mut rect = Rect::NOTHING;
+    let mut run = |events: Vec<Event>, value: &mut f32, rect: &mut Rect| {
+        frame(&ctx, events, |ui| {
+            ui.set_width(200.0);
+            let r = ui.add(Slider::new(value, 0.0..=100.0).step(10.0).default(20.0));
+            *rect = r.rect;
+        });
+    };
+    run(vec![], &mut value, &mut rect);
+    let at = Pos2::new(rect.left() + rect.width() * 0.75, rect.bottom() - 5.0);
+    let click = |pressed: bool| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    // First click lands on the track: the value jumps to the pointer.
+    run(
+        vec![Event::PointerMoved(at), click(true)],
+        &mut value,
+        &mut rect,
+    );
+    run(vec![click(false)], &mut value, &mut rect);
+    assert!(
+        (value - 80.0).abs() < 1.0,
+        "click should set the value, got {value}"
+    );
+    // The second click within the double-click delay restores the default.
+    run(vec![click(true)], &mut value, &mut rect);
+    run(vec![click(false)], &mut value, &mut rect);
+    assert!(
+        (value - 20.0).abs() < 1e-3,
+        "double click must reset to the default, got {value}"
+    );
+}
+
+#[test]
 fn title_bar_and_settings_window_render() {
     let ctx = ctx();
     for _ in 0..2 {

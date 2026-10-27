@@ -572,7 +572,11 @@ impl SnarlViewer<Node> for GraphEditor {
         );
 
         // Collapse chevron (left).
-        let chevron = if open { icons::CHEVRON_DOWN } else { icons::CHEVRON_RIGHT };
+        let chevron = if open {
+            icons::CHEVRON_DOWN
+        } else {
+            icons::CHEVRON_RIGHT
+        };
         let response = ui.interact(left, ui.id().with(("chevron", node)), egui::Sense::click());
         ui.painter().text(
             left.center(),

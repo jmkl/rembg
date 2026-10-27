@@ -604,7 +604,9 @@ impl Node {
     pub(crate) fn texture(&self) -> Option<&TextureHandle> {
         match self {
             Self::Image(node) => node.preview.texture.as_ref(),
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.texture.as_ref()
             }
             Self::Output(viewer) => viewer
@@ -619,9 +621,9 @@ impl Node {
     pub(crate) fn preview_enabled(&self) -> bool {
         match self {
             Self::Image(node) => node.preview_enabled,
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
-                process.preview_enabled
-            }
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview_enabled,
             Self::Output(viewer) => viewer.preview_enabled,
             Self::Filter(node) => node.preview_enabled,
         }
@@ -630,7 +632,9 @@ impl Node {
     pub(crate) fn set_preview_enabled(&mut self, enabled: bool) {
         match self {
             Self::Image(node) => node.preview_enabled = enabled,
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview_enabled = enabled
             }
             Self::Output(viewer) => viewer.preview_enabled = enabled,
@@ -641,9 +645,9 @@ impl Node {
     pub(crate) fn cpu(&self) -> Option<&RgbaImage> {
         match self {
             Self::Image(node) => node.preview.cpu.as_ref(),
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
-                process.preview.cpu.as_ref()
-            }
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview.cpu.as_ref(),
             Self::Output(_) => None,
             Self::Filter(node) => node.preview.cpu.as_ref(),
         }
@@ -722,9 +726,9 @@ impl Node {
     pub(crate) fn output_path(&self) -> Option<&Path> {
         match self {
             Self::Image(node) if !node.path.is_empty() => Some(Path::new(&node.path)),
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
-                process.output_path.as_deref()
-            }
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
             _ => None,
         }
@@ -744,7 +748,9 @@ impl Node {
     pub(crate) fn error(&self) -> Option<&str> {
         match self {
             Self::Image(node) => node.preview.error.as_deref(),
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error.as_deref()
             }
             Self::Output(_) => None,
@@ -755,7 +761,9 @@ impl Node {
     pub(crate) fn set_error(&mut self, message: impl Into<String>) {
         match self {
             Self::Image(node) => node.preview.error = Some(message.into()),
-            Self::RemoveBg(process) | Self::RemoveBgV2(process) | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
+            Self::RemoveBg(process)
+            | Self::RemoveBgV2(process)
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error = Some(message.into());
             }
             Self::Output(_) => {}

@@ -1,8 +1,8 @@
 //! Face restoration node.
 
+use crate::style::controls::{Button, Checkbox, Slider};
 use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
-use crate::style::controls::{Button, Checkbox, Slider};
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;
@@ -39,7 +39,8 @@ pub(crate) fn show_body(
             Slider::new(&mut percent, 0.0..=100.0)
                 .label("Strength")
                 .suffix("%")
-                .decimals(0),
+                .decimals(0)
+                .default(100.0),
         )
         .changed()
     {

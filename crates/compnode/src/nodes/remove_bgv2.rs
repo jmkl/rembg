@@ -1,8 +1,8 @@
 //! Background removal node v2 (uses new RemoveBg library with RMBG-1.4 logic).
 
+use crate::style::controls::Button;
 use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
-use crate::style::controls::Button;
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;

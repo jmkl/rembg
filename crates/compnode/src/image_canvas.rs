@@ -281,6 +281,7 @@ pub struct ImageCanvas {
     gpasteapp: GPasTeApp,
     canvas_win_w: f32,
     guides: Vec<Guide>,
+    keep_aspect_ratio: bool,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -313,6 +314,7 @@ impl ImageCanvas {
             gpasteapp: gpaste_app,
             canvas_win_w: 1200.0,
             guides: Vec::new(),
+            keep_aspect_ratio: true,
         }
     }
 
@@ -690,40 +692,9 @@ impl ImageCanvas {
         egui::Frame::new()
             .inner_margin(Margin::same(SIDEBAR_PADDING as i8))
             .show(ui, |ui| {
-                let top_default = self.top_section_height().min(ui.available_height() * 0.6);
-
-                egui::Panel::top("top_sidebar_panel")
-                    .frame(egui::Frame::new())
-                    .resizable(true)
-                    .default_size(top_default)
-                    .min_size(60.0)
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .scroll_source(egui::scroll_area::ScrollSource {
-                                drag: egui::scroll_area::DragScroll::Never,
-                                ..egui::scroll_area::ScrollSource::ALL
-                            })
-                            .show(ui, |ui| {
-                                let inner_width = ui.available_width();
-                                self.top_section_ui(ui, inner_width);
-                            });
-                    });
-
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::new().inner_margin(Margin {
-                        top: 6,
-                        ..Margin::ZERO
-                    }))
-                    .show(ui, |ui| {
-                        self.gpasteapp.render_ui(ui);
-                    });
+                let inner_width = ui.available_width();
+                self.top_section_ui(ui, inner_width);
             });
-    }
-
-    fn top_section_height(&self) -> f32 {
-        let rows = self.items.len().clamp(2, 4) as f32;
-        30.0 + rows * (ROW_H + 4.0) + SIDEBAR_GAP * 2.0
     }
 
     fn top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
@@ -738,6 +709,119 @@ impl ImageCanvas {
         });
 
         self.layer_list_ui(ui, inner_width);
+        ui.separator();
+        ui.checkbox(&mut self.keep_aspect_ratio, "Keep aspect ratio");
+        let mut size_changed = false;
+        let selected = self.selected;
+        let keep_aspect_ratio = self.keep_aspect_ratio;
+        if let Some(sel) = selected {
+            let selected_indices = self.selection_indices();
+
+            if selected_indices.len() >= 2 {
+                // Multi-selection: show the combined bounding-box dimensions.
+                let (min, max) = self.group_bbox(&selected_indices);
+                let mut width = max.x - min.x;
+                let mut height = max.y - min.y;
+
+                ui.horizontal(|ui| {
+                    ui.label("W");
+                    let width_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .range(MIN_SIZE..=f32::MAX)
+                                .speed(1.0),
+                        )
+                        .changed();
+
+                    ui.label("H");
+                    let height_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut height)
+                                .range(MIN_SIZE..=f32::MAX)
+                                .speed(1.0),
+                        )
+                        .changed();
+
+                    if width_changed || height_changed {
+                        let sx = width / (max.x - min.x).max(1.0);
+                        let sy = height / (max.y - min.y).max(1.0);
+
+                        // Uniform scaling when aspect ratio is enabled.
+                        let (sx, sy) = if keep_aspect_ratio {
+                            let s = if width_changed { sx } else { sy };
+                            (s, s)
+                        } else {
+                            (sx, sy)
+                        };
+
+                        // Anchor at the center of the group for inspector resizing.
+                        let pivot = (min + max) * 0.5;
+                        let selected_ids: HashSet<NodeId> =
+                            selected_indices.iter().map(|&i| self.items[i].id).collect();
+                        for item in &mut self.items {
+                            if selected_ids.contains(&item.id) {
+                                item.center = pivot
+                                    + vec2(
+                                        (item.center.x - pivot.x) * sx,
+                                        (item.center.y - pivot.y) * sy,
+                                    );
+                                item.size = vec2(
+                                    (item.size.x * sx).max(MIN_SIZE),
+                                    (item.size.y * sy).max(MIN_SIZE),
+                                );
+                            }
+                        }
+
+                        size_changed = true;
+                    }
+                });
+            } else if let Some(node) = self.items.iter_mut().find(|item| item.id == sel) {
+                // Single selection: edit the layer dimensions directly.
+                let aspect_ratio = node.size.x / node.size.y;
+                let mut width = node.size.x;
+                let mut height = node.size.y;
+
+                ui.horizontal(|ui| {
+                    ui.label("W");
+                    let width_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .range(MIN_SIZE..=f32::MAX)
+                                .speed(1.0),
+                        )
+                        .changed();
+
+                    ui.label("H");
+                    let height_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut height)
+                                .range(MIN_SIZE..=f32::MAX)
+                                .speed(1.0),
+                        )
+                        .changed();
+
+                    if width_changed || height_changed {
+                        if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
+                            if width_changed && !height_changed {
+                                height = width / aspect_ratio;
+                            } else if height_changed && !width_changed {
+                                width = height * aspect_ratio;
+                            }
+                        }
+
+                        node.size = vec2(width.max(MIN_SIZE), height.max(MIN_SIZE));
+
+                        size_changed = true;
+                    }
+                });
+            }
+        }
+        if size_changed {
+            self.last_activity = Instant::now();
+        }
+
+        ui.separator();
+        self.gpasteapp.render_ui(ui);
     }
 
     // ---------------- selection helpers ----------------
@@ -1067,25 +1151,41 @@ impl ImageCanvas {
                     }
                 }
             }
+
             Drag::GroupScale { sx, sy, min, max } => {
                 let (fx, fy) = (sx as f32, sy as f32);
-                // the opposite corner stays fixed
+
+                // Opposite corner of the group bounding box stays fixed.
                 let anchor = vec2(
                     if sx > 0 { min.x } else { max.x },
                     if sy > 0 { min.y } else { max.y },
                 );
+
                 let (w0, h0) = ((max.x - min.x).max(1.0), (max.y - min.y).max(1.0));
-                let k = (((p.x - anchor.x) * fx) / w0)
-                    .max(((p.y - anchor.y) * fy) / h0)
-                    .max(0.02);
-                for (id, s) in &start {
-                    if let Some(it) = self.items.iter_mut().find(|i| i.id == *id) {
-                        it.center = anchor + (s.center - anchor) * k;
-                        it.size = s.size * k;
-                        it.angle = s.angle;
+
+                // Calculate one uniform scale factor for the entire group.
+                let kx = ((p.x - anchor.x) * fx / w0).max(0.02);
+                let ky = ((p.y - anchor.y) * fy / h0).max(0.02);
+                let k = if sx != 0 && sy != 0 {
+                    kx.max(ky)
+                } else if sx != 0 {
+                    kx
+                } else {
+                    ky
+                };
+
+                for (id, start_snap) in &start {
+                    if let Some(item) = self.items.iter_mut().find(|i| i.id == *id) {
+                        // Scale every layer's position relative to the group anchor.
+                        item.center = anchor + (start_snap.center - anchor) * k;
+
+                        // Scale each layer proportionally.
+                        item.size = start_snap.size * k;
+                        item.angle = start_snap.angle;
                     }
                 }
             }
+
             _ => {}
         }
 

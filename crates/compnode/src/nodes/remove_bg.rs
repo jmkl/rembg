@@ -1,8 +1,8 @@
 //! Background removal node.
 
+use crate::style::controls::Button;
 use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
-use crate::style::controls::Button;
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;

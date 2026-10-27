@@ -117,10 +117,10 @@ impl Settings {
 #[cfg(feature = "gpu")]
 fn try_gpu(src: &RgbaImage, s: &Settings) -> Option<RgbaImage> {
     if (src.width() as u64) * (src.height() as u64) < GPU_MIN_PIXELS {
-        eprintln!("[raw_filter gpu] skipped: image below GPU_MIN_PIXELS");
+        // eprintln!("[raw_filter gpu] skipped: image below GPU_MIN_PIXELS");
         return None;
     }
-    println!("Processing raw filter with gpu");
+    // println!("Processing raw filter with gpu");
     gpu::apply(src, s)
 }
 
@@ -140,11 +140,11 @@ pub(crate) fn raw_filter(src: &RgbaImage, params: &Params) -> RgbaImage {
         Some(out) => (out, "gpu"),
         None => (cpu::apply(src, &settings), "cpu"),
     };
-    eprintln!(
-        "[raw_filter] {backend} {}x{} in {:?}",
-        src.width(),
-        src.height(),
-        t.elapsed()
-    );
+    // eprintln!(
+    //     "[raw_filter] {backend} {}x{} in {:?}",
+    //     src.width(),
+    //     src.height(),
+    //     t.elapsed()
+    // );
     result
 }
