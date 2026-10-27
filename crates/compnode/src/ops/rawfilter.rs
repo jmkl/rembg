@@ -190,34 +190,36 @@ fn noise_reduction(src: &RgbaImage, amount: f32, detail: f32) -> RgbaImage {
 }
 
 pub(crate) fn raw_filter(src: &RgbaImage, params: &Params) -> RgbaImage {
-    let temp = params::f32(params, "temp", 0.0).clamp(-100.0, 100.0);
-    let tint = params::f32(params, "tint", 0.0).clamp(-100.0, 100.0);
-    let texture = params::f32(params, "texture", 0.0).clamp(-100.0, 100.0);
-    let clarity = params::f32(params, "clarity", 0.0).clamp(-100.0, 100.0);
-    let dehaze_amount = params::f32(params, "dehaze", 0.0).clamp(-100.0, 100.0);
-    let sharpen_amount = params::f32(params, "sharpen", 0.0).clamp(0.0, 150.0);
-    let sharpen_radius = params::f32(params, "sharpen_radius", 1.0);
-    let sharpen_detail = params::f32(params, "sharpen_detail", 25.0).clamp(0.0, 100.0);
-    let noise_reduction_amount = params::f32(params, "noise_reduction", 0.0).clamp(0.0, 100.0);
-    let noise_reduction_detail =
-        params::f32(params, "noise_reduction_detail", 50.0).clamp(0.0, 100.0);
-
-    if temp == 0.0
-        && tint == 0.0
-        && texture == 0.0
-        && clarity == 0.0
-        && dehaze_amount == 0.0
-        && sharpen_amount == 0.0
-        && noise_reduction_amount == 0.0
-    {
-        return src.clone();
-    }
-
-    let mut out = noise_reduction(src, noise_reduction_amount, noise_reduction_detail);
-    out = white_balance(&out, temp, tint);
-    out = dehaze(&out, dehaze_amount);
-    out = local_contrast(&out, 1.2, texture / 100.0 * 0.9, 0.0);
-    out = local_contrast(&out, 6.0, clarity / 100.0 * 0.7, 0.6);
-    out = sharpen(&out, sharpen_amount, sharpen_radius, sharpen_detail);
-    out
+    let out = crate::ops::rf::raw_filter(src, params);
+    return out;
+    // let temp = params::f32(params, "temp", 0.0).clamp(-100.0, 100.0);
+    // let tint = params::f32(params, "tint", 0.0).clamp(-100.0, 100.0);
+    // let texture = params::f32(params, "texture", 0.0).clamp(-100.0, 100.0);
+    // let clarity = params::f32(params, "clarity", 0.0).clamp(-100.0, 100.0);
+    // let dehaze_amount = params::f32(params, "dehaze", 0.0).clamp(-100.0, 100.0);
+    // let sharpen_amount = params::f32(params, "sharpen", 0.0).clamp(0.0, 150.0);
+    // let sharpen_radius = params::f32(params, "sharpen_radius", 1.0);
+    // let sharpen_detail = params::f32(params, "sharpen_detail", 25.0).clamp(0.0, 100.0);
+    // let noise_reduction_amount = params::f32(params, "noise_reduction", 0.0).clamp(0.0, 100.0);
+    // let noise_reduction_detail =
+    // params::f32(params, "noise_reduction_detail", 50.0).clamp(0.0, 100.0);
+    //
+    // if temp == 0.0
+    // && tint == 0.0
+    // && texture == 0.0
+    // && clarity == 0.0
+    // && dehaze_amount == 0.0
+    // && sharpen_amount == 0.0
+    // && noise_reduction_amount == 0.0
+    // {
+    // return src.clone();
+    // }
+    //
+    // let mut out = noise_reduction(src, noise_reduction_amount, noise_reduction_detail);
+    // out = white_balance(&out, temp, tint);
+    // out = dehaze(&out, dehaze_amount);
+    // out = local_contrast(&out, 1.2, texture / 100.0 * 0.9, 0.0);
+    // out = local_contrast(&out, 6.0, clarity / 100.0 * 0.7, 0.6);
+    // out = sharpen(&out, sharpen_amount, sharpen_radius, sharpen_detail);
+    // out
 }

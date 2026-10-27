@@ -7,7 +7,7 @@ mod adjust;
 pub(crate) mod composite;
 mod generate;
 mod rawfilter;
-
+mod rf;
 use image::RgbaImage;
 
 use crate::model::FilterKind;

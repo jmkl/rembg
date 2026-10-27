@@ -17,7 +17,7 @@ use eframe::egui::{self, TextureHandle, TextureOptions};
 use image::RgbaImage;
 
 /// Budget for decoded CPU images held by one canvas.
-const CPU_BUDGET: usize = 256 * 1024 * 1024;
+const CPU_BUDGET: usize = 512 * 1024 * 1024;
 /// Longest edge of the GPU texture. Layers are drawn scaled to the canvas, so
 /// uploading the full bitmap of a huge photo is wasteful.
 /// Increased to 4096 to accommodate RemoveBgV2 which removes the max-width clamp.

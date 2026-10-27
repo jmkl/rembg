@@ -519,6 +519,93 @@ fn raw_filter_preserves_alpha_with_every_control_enabled() {
 }
 
 #[test]
+#[ignore = "manual performance benchmark"]
+fn bench_filter_evaluation() {
+    use image::ImageEncoder;
+    use std::time::Instant;
+
+    let full = image::RgbaImage::from_fn(4000, 3000, |x, y| {
+        image::Rgba([
+            (x % 256) as u8,
+            (y % 256) as u8,
+            ((x * y) % 256) as u8,
+            255,
+        ])
+    });
+    let preview = image::imageops::thumbnail(&full, 256, 192);
+
+    let started = Instant::now();
+    let resized = image::imageops::resize(
+        &full,
+        256,
+        192,
+        image::imageops::FilterType::Triangle,
+    );
+    println!("resize 12MP -> 256 with Triangle: {:?}", started.elapsed());
+    drop(resized);
+    let started = Instant::now();
+    let thumb = image::imageops::thumbnail(&full, 256, 192);
+    println!("thumbnail 12MP -> 256: {:?}", started.elapsed());
+    drop(thumb);
+
+    let started = Instant::now();
+    let png = {
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(
+                full.as_raw(),
+                full.width(),
+                full.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        bytes
+    };
+    println!("encode 12MP PNG: {:?} ({} bytes)", started.elapsed(), png.len());
+    let started = Instant::now();
+    let _ = image::load_from_memory(&png).unwrap().to_rgba8();
+    println!("decode 12MP PNG: {:?}", started.elapsed());
+
+    for kind in [
+        FilterKind::Hsv,
+        FilterKind::Curves,
+        FilterKind::Exposure,
+        FilterKind::ColorBalance,
+        FilterKind::GradientMap,
+        FilterKind::Invert,
+        FilterKind::RawFilter,
+    ] {
+        let mut params = kind.defaults();
+        if kind == FilterKind::RawFilter {
+            for (key, value) in [
+                ("temp", 35.0),
+                ("tint", -20.0),
+                ("texture", 50.0),
+                ("clarity", 40.0),
+                ("dehaze", 30.0),
+                ("sharpen", 80.0),
+                ("sharpen_radius", 2.0),
+                ("sharpen_detail", 60.0),
+                ("noise_reduction", 50.0),
+                ("noise_reduction_detail", 40.0),
+            ] {
+                crate::params::set_f32(&mut params, key, value);
+            }
+        }
+
+        let started = Instant::now();
+        let _ = crate::ops::evaluate(kind, &params, &[vec![preview.clone()]], (4000, 3000)).unwrap();
+        let preview_time = started.elapsed();
+
+        let started = Instant::now();
+        let _ = crate::ops::evaluate(kind, &params, &[vec![full.clone()]], (4000, 3000)).unwrap();
+        let full_time = started.elapsed();
+
+        println!("{kind:?}: preview {preview_time:?}, full 12MP {full_time:?}");
+    }
+}
+
+#[test]
 fn borrowed_cache_key_matches_the_owned_variant() {
     let first = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 4]));
     let second = image::RgbaImage::from_pixel(3, 1, image::Rgba([5, 6, 7, 8]));

@@ -31,7 +31,7 @@ pub(crate) fn ensure_output_node(snarl: &mut Snarl<Node>) {
 
 /// Longest edge of the GPU preview texture. Full-resolution pixels stay in
 /// CPU memory for processing; uploading them all would only waste VRAM.
-pub(crate) const PREVIEW_MAX_EDGE: u32 = 200;
+pub(crate) const PREVIEW_MAX_EDGE: u32 = 256;
 
 pub(crate) fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
     let longest = width.max(height);
