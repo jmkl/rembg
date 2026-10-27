@@ -710,7 +710,6 @@ impl ImageCanvas {
 
         self.layer_list_ui(ui, inner_width);
         ui.separator();
-        ui.checkbox(&mut self.keep_aspect_ratio, "Keep aspect ratio");
         let mut size_changed = false;
         let selected = self.selected;
         let keep_aspect_ratio = self.keep_aspect_ratio;
@@ -741,6 +740,7 @@ impl ImageCanvas {
                                 .speed(1.0),
                         )
                         .changed();
+                    ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
 
                     if width_changed || height_changed {
                         let sx = width / (max.x - min.x).max(1.0);
@@ -775,7 +775,12 @@ impl ImageCanvas {
                         size_changed = true;
                     }
                 });
-            } else if let Some(node) = self.items.iter_mut().find(|item| item.id == sel) {
+            } else if let Some(node) = self
+                .items
+                .iter_mut()
+                .filter(|f| f.visible)
+                .find(|item| item.id == sel)
+            {
                 // Single selection: edit the layer dimensions directly.
                 let aspect_ratio = node.size.x / node.size.y;
                 let mut width = node.size.x;
@@ -799,6 +804,7 @@ impl ImageCanvas {
                                 .speed(1.0),
                         )
                         .changed();
+                    ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
 
                     if width_changed || height_changed {
                         if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
