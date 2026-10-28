@@ -866,6 +866,9 @@ impl CompNodeApp {
             self.clear();
             self.set_notice("New graph", false);
         }
+        if actions.duplicate_selected {
+            self.editor.duplicate_selected(&mut self.snarl);
+        }
         if actions.delete_selected {
             self.editor.delete_selected(&mut self.snarl);
         }
@@ -1177,6 +1180,14 @@ impl App for CompNodeApp {
                 && selected_count > 0
             {
                 actions.delete_selected = true;
+            }
+            if !input.modifiers.command
+                && !text_edit_focused
+                && input.modifiers.shift
+                && input.key_pressed(egui::Key::D)
+                && selected_count > 0
+            {
+                actions.duplicate_selected = true;
             }
         });
 

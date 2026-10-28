@@ -25,6 +25,7 @@ pub(crate) struct Actions {
     pub add_url: bool,
     pub insert_input: bool,
     pub paste_clipboard: bool,
+    pub duplicate_selected: bool,
     pub delete_selected: bool,
     pub settings: bool,
     pub toggle_fullscreen: bool,
@@ -190,6 +191,15 @@ fn menus(ui: &mut egui::Ui, actions: &mut Actions, selected: usize, fullscreen: 
     });
 
     ui.menu_button("Edit", |ui| {
+        if item(
+            ui,
+            MenuItem::new("Duplicate selected")
+                .shortcut("Shift+D")
+                .icon(icons::COPY)
+                .enabled(selected > 0),
+        ) {
+            actions.duplicate_selected = true;
+        }
         if item(
             ui,
             MenuItem::new("Delete selected")

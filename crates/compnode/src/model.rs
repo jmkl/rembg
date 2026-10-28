@@ -830,6 +830,21 @@ impl Node {
         }
     }
 
+    /// Drop transient worker/eval state so a duplicated node runs and
+    /// evaluates independently of its source. Preview data is kept.
+    pub(crate) fn reset_transient_state(&mut self) {
+        if let Self::Filter(node) = self {
+            node.job = None;
+            node.render_state = None;
+            node.rendered = None;
+            node.signature = None;
+            return;
+        }
+        if let Some(process) = self.process_mut() {
+            process.job = None;
+        }
+    }
+
     /// Drop computed preview/data after an upstream change. Returns `true` if
     /// the node can have downstream consumers that should also be invalidated.
     pub(crate) fn invalidate_output(&mut self) -> bool {

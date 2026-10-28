@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use egui::{Align2, FontId, Frame, Stroke, vec2};
 use egui_snarl::{
-    InPin, NodeId, OutPin, OutPinId, Snarl,
+    InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
     ui::{
         AnyPins, BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes,
     },
@@ -139,6 +139,68 @@ impl GraphEditor {
             }
         }
         self.assets.retain_used(snarl);
+    }
+
+    /// Duplicate the selected nodes, offset down-right of the originals.
+    /// Wiring between duplicated nodes is preserved, viewer/group layers are
+    /// remapped to duplicated sources, and the duplicates become the new
+    /// selection.
+    pub(crate) fn duplicate_selected(&mut self, snarl: &mut Snarl<Node>) {
+        use std::collections::HashMap;
+
+        const OFFSET: f32 = 24.0;
+        let selected = std::mem::take(&mut self.selected);
+        let mut map: HashMap<NodeId, NodeId> = HashMap::new();
+
+        for node in &selected {
+            let Some(info) = snarl.get_node_info(*node) else {
+                continue;
+            };
+            let mut value = info.value.clone();
+            value.reset_transient_state();
+            let new_id = snarl.insert_node(info.pos + egui::vec2(OFFSET, OFFSET), value);
+            map.insert(*node, new_id);
+        }
+
+        // Keep the collapsed state of the sources.
+        for (old, new) in &map {
+            let open = snarl.get_node_info(*old).map_or(true, |src| src.open);
+            if let Some(dst) = snarl.get_node_info_mut(*new) {
+                dst.open = open;
+            }
+        }
+
+        for (old, new) in &map {
+            // Rewire links whose both ends were duplicated.
+            let inputs = catalog::spec(snarl[*new].kind()).inputs;
+            for input in 0..inputs {
+                let remotes = snarl.in_pin(InPinId { node: *old, input }).remotes.clone();
+                for remote in remotes {
+                    let Some(&remote_new) = map.get(&remote.node) else {
+                        continue;
+                    };
+                    snarl.connect(
+                        OutPinId {
+                            node: remote_new,
+                            output: remote.output,
+                        },
+                        InPinId { node: *new, input },
+                    );
+                }
+            }
+
+            // Viewer and Group layers follow duplicated sources.
+            if let Some(layers) = snarl[*new].layers_mut() {
+                for layer in layers {
+                    if let Some(mapped) = map.get(&layer.source) {
+                        layer.source = *mapped;
+                    }
+                }
+            }
+        }
+
+        self.selected = map.values().copied().collect();
+        self.selected.sort_by_key(|node| node.0);
     }
 
     /// Finish bookkeeping after the Snarl widget has been rendered.
