@@ -204,12 +204,16 @@ impl GraphEditor {
     }
 
     /// Finish bookkeeping after the Snarl widget has been rendered.
+    ///
+    /// Returns `true` when a primary click landed on empty graph space (which
+    /// also clears the node selection), so the caller can dismiss other
+    /// selections such as the sidebar layer list.
     pub(crate) fn finish_frame(
         &mut self,
         ctx: &egui::Context,
         snarl: &Snarl<Node>,
         canvas: &egui::Response,
-    ) {
+    ) -> bool {
         self.selected
             .retain(|node| snarl.get_node_info(*node).is_some());
 
@@ -225,14 +229,15 @@ impl GraphEditor {
 
         // Clicking empty canvas clears the selection unless the user is adding
         // to it with a modifier.
-        if !self.node_pressed
+        let empty_clicked = !self.node_pressed
             && canvas.clicked_by(egui::PointerButton::Primary)
-            && !ctx.input(|input| input.modifiers.shift || input.modifiers.command)
-        {
+            && !ctx.input(|input| input.modifiers.shift || input.modifiers.command);
+        if empty_clicked {
             self.selected.clear();
         }
 
         self.node_pressed = false;
+        empty_clicked
     }
 
     fn update_selection(&mut self, node: NodeId, modifiers: egui::Modifiers) {

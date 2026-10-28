@@ -1296,7 +1296,12 @@ impl App for CompNodeApp {
             )
         });
         let snarl_response = central.inner;
-        self.editor.finish_frame(&ctx, &self.snarl, &snarl_response);
+        let graph_background_clicked = self.editor.finish_frame(&ctx, &self.snarl, &snarl_response);
+        if graph_background_clicked {
+            // Match the graph's node deselection: clicking empty graph space
+            // also dismisses the sidebar layer selection and its canvas gizmos.
+            self.image_canvas.clear_selection();
+        }
 
         // Build the graph menu ourselves instead of using Snarl's
         // `show_graph_menu`: the stock context menu uses
