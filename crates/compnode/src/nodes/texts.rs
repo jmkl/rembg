@@ -60,8 +60,15 @@ fn param_slider(
     }
     changed
 }
+const DEFAULT_COLORS: [Color32; 5] = [
+    Color32::WHITE,
+    Color32::BLACK,
+    Color32::RED,
+    Color32::GREEN,
+    Color32::YELLOW,
+];
+const DEFAULT_TEXT_COLORS: [Color32; 3] = [Color32::WHITE, Color32::RED, Color32::YELLOW];
 
-/// One color swatch bound to a "#rrggbb" string param.
 fn param_color(ui: &mut Ui, params: &mut Params, key: &str, label: &str, default: Color32) -> bool {
     let mut color = hex_to_color(params::string(params, key, ""), default);
     let mut changed = false;
@@ -71,16 +78,47 @@ fn param_color(ui: &mut Ui, params: &mut Params, key: &str, label: &str, default
                 .size(font::SMALL)
                 .color(pal::TEXT),
         );
-        changed = egui::color_picker::color_edit_button_srgba(
+        for &preset in &DEFAULT_COLORS {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+
+            if ui.is_rect_visible(rect) {
+                ui.painter().rect_filled(rect, 3.0, preset);
+
+                if color == preset {
+                    ui.painter().rect_stroke(
+                        rect.expand(1.0),
+                        3.0,
+                        egui::Stroke::new(2.0, ui.visuals().text_color()),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+
+            if response.clicked() {
+                color = preset;
+                changed = true;
+            }
+
+            response.on_hover_text(format!(
+                "#{:02X}{:02X}{:02X}",
+                preset.r(),
+                preset.g(),
+                preset.b()
+            ));
+        }
+        changed |= egui::color_picker::color_edit_button_srgba(
             ui,
             &mut color,
             egui::color_picker::Alpha::Opaque,
         )
         .changed();
     });
+
     if changed {
         params::set_string(params, key, color_to_hex(color));
     }
+
     changed
 }
 
@@ -115,7 +153,7 @@ pub(crate) fn show_body(
         let params = &mut filter.params;
 
         // Font family (hardcoded list until custom font loading lands).
-        let mut font_id = params::string(params, "font", "inter").to_owned();
+        let mut font_id = params::string(params, "font", "unisans").to_owned();
         if ui
             .add(
                 Select::new("texts-font", &mut font_id)
@@ -127,44 +165,36 @@ pub(crate) fn show_body(
             params::set_string(params, "font", font_id);
             changed = true;
         }
-
-        // Vertical gap between stacked rows (may be negative: rows overlap).
-        let mut line_gap = params::f32(params, "line_gap", 0.0);
-        if ui
-            .add(
-                Slider::new(&mut line_gap, -100.0..=200.0)
-                    .label("Line gap")
-                    .suffix(" px")
-                    .step(1.0)
-                    .decimals(0)
-                    .default(0.0),
-            )
-            .changed()
-        {
-            params::set_f32(params, "line_gap", line_gap);
-            changed = true;
-        }
-
-        // Extra space between characters (negative pulls them together).
-        let mut letter_spacing = params::f32(params, "letter_spacing", 0.0);
-        if ui
-            .add(
-                Slider::new(&mut letter_spacing, -50.0..=200.0)
-                    .label("Letter spacing")
-                    .suffix(" px")
-                    .step(1.0)
-                    .decimals(0)
-                    .default(0.0),
-            )
-            .changed()
-        {
-            params::set_f32(params, "letter_spacing", letter_spacing);
-            changed = true;
-        }
+        egui::CollapsingHeader::new("Letter Gap & Spacing")
+            .default_open(false)
+            .show(ui, |ui| {
+                changed |= param_slider(
+                    ui,
+                    params,
+                    "line_gap",
+                    "Line gap",
+                    -100.0..=200.0,
+                    -16.0,
+                    " px",
+                    1.0,
+                    0,
+                );
+                changed |= param_slider(
+                    ui,
+                    params,
+                    "letter_spacing",
+                    "Letter spacing",
+                    -50.0..=200.0,
+                    -2.0,
+                    " px",
+                    1.0,
+                    0,
+                );
+            });
 
         // Outlines: the wider one is always drawn outermost.
         egui::CollapsingHeader::new("Outline")
-            .default_open(true)
+            .default_open(false)
             .show(ui, |ui| {
                 changed |= param_slider(
                     ui,
@@ -181,7 +211,7 @@ pub(crate) fn show_body(
                     ui,
                     params,
                     "outline_color",
-                    "Outline 1 color",
+                    "Outline#1 color",
                     Color32::BLACK,
                 );
                 changed |= param_slider(
@@ -199,7 +229,7 @@ pub(crate) fn show_body(
                     ui,
                     params,
                     "outline2_color",
-                    "Outline 2 color",
+                    "Outline#2 color",
                     Color32::WHITE,
                 );
             });
@@ -287,17 +317,6 @@ pub(crate) fn show_body(
             });
         ui.add_space(6.0);
 
-        //outline_width
-        //outline_color
-        //outline2_width
-        //outline2_color
-        //shadow_opacity
-        //shadow_color
-        //shadow_x
-        //shadow_y
-        //shadow_blur
-        //depth
-
         // Multiline content; every non-empty line becomes one stacked row.
         let mut text = params::string(params, "text", "").to_owned();
         if ui
@@ -317,25 +336,30 @@ pub(crate) fn show_body(
         let lines = texts::split_lines(&text);
         let mut styles = texts::read_styles(params);
         let mut rows_changed = false;
-        for (index, line) in lines.iter().enumerate() {
-            while styles.len() <= index {
-                styles.push(LineStyle::default());
-            }
-            let row_width = ui.available_width();
-            let label_width = (row_width - 96.0).max(24.0);
-            ui.push_id(index, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        vec2(label_width, 18.0),
-                        egui::Label::new(
-                            egui::RichText::new(*line)
-                                .size(font::SMALL)
-                                .color(pal::TEXT),
-                        )
-                        .truncate(),
-                    );
+        egui::Grid::new("text_line_styles")
+            .num_columns(3)
+            .spacing(vec2(8.0, 4.0))
+            .show(ui, |ui| {
+                for (index, line) in lines.iter().enumerate() {
+                    while styles.len() <= index {
+                        styles.push(LineStyle::default());
+                    }
+
+                    ui.push_id(index, |ui| {
+                        ui.add_sized(
+                            vec2(ui.available_width(), 18.0),
+                            egui::Label::new(
+                                egui::RichText::new(*line)
+                                    .size(font::SMALL)
+                                    .color(pal::TEXT),
+                            )
+                            .truncate(),
+                        );
+                    });
+
                     let style = &mut styles[index];
                     let mut size = style.size;
+
                     if ui
                         .add(
                             egui::DragValue::new(&mut size)
@@ -348,20 +372,53 @@ pub(crate) fn show_body(
                         style.size = size;
                         rows_changed = true;
                     }
+
                     let mut color =
                         Color32::from_rgb(style.color[0], style.color[1], style.color[2]);
-                    let swatch = egui::color_picker::color_edit_button_srgba(
+                    for &preset in &DEFAULT_TEXT_COLORS {
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().rect_filled(rect, 3.0, preset);
+
+                            if color == preset {
+                                ui.painter().rect_stroke(
+                                    rect.expand(1.0),
+                                    3.0,
+                                    egui::Stroke::new(2.0, ui.visuals().text_color()),
+                                    egui::StrokeKind::Outside,
+                                );
+                            }
+                        }
+
+                        if response.clicked() {
+                            color = preset;
+                            style.color = [color.r(), color.g(), color.b()];
+                            rows_changed = true;
+                        }
+
+                        response.on_hover_text(format!(
+                            "#{:02X}{:02X}{:02X}",
+                            preset.r(),
+                            preset.g(),
+                            preset.b()
+                        ));
+                    }
+                    if egui::color_picker::color_edit_button_srgba(
                         ui,
                         &mut color,
                         egui::color_picker::Alpha::Opaque,
-                    );
-                    if swatch.changed() {
+                    )
+                    .changed()
+                    {
                         style.color = [color.r(), color.g(), color.b()];
                         rows_changed = true;
                     }
-                });
+
+                    ui.end_row();
+                }
             });
-        }
         if rows_changed {
             styles.truncate(lines.len());
             texts::write_styles(params, &styles);

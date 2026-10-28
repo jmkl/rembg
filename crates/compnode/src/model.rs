@@ -166,20 +166,23 @@ impl FilterKind {
                 params::set_f32(&mut params, "noise_reduction_detail", 50.0);
             }
             Self::Texts => {
-                params::set_string(&mut params, "font", "inter");
-                params::set_f32(&mut params, "line_gap", 0.0);
-                params::set_f32(&mut params, "letter_spacing", 0.0);
-                params::set_f32(&mut params, "outline_width", 1.0);
-                params::set_f32(&mut params, "outline_color", 0.0);
-                params::set_f32(&mut params, "outline2_width", 0.0);
-                params::set_f32(&mut params, "outline2_color", 0.0);
-                params::set_f32(&mut params, "shadow_opacity", 0.0);
-                params::set_f32(&mut params, "shadow_color", 0.0);
-                params::set_f32(&mut params, "shadow_x", 0.0);
-                params::set_f32(&mut params, "shadow_y", 0.0);
-                params::set_f32(&mut params, "shadow_blur", 0.0);
-                params::set_f32(&mut params, "depth", 8.0);
-                params::set_string(&mut params, "text", "Text");
+                params::set_string(&mut params, "font", "unisans");
+                params::set_f32(&mut params, "line_gap", -16.0);
+                params::set_f32(&mut params, "letter_spacing", -2.0);
+                params::set_f32(&mut params, "outline_width", 0.0);
+                params::set_string(&mut params, "outline_color", "#ffffff");
+                params::set_f32(&mut params, "outline2_width", 12.0);
+                params::set_string(&mut params, "outline2_color", "#000000");
+                params::set_f32(&mut params, "depth", 7.0);
+                params::set_f32(&mut params, "depth_color", 8.0);
+                params::set_f32(&mut params, "depth_x", 1.0);
+                params::set_f32(&mut params, "depth_y", 1.0);
+                params::set_f32(&mut params, "shadow_opacity", 0.5);
+                params::set_string(&mut params, "shadow_color", "#000000");
+                params::set_f32(&mut params, "shadow_x", 10.0);
+                params::set_f32(&mut params, "shadow_y", 10.0);
+                params::set_f32(&mut params, "shadow_blur", 10.0);
+                params::set_string(&mut params, "text", "Hello world,\nThis is the end!");
             }
         }
         params

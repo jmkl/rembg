@@ -11,11 +11,8 @@ use crate::{
     params::{self, Params},
 };
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
+use image::Rgba;
 use image::RgbaImage;
-use image::{
-    Rgba,
-    imageops::{self, FilterType},
-};
 use serde_json::Value;
 
 /// Hardcoded font families until custom font loading lands: `(params id,
@@ -27,7 +24,7 @@ const FAMILIES: &[(&str, &str, &[u8])] = &[
         include_bytes!("../../assets/fonts/Uni Sans Heavy Italic.otf"),
     ),
     (
-        "uninsans",
+        "unisans",
         "Unisans",
         include_bytes!("../../assets/fonts/Uni Sans Heavy.otf"),
     ),

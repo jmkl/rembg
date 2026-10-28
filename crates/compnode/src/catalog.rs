@@ -1039,7 +1039,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         accent: pal::node_header::SAND,
         inputs: 0,
         outputs: 1,
-        body_width: NODE_W,
+        body_width: NODE_W * 1.5,
         multi_input: false,
         hidden: false,
         fields: NO_FIELDS,

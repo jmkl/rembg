@@ -45,6 +45,7 @@ rembg/                      (repo root, Cargo workspace)
 ```
 
 Path conventions (user-visible, do not change casually):
+
 - Result cache: `%LOCALAPPDATA%\rembg\studio-cache`
 - Autosave: `%LOCALAPPDATA%\rembg\studio-autosave.rembg.json`
 - Settings: `%LOCALAPPDATA%\rembg\compnode-settings.json`
@@ -59,7 +60,7 @@ Three execution domains:
 1. **UI thread (every frame)**
    `app.rs` drives eframe → `editor.rs` (SnarlViewer) renders the graph from
    `Snarl<Node>` (the single source of truth, `model.rs` data types).
-   `eval.rs::ensure_all` re-evaluates every filter node whose *signature*
+   `eval.rs::ensure_all` re-evaluates every filter node whose _signature_
    (hash of upstream outputs + params + canvas size) changed, at
    **256 px** eval resolution (`ops::EVAL_MAX_EDGE`), and uploads preview
    textures. Node-body thumbnails are capped at **200 px** (`graph::PREVIEW_MAX_EDGE`).
@@ -89,15 +90,15 @@ file instead of the unfiltered upstream image.
 
 ### Image size caps (memorize these)
 
-| Stage | Cap | Where |
-|---|---|---|
-| Filter preview evaluation | 256 px longest edge | `ops::EVAL_MAX_EDGE` |
-| Node-body thumbnails | 200 px | `graph::PREVIEW_MAX_EDGE` |
-| Output-canvas textures / layer cache | 4096 px | `layer_cache::TEXTURE_MAX_EDGE` |
-| Layer-cache CPU budget | 256 MiB | `layer_cache::CPU_BUDGET` |
-| Full-res CPU images, graph-wide LRU | 512 MiB | `memory::DEFAULT_LIMIT` |
-| Full-res processing | uncapped (12 MP benchmarked) | `worker.rs` |
-| Settings canvas drag range | 64…8192 | `settings_window.rs` |
+| Stage                                | Cap                          | Where                           |
+| ------------------------------------ | ---------------------------- | ------------------------------- |
+| Filter preview evaluation            | 256 px longest edge          | `ops::EVAL_MAX_EDGE`            |
+| Node-body thumbnails                 | 200 px                       | `graph::PREVIEW_MAX_EDGE`       |
+| Output-canvas textures / layer cache | 4096 px                      | `layer_cache::TEXTURE_MAX_EDGE` |
+| Layer-cache CPU budget               | 256 MiB                      | `layer_cache::CPU_BUDGET`       |
+| Full-res CPU images, graph-wide LRU  | 512 MiB                      | `memory::DEFAULT_LIMIT`         |
+| Full-res processing                  | uncapped (12 MP benchmarked) | `worker.rs`                     |
+| Settings canvas drag range           | 64…8192                      | `settings_window.rs`            |
 
 `memory.rs` releases LRU full-res images that still have a reloadable path
 (`Node::can_reload_image`); preview textures survive release.
@@ -106,34 +107,34 @@ file instead of the unfiltered upstream image.
 
 ## 4. Module map (`src/`)
 
-| Module | Responsibility |
-|---|---|
-| `main.rs`, `lib.rs` | binary entry; crate doc-comment map |
-| `app.rs` | eframe app shell: window, menus, shortcuts (Ctrl+O/N/S/, V, F11, Delete), autosave, `ensure_all`/`poll_*` pumps |
-| `editor.rs` | `SnarlViewer` impl, app-level selection (see §7), chevrons, node menu, full-res render scheduling, `filter_input` |
-| `catalog.rs` | **THE node registry** — `NODE_SPECS: &[NodeSpec]`; menu, header accents, socket counts, body dispatch all derive from it |
-| `model.rs` | `Kind`, `FilterKind` (+`defaults()`), `Node` enum, `Preview`/`Process`/`FilterNode`/`ViewerLayer`, accessors, `finish_job`, `invalidate_output` |
-| `graph.rs` | connect/disconnect, `invalidate_node`, image loading, preview textures, viewer refresh |
-| `eval.rs` | per-frame filter evaluation, signature hashing, `resolve_inputs`/`resolve_image`, `canvas_size` |
-| `memory.rs` | 512 MiB full-res CPU LRU budget + reload decisions |
-| `layer_cache.rs` | per-canvas decoded-layer cache (4096 px textures, background decode) |
-| `image_canvas.rs` | self-contained layer canvas widget: gizmos (move/scale/rotate, marquee, multi-select), mirrors viewer layers |
-| `nodes/` | one body-UI module per node kind: `image, remove_bg, remove_bgv2, face_restore, output, route, filter` (generic body for all Filter kinds) |
-| `ops/` | pure CPU image ops behind filters: `adjust` (hsv/curves/exposure/color_balance/gradient_map/invert), `composite` (stack/blend/mask), `generate` (gradient/noise), `rawfilter` (dispatch → `rf`), `rf/` (raw develop: `cpu` rayon backend + `gpu` wgpu WGSL behind `gpu` cargo feature, ≥512² px) |
-| `params.rs` | untyped `Params = serde_json::Map` bag + typed getters with defaults (mirrors frontend `Record<string,any>`) |
-| `session.rs` | session JSON schema, save/load/restore, unique filenames (` (2)`, ` (3)`…) |
-| `cache.rs` | content-addressed output cache under `%LOCALAPPDATA%\rembg\studio-cache`; `cache_key*` SHA-256 helpers |
-| `assets.rs` | content-addressed source assets, base64-embedded in sessions |
-| `worker.rs` | inference thread, model residency policy (keep in memory vs per-run load), PNG cache writes |
-| `settings.rs`, `settings_window.rs` | persisted settings + its window |
-| `title_bar.rs` | custom undecorated title bar + menus |
-| `graph_menu.rs` | filterable right-click "add node" menu (catalog-driven) |
-| `widgets.rs` | reusable preview/socket/error/timing widgets |
-| `gpaste_app.rs` | clipboard image paste (arboard + gpaste protocol) |
-| `style/` | `palette.rs` (every colour), `icons.rs` (icon font), `controls.rs` (widget kit: Button, Slider, Checkbox, Select, ColorField…), `mod.rs` (metrics/theme), `tests.rs` (headless widget tests) |
-| `tests.rs` | crate-level headless tests + (temporarily) an ignored release benchmark |
-| `examples/blank.rs` | minimal egui-snarl demo, not part of the app |
-| `assets/fonts/` | Inter, Roboto Condensed, Plus Jakarta Sans, Symbols/Lucide |
+| Module                              | Responsibility                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `main.rs`, `lib.rs`                 | binary entry; crate doc-comment map                                                                                                                                                                                                                                                              |
+| `app.rs`                            | eframe app shell: window, menus, shortcuts (Ctrl+O/N/S/, V, F11, Delete), autosave, `ensure_all`/`poll_*` pumps                                                                                                                                                                                  |
+| `editor.rs`                         | `SnarlViewer` impl, app-level selection (see §7), chevrons, node menu, full-res render scheduling, `filter_input`                                                                                                                                                                                |
+| `catalog.rs`                        | **THE node registry** — `NODE_SPECS: &[NodeSpec]`; menu, header accents, socket counts, body dispatch all derive from it                                                                                                                                                                         |
+| `model.rs`                          | `Kind`, `FilterKind` (+`defaults()`), `Node` enum, `Preview`/`Process`/`FilterNode`/`ViewerLayer`, accessors, `finish_job`, `invalidate_output`                                                                                                                                                  |
+| `graph.rs`                          | connect/disconnect, `invalidate_node`, image loading, preview textures, viewer refresh                                                                                                                                                                                                           |
+| `eval.rs`                           | per-frame filter evaluation, signature hashing, `resolve_inputs`/`resolve_image`, `canvas_size`                                                                                                                                                                                                  |
+| `memory.rs`                         | 512 MiB full-res CPU LRU budget + reload decisions                                                                                                                                                                                                                                               |
+| `layer_cache.rs`                    | per-canvas decoded-layer cache (4096 px textures, background decode)                                                                                                                                                                                                                             |
+| `image_canvas.rs`                   | self-contained layer canvas widget: gizmos (move/scale/rotate, marquee, multi-select), mirrors viewer layers                                                                                                                                                                                     |
+| `nodes/`                            | one body-UI module per node kind: `image, remove_bg, remove_bgv2, face_restore, output, route, filter` (generic body for all Filter kinds)                                                                                                                                                       |
+| `ops/`                              | pure CPU image ops behind filters: `adjust` (hsv/curves/exposure/color_balance/gradient_map/invert), `composite` (stack/blend/mask), `generate` (gradient/noise), `rawfilter` (dispatch → `rf`), `rf/` (raw develop: `cpu` rayon backend + `gpu` wgpu WGSL behind `gpu` cargo feature, ≥512² px) |
+| `params.rs`                         | untyped `Params = serde_json::Map` bag + typed getters with defaults (mirrors frontend `Record<string,any>`)                                                                                                                                                                                     |
+| `session.rs`                        | session JSON schema, save/load/restore, unique filenames (` (2)`, ` (3)`…)                                                                                                                                                                                                                       |
+| `cache.rs`                          | content-addressed output cache under `%LOCALAPPDATA%\rembg\studio-cache`; `cache_key*` SHA-256 helpers                                                                                                                                                                                           |
+| `assets.rs`                         | content-addressed source assets, base64-embedded in sessions                                                                                                                                                                                                                                     |
+| `worker.rs`                         | inference thread, model residency policy (keep in memory vs per-run load), PNG cache writes                                                                                                                                                                                                      |
+| `settings.rs`, `settings_window.rs` | persisted settings + its window                                                                                                                                                                                                                                                                  |
+| `title_bar.rs`                      | custom undecorated title bar + menus                                                                                                                                                                                                                                                             |
+| `graph_menu.rs`                     | filterable right-click "add node" menu (catalog-driven)                                                                                                                                                                                                                                          |
+| `widgets.rs`                        | reusable preview/socket/error/timing widgets                                                                                                                                                                                                                                                     |
+| `gpaste_app.rs`                     | clipboard image paste (arboard + gpaste protocol)                                                                                                                                                                                                                                                |
+| `style/`                            | `palette.rs` (every colour), `icons.rs` (icon font), `controls.rs` (widget kit: Button, Slider, Checkbox, Select, ColorField…), `mod.rs` (metrics/theme), `tests.rs` (headless widget tests)                                                                                                     |
+| `tests.rs`                          | crate-level headless tests + (temporarily) an ignored release benchmark                                                                                                                                                                                                                          |
+| `examples/blank.rs`                 | minimal egui-snarl demo, not part of the app                                                                                                                                                                                                                                                     |
+| `assets/fonts/`                     | Inter, Roboto Condensed, Plus Jakarta Sans, Symbols/Lucide                                                                                                                                                                                                                                       |
 
 ---
 
@@ -143,34 +144,37 @@ Single source of truth: `catalog.rs::NODE_SPECS`. Filters share `nodes/filter.rs
 for their body; UI is generated from `FieldSpec`s.
 
 ### Sources & viewers
-| Node | Kind | In→Out | Notes |
-|---|---|---|---|
-| **Image** | `Kind::Image` | 1→1 | Loads a source file as a content-addressed asset; pass-through (its output path is the source file). Hidden fields. |
-| **Output** | `Kind::Output` | *multi*→0 | Layer viewer canvas (hidden from the add menu; created per graph). Layers get transforms; feeds `image_canvas.rs`. |
+
+| Node       | Kind           | In→Out    | Notes                                                                                                               |
+| ---------- | -------------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Image**  | `Kind::Image`  | 1→1       | Loads a source file as a content-addressed asset; pass-through (its output path is the source file). Hidden fields. |
+| **Output** | `Kind::Output` | *multi*→0 | Layer viewer canvas (hidden from the add menu; created per graph). Layers get transforms; feeds `image_canvas.rs`.  |
 
 ### Inference nodes (background worker, ONNX)
-| Node | Kind | In→Out | Params |
-|---|---|---|---|
-| **Remove Background** | `Kind::RemoveBg` | 1→1 | none (BiRefNet) |
-| **Remove Background (v2)** | `Kind::RemoveBgV2` | 1→1 | none (RMBG-1.4 logic, no width clamp) |
-| **Face Restore** | `Kind::FaceRestore` | 1→1 | `strength` (default 100 %), `only_center` bool (GFPGAN + SCRFD face detect) |
+
+| Node                       | Kind                | In→Out | Params                                                                      |
+| -------------------------- | ------------------- | ------ | --------------------------------------------------------------------------- |
+| **Remove Background**      | `Kind::RemoveBg`    | 1→1    | none (BiRefNet)                                                             |
+| **Remove Background (v2)** | `Kind::RemoveBgV2`  | 1→1    | none (RMBG-1.4 logic, no width clamp)                                       |
+| **Face Restore**           | `Kind::FaceRestore` | 1→1    | `strength` (default 100 %), `only_center` bool (GFPGAN + SCRFD face detect) |
 
 ### CPU filters (`FilterKind`, params bag keyed as below)
-| Node | id (session) | In→Out | Fields (key: default, range) |
-|---|---|---|---|
-| **Route** | `route` | 1→1 | none (pass-through, narrow body `NODE_W_S`) |
-| **Group** | `mix` ⚠ | *multi*→1 | none; stacks inputs bottom-up like a viewer; has layers + canvas size + full-res `Composite` render |
-| **Blend** | `blend` | 2→1 | `mode`: 17 blend modes (default `source-over`), `opacity`: 100 % (0–100) |
-| **Mask** | `mask` | 2→1 | `invert`: `dark`\|`light` (default dark), `strength`: 100 % (0–100) |
-| **Hue / Saturation** | `hsv` | 1→1 | `hue`: 0° (0–360), `sat`: 100 % (0–200), `val`: 100 % (0–200) |
-| **Curves** | `curves` | 1→1 | `channel`: rgb/red/green/blue + interactive per-channel LUT curve editor (custom body) |
-| **Exposure** | `exposure` | 1→1 | `ev`: 0 (−5…5, step .1), `offset`: 0 (−50…50), `gamma`: 1.0 (0.1…3) |
-| **Color Balance** | `colorbalance` | 1→1 | `range`: shadows/midtones/highlights (default midtones), `cyanRed`/`magentaGreen`/`yellowBlue`: 0 (−100…100), `preserve` luma: yes/no |
-| **Gradient Map** | `gradientmap` | 1→1 | `color1/2/3`: #000000/#808080/#ffffff, `midpoint`: 50 %, `reverse`: no |
-| **Invert** | `invert` | 1→1 | `amount`: 100 % (0–100) |
-| **Raw Filter** | `rawfilter` (alias `raw`) | 1→1 | `temp` 0, `tint` 0, `texture` 0, `clarity` 0, `dehaze` 0 (all −100…100), `sharpen` 0 (0–150), `sharpen_radius` 1.0 (0.5–3.0, step .1), `sharpen_detail` 25 (0–100), `noise_reduction` 0 (0–100), `noise_reduction_detail` 50 (0–100) |
-| **Gradient** | `gradient` | 0→1 (generator) | `mode`: linear/radial/solid (default linear), `color1/2`: #000000/#ffffff, `angle`: 90°, `color1Position`: −200 %, `color2Position`: 200 %, `width`: 1280 (100–2000), `height`: 720 (100–2000) |
-| **Noise** | `noise` | 0→1 (generator) | `kind`: fbm/multifractal/ridged (default fbm), `scale` 5 (0.1–50), `detail` 4 (1–8), `roughness` 0.5 (0–1), `lacunarity` 2 (1–10), `distortion` 0 (0–10), `seed` 0 (0–10000) |
+
+| Node                 | id (session)              | In→Out          | Fields (key: default, range)                                                                                                                                                                                                         |
+| -------------------- | ------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Route**            | `route`                   | 1→1             | none (pass-through, narrow body `NODE_W_S`)                                                                                                                                                                                          |
+| **Group**            | `mix` ⚠                   | *multi*→1       | none; stacks inputs bottom-up like a viewer; has layers + canvas size + full-res `Composite` render                                                                                                                                  |
+| **Blend**            | `blend`                   | 2→1             | `mode`: 17 blend modes (default `source-over`), `opacity`: 100 % (0–100)                                                                                                                                                             |
+| **Mask**             | `mask`                    | 2→1             | `invert`: `dark`\|`light` (default dark), `strength`: 100 % (0–100)                                                                                                                                                                  |
+| **Hue / Saturation** | `hsv`                     | 1→1             | `hue`: 0° (0–360), `sat`: 100 % (0–200), `val`: 100 % (0–200)                                                                                                                                                                        |
+| **Curves**           | `curves`                  | 1→1             | `channel`: rgb/red/green/blue + interactive per-channel LUT curve editor (custom body)                                                                                                                                               |
+| **Exposure**         | `exposure`                | 1→1             | `ev`: 0 (−5…5, step .1), `offset`: 0 (−50…50), `gamma`: 1.0 (0.1…3)                                                                                                                                                                  |
+| **Color Balance**    | `colorbalance`            | 1→1             | `range`: shadows/midtones/highlights (default midtones), `cyanRed`/`magentaGreen`/`yellowBlue`: 0 (−100…100), `preserve` luma: yes/no                                                                                                |
+| **Gradient Map**     | `gradientmap`             | 1→1             | `color1/2/3`: #000000/#808080/#ffffff, `midpoint`: 50 %, `reverse`: no                                                                                                                                                               |
+| **Invert**           | `invert`                  | 1→1             | `amount`: 100 % (0–100)                                                                                                                                                                                                              |
+| **Raw Filter**       | `rawfilter` (alias `raw`) | 1→1             | `temp` 0, `tint` 0, `texture` 0, `clarity` 0, `dehaze` 0 (all −100…100), `sharpen` 0 (0–150), `sharpen_radius` 1.0 (0.5–3.0, step .1), `sharpen_detail` 25 (0–100), `noise_reduction` 0 (0–100), `noise_reduction_detail` 50 (0–100) |
+| **Gradient**         | `gradient`                | 0→1 (generator) | `mode`: linear/radial/solid (default linear), `color1/2`: #000000/#ffffff, `angle`: 90°, `color1Position`: −200 %, `color2Position`: 200 %, `width`: 1280 (100–2000), `height`: 720 (100–2000)                                       |
+| **Noise**            | `noise`                   | 0→1 (generator) | `kind`: fbm/multifractal/ridged (default fbm), `scale` 5 (0.1–50), `detail` 4 (1–8), `roughness` 0.5 (0–1), `lacunarity` 2 (1–10), `distortion` 0 (0–10), `seed` 0 (0–10000)                                                         |
 
 ⚠ `Group`'s session id is `"mix"` for legacy parity — `from_id` also accepts
 `"group"`. RawFilter accepts `"rawfilter"`/`"raw"`.
@@ -180,6 +184,7 @@ Defaults live in **one place**: `FilterKind::defaults()` (`model.rs`), mirroring
 sliders' double-click-to-reset.
 
 ### Pipeline order inside Raw Filter
+
 noise reduction → white balance → dehaze → texture → clarity → sharpen;
 alpha preserved. Dispatch: `ops::evaluate` → `ops/rawfilter.rs::raw_filter` →
 `ops/rf::raw_filter` (rayon CPU backend; optional wgpu GPU backend behind the
@@ -192,6 +197,7 @@ alpha preserved. Dispatch: `ops::evaluate` → `ops/rawfilter.rs::raw_filter` �
 ## 6. Recipes
 
 ### Adding a node (the canonical checklist, from the README + model.rs docs)
+
 1. `Kind` variant (+`FilterKind` variant + `id()`/`from_id()`/`defaults()`) in `model.rs`, and a `Node` variant (reuse `Process` if it's an inference node).
 2. Add `src/nodes/<name>.rs` with `create` + `show_body`.
 3. Register in `catalog.rs::NODE_SPECS` (menu/title/accent/sockets/width/body dispatch come from this entry — no central `match` to touch for menu or body).
@@ -200,6 +206,7 @@ alpha preserved. Dispatch: `ops::evaluate` → `ops/rawfilter.rs::raw_filter` �
 6. Filter ops go in `ops/` as pure pixel functions; `ops::evaluate` dispatches.
 
 ### Checks
+
 ```sh
 cargo fmt -p compnode
 cargo clippy -p compnode --all-targets -- -D warnings
@@ -274,20 +281,3 @@ nodes through the catalog checklist, keep defaults in `FilterKind::defaults()`,
 keep the UI thread free of full-resolution decodes, and read `task2710.md`
 before touching `model.rs`, `eval.rs`, `ops/rawfilter.rs`, or `session.rs` —
 that work is actively in progress.
-
-
-
-                params::set_string(&mut params, "font", "inter");
-                params::set_f32(&mut params, "line_gap", 0.0);
-                params::set_f32(&mut params, "letter_spacing", 0.0);
-                params::set_f32(&mut params, "outline_width", 0.0);
-                params::set_f32(&mut params, "outline_color", 0.0);
-                params::set_f32(&mut params, "outline2_width", 0.0);
-                params::set_f32(&mut params, "outline2_color", 0.0);
-                params::set_f32(&mut params, "shadow_opacity", 0.0);
-                params::set_f32(&mut params, "shadow_color", 0.0);
-                params::set_f32(&mut params, "shadow_x", 0.0);
-                params::set_f32(&mut params, "shadow_y", 0.0);
-                params::set_f32(&mut params, "shadow_blur", 0.0);
-                params::set_f32(&mut params, "depth", 64.0);
-                params::set_string(&mut params, "text", "Text");
