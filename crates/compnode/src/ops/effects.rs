@@ -136,19 +136,28 @@ fn color_param(params: &Params, key: &str, default: [f32; 3]) -> [f32; 3] {
 }
 
 pub(crate) fn read_fx(params: &Params) -> Fx {
+    // One switch turns the whole decorative stack off without losing the
+    // individual widths/opacities, so toggling back on restores them.
+    let enabled = params::bool(params, "effects", true);
     let mut strokes = Vec::new();
-    for (wk, ck, dc) in [
-        ("outline_width", "outline_color", [0.0; 3]),
-        ("outline2_width", "outline2_color", [1.0; 3]),
-    ] {
-        let w = params::f32(params, wk, 0.0).clamp(0.0, 128.0);
-        if w > 0.0 {
-            strokes.push((w, color_param(params, ck, dc)));
+    if enabled {
+        for (wk, ck, dc) in [
+            ("outline_width", "outline_color", [0.0; 3]),
+            ("outline2_width", "outline2_color", [1.0; 3]),
+        ] {
+            let w = params::f32(params, wk, 0.0).clamp(0.0, 128.0);
+            if w > 0.0 {
+                strokes.push((w, color_param(params, ck, dc)));
+            }
         }
+        strokes.sort_by(|a, b| b.0.total_cmp(&a.0));
     }
-    strokes.sort_by(|a, b| b.0.total_cmp(&a.0));
 
-    let shadow_opacity = params::f32(params, "shadow_opacity", 0.0).clamp(0.0, 1.0);
+    let shadow_opacity = if enabled {
+        params::f32(params, "shadow_opacity", 0.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let shadow = (shadow_opacity > 0.0).then(|| ShadowFx {
         color: color_param(params, "shadow_color", [0.0; 3]),
         offset: (
@@ -167,7 +176,11 @@ pub(crate) fn read_fx(params: &Params) -> Fx {
 
     Fx {
         strokes,
-        depth: params::f32(params, "depth", 0.0).clamp(0.0, 64.0).round() as u32,
+        depth: if enabled {
+            params::f32(params, "depth", 0.0).clamp(0.0, 64.0).round() as u32
+        } else {
+            0
+        },
         dir: (
             params::f32(params, "depth_x", 1.0).clamp(-4.0, 4.0).round() as i32,
             params::f32(params, "depth_y", 1.0).clamp(-4.0, 4.0).round() as i32,

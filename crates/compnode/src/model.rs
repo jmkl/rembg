@@ -167,6 +167,7 @@ impl FilterKind {
             }
             Self::Texts => {
                 params::set_string(&mut params, "font", "unisans");
+                params::set_bool(&mut params, "effects", true);
                 params::set_f32(&mut params, "line_gap", -16.0);
                 params::set_f32(&mut params, "letter_spacing", -2.0);
                 params::set_f32(&mut params, "outline_width", 0.0);

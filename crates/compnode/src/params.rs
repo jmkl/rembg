@@ -37,7 +37,15 @@ pub(crate) fn string<'a>(params: &'a Params, key: &str, default: &'a str) -> &'a
     params.get(key).and_then(Value::as_str).unwrap_or(default)
 }
 
+pub(crate) fn bool(params: &Params, key: &str, default: bool) -> bool {
+    params.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
 pub(crate) fn set_f32(params: &mut Params, key: &str, value: f32) {
+    params.insert(key.to_owned(), json!(value));
+}
+
+pub(crate) fn set_bool(params: &mut Params, key: &str, value: bool) {
     params.insert(key.to_owned(), json!(value));
 }
 

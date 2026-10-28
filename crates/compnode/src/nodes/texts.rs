@@ -10,7 +10,7 @@ use crate::graph::invalidate_node;
 use crate::model::Node;
 use crate::ops::texts::{self, LineStyle};
 use crate::params;
-use crate::style::controls::{Select, Slider};
+use crate::style::controls::{Checkbox, Select, Slider};
 use crate::style::{font, pal};
 use crate::widgets::{error_line, preview};
 
@@ -165,6 +165,17 @@ pub(crate) fn show_body(
             params::set_string(params, "font", font_id);
             changed = true;
         }
+
+        // Master switch for the decorative stack (outlines, 3D depth, shadow).
+        let mut effects = params::bool(params, "effects", true);
+        if ui
+            .add(Checkbox::new(&mut effects, "Shadow, outline & 3D"))
+            .changed()
+        {
+            params::set_bool(params, "effects", effects);
+            changed = true;
+        }
+
         egui::CollapsingHeader::new("Letter Gap & Spacing")
             .default_open(false)
             .show(ui, |ui| {
@@ -192,129 +203,142 @@ pub(crate) fn show_body(
                 );
             });
 
-        // Outlines: the wider one is always drawn outermost.
-        egui::CollapsingHeader::new("Outline")
-            .default_open(false)
-            .show(ui, |ui| {
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "outline_width",
-                    "Outline 1 width",
-                    0.0..=60.0,
-                    0.0,
-                    " px",
-                    1.0,
-                    0,
-                );
-                changed |= param_color(
-                    ui,
-                    params,
-                    "outline_color",
-                    "Outline#1 color",
-                    Color32::BLACK,
-                );
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "outline2_width",
-                    "Outline 2 width",
-                    0.0..=60.0,
-                    0.0,
-                    " px",
-                    1.0,
-                    0,
-                );
-                changed |= param_color(
-                    ui,
-                    params,
-                    "outline2_color",
-                    "Outline#2 color",
-                    Color32::WHITE,
-                );
-            });
+        // Every decorative section below is gated by the master switch.
+        ui.add_enabled_ui(effects, |ui| {
+            // Outlines: the wider one is always drawn outermost.
+            egui::CollapsingHeader::new("Outline")
+                .default_open(false)
+                .show(ui, |ui| {
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "outline_width",
+                        "Outline 1 width",
+                        0.0..=60.0,
+                        0.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_color(
+                        ui,
+                        params,
+                        "outline_color",
+                        "Outline#1 color",
+                        Color32::BLACK,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "outline2_width",
+                        "Outline 2 width",
+                        0.0..=60.0,
+                        0.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_color(
+                        ui,
+                        params,
+                        "outline2_color",
+                        "Outline#2 color",
+                        Color32::WHITE,
+                    );
+                });
 
-        // Fake 3D: the outlined shape stamped `depth` times down-right.
-        egui::CollapsingHeader::new("3D depth")
-            .default_open(false)
-            .show(ui, |ui| {
-                changed |=
-                    param_slider(ui, params, "depth", "Depth", 0.0..=30.0, 0.0, " px", 1.0, 0);
-                changed |= param_color(ui, params, "depth_color", "Side color", Color32::BLACK);
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "depth_x",
-                    "Direction X",
-                    -4.0..=4.0,
-                    1.0,
-                    "",
-                    1.0,
-                    0,
-                );
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "depth_y",
-                    "Direction Y",
-                    -4.0..=4.0,
-                    1.0,
-                    "",
-                    1.0,
-                    0,
-                );
-            });
+            // Fake 3D: the outlined shape stamped `depth` times down-right.
+            egui::CollapsingHeader::new("3D depth")
+                .default_open(false)
+                .show(ui, |ui| {
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "depth",
+                        "Depth",
+                        0.0..=30.0,
+                        0.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |=
+                        param_color(ui, params, "depth_color", "Side color", Color32::BLACK);
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "depth_x",
+                        "Direction X",
+                        -4.0..=4.0,
+                        1.0,
+                        "",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "depth_y",
+                        "Direction Y",
+                        -4.0..=4.0,
+                        1.0,
+                        "",
+                        1.0,
+                        0,
+                    );
+                });
 
-        // Soft drop shadow under the whole stack. Opacity 0 turns it off.
-        egui::CollapsingHeader::new("Shadow")
-            .default_open(false)
-            .show(ui, |ui| {
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "shadow_opacity",
-                    "Opacity",
-                    0.0..=1.0,
-                    0.0,
-                    "",
-                    0.05,
-                    2,
-                );
-                changed |= param_color(ui, params, "shadow_color", "Color", Color32::BLACK);
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "shadow_x",
-                    "Offset X",
-                    -100.0..=100.0,
-                    0.0,
-                    " px",
-                    1.0,
-                    0,
-                );
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "shadow_y",
-                    "Offset Y",
-                    -100.0..=100.0,
-                    8.0,
-                    " px",
-                    1.0,
-                    0,
-                );
-                changed |= param_slider(
-                    ui,
-                    params,
-                    "shadow_blur",
-                    "Blur",
-                    0.0..=40.0,
-                    6.0,
-                    " px",
-                    1.0,
-                    0,
-                );
-            });
+            // Soft drop shadow under the whole stack. Opacity 0 turns it off.
+            egui::CollapsingHeader::new("Shadow")
+                .default_open(false)
+                .show(ui, |ui| {
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "shadow_opacity",
+                        "Opacity",
+                        0.0..=1.0,
+                        0.0,
+                        "",
+                        0.05,
+                        2,
+                    );
+                    changed |= param_color(ui, params, "shadow_color", "Color", Color32::BLACK);
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "shadow_x",
+                        "Offset X",
+                        -100.0..=100.0,
+                        0.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "shadow_y",
+                        "Offset Y",
+                        -100.0..=100.0,
+                        8.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "shadow_blur",
+                        "Blur",
+                        0.0..=40.0,
+                        6.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                });
+        });
         ui.add_space(6.0);
 
         // Multiline content; every non-empty line becomes one stacked row.
