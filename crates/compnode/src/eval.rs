@@ -15,7 +15,10 @@ use crate::params::Params;
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
     let ids: Vec<NodeId> = snarl
         .node_ids()
-        .filter(|(_, node)| node.filter().is_some())
+        .filter(|(_, node)| {
+            node.filter()
+                .is_some_and(|filter| filter.kind != FilterKind::Route)
+        })
         .map(|(id, _)| id)
         .collect();
     let mut changed = false;
@@ -42,6 +45,11 @@ fn ensure_filter(
         return false;
     };
     let kind = filter.kind;
+    if kind == FilterKind::Route {
+        // Route is transparent; downstream nodes consume its input directly.
+        stack.remove(&node);
+        return false;
+    }
     let params = filter.params.clone();
     let cached_signature = filter.signature;
     let has_output = filter.preview.cpu.is_some();
@@ -138,6 +146,8 @@ fn filter_signature(
 }
 
 fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) -> u64 {
+    // Route contributes no effect of its own: hash the node it forwards.
+    let id = crate::graph::resolve_route(snarl, id);
     if !stack.insert(id) {
         return 0;
     }
@@ -214,6 +224,8 @@ fn resolve_image(
     ctx: &egui::Context,
     stack: &mut HashSet<NodeId>,
 ) -> Option<RgbaImage> {
+    // A Route passes its input straight through, with no image of its own.
+    let id = crate::graph::resolve_route(snarl, id);
     if snarl[id].filter().is_some() {
         ensure_filter(snarl, id, ctx, stack);
         return snarl[id].cpu().map(limit_image);

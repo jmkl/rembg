@@ -436,6 +436,11 @@ impl GraphEditor {
             return false;
         };
         let kind = filter.kind;
+        if kind == crate::model::FilterKind::Route {
+            // Route is transparent: downstream nodes read its input directly,
+            // so it never needs a render of its own.
+            return false;
+        }
         if kind == crate::model::FilterKind::Group {
             return self.start_group_render(snarl, node, signature, ctx);
         }
@@ -779,9 +784,8 @@ impl SnarlViewer<Node> for GraphEditor {
 
         // Keep Viewer layers in connection order. `refresh_viewer` fills in
         // textures and removes layers whose wire was disconnected.
-        // Keep Viewer layers in connection order. `refresh_viewer` fills in
-        // textures and removes layers whose wire was disconnected.
-        let source = from.id.node;
+        // Route is transparent: the layer belongs to the real source node.
+        let source = crate::graph::resolve_route(snarl, from.id.node);
         // Extract all data from snarl immutably before borrowing viewer_node_mut().
         let spec = catalog::spec(snarl[source].kind());
         let source_name = spec.title.to_string();
@@ -908,6 +912,16 @@ fn filter_input(snarl: &Snarl<Node>, node: NodeId, assets: &AssetStore) -> Optio
     loop {
         if !seen.insert(current) {
             return None;
+        }
+        // Route is a pass-through: its input is the real filter input.
+        if snarl[current].is_route() {
+            match crate::graph::upstream(snarl, current) {
+                Some(next) => {
+                    current = next;
+                    continue;
+                }
+                None => return None,
+            }
         }
         match &snarl[current] {
             Node::Filter(_) => {

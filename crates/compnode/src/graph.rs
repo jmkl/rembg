@@ -60,9 +60,36 @@ pub(crate) fn rgba_to_texture(ctx: &egui::Context, img: &image::RgbaImage) -> eg
     ctx.load_texture("node-preview", color_image, egui::TextureOptions::LINEAR)
 }
 
-pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
+/// First node wired into `node`'s primary input, without any Route mapping.
+pub(crate) fn first_input(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
     let pin = snarl.in_pin(InPinId { node, input: 0 });
     pin.remotes.first().map(|remote| remote.node)
+}
+
+/// Follow a chain of Route nodes to the node that actually produces content.
+///
+/// Route is a pass-through: `image -> Route -> curve` must resolve exactly like
+/// `image -> curve`. Non-Route nodes and unconnected Routes resolve to
+/// themselves. Cycles are cut off at the first repeated Route.
+pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
+    let mut current = node;
+    let mut seen = std::collections::HashSet::new();
+    while snarl[current].is_route() {
+        if !seen.insert(current) {
+            return current;
+        }
+        match first_input(snarl, current) {
+            Some(next) => current = next,
+            None => return current,
+        }
+    }
+    current
+}
+
+/// Source of `node`'s primary input, with any Route chain resolved away.
+pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
+    let remote = first_input(snarl, node)?;
+    Some(resolve_route(snarl, remote))
 }
 
 /// Preview of the node feeding `node`'s first input, if that source has one.
@@ -81,7 +108,10 @@ pub(crate) fn effective_output_path(snarl: &Snarl<Node>, node: NodeId) -> Option
         if !seen.insert(current) {
             return None;
         }
-        if let Some(path) = snarl[current].output_path() {
+        // Route produces no output of its own; keep walking through it.
+        if !snarl[current].is_route()
+            && let Some(path) = snarl[current].output_path()
+        {
             return Some(path.to_path_buf());
         }
         if let Some(upstream) = upstream(snarl, current) {
@@ -105,6 +135,17 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
         if !seen.insert(current) {
             return None;
         }
+        // A Route has no output file of its own; downstream consumers must
+        // read the pass-through input exactly as if Route were not there.
+        if snarl[current].is_route() {
+            match upstream(snarl, current) {
+                Some(next) => {
+                    current = next;
+                    continue;
+                }
+                None => return None,
+            }
+        }
         match &snarl[current] {
             Node::Filter(_) => {
                 return snarl[current].output_path().map(|path| path.to_path_buf());
@@ -127,7 +168,11 @@ pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egu
         if !seen.insert(current) {
             return None;
         }
-        if let Some(tex) = snarl[current].texture() {
+        // Never show a Route's own (possibly stale) texture: its content is
+        // whatever its upstream produces.
+        if !snarl[current].is_route()
+            && let Some(tex) = snarl[current].texture()
+        {
             return Some(tex.clone());
         }
         if let Some(upstream) = upstream(snarl, current) {
@@ -300,10 +345,27 @@ pub(crate) fn refresh_viewer(
 ) {
     let remotes = snarl.in_pin(InPinId { node, input: 0 }).remotes.clone();
 
-    // Build the set of source node IDs that should have layers.
-    let mut sources: Vec<NodeId> = remotes.iter().map(|remote| remote.node).collect();
+    // Build the set of source node IDs that should have layers. Route nodes
+    // are transparent, so a layer always belongs to the node that really
+    // produces the content, even when a Route sits in between.
+    let mut sources: Vec<NodeId> = remotes
+        .iter()
+        .map(|remote| resolve_route(snarl, remote.node))
+        .collect();
     sources.sort_by_key(|source| source.0);
     sources.dedup();
+
+    // Existing layers are matched by their resolved source, so inserting or
+    // removing a Route keeps the layer identity (and its user transform).
+    let existing_sources: Vec<NodeId> = snarl[node]
+        .layers()
+        .map(|layers| {
+            layers
+                .iter()
+                .map(|layer| resolve_route(snarl, layer.source))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Phase 1: Load any missing images (mutable borrow of snarl).
     for source in &sources {
@@ -323,33 +385,37 @@ pub(crate) fn refresh_viewer(
     }
 
     // Phase 3: Get the layers mutably and update.
-    let Some(layers) = snarl[node].layers_mut() else {
+    let Some(viewer_layers) = snarl[node].layers_mut() else {
         return;
     };
-    // alias for minimal diff
-    let viewer_layers = layers;
 
-    // If the set of sources hasn't changed, just update textures for existing layers.
-    let existing_sources: Vec<NodeId> = viewer_layers.iter().map(|l| l.source).collect();
+    // If the set of sources hasn't changed, just update textures for existing
+    // layers. A layer created before this Route-aware matching may still store
+    // the Route id, so repair `source` while we are here.
     if sources.len() == existing_sources.len()
         && sources.iter().all(|s| existing_sources.contains(s))
     {
         for (source, kind, source_name, source_path, new_tex) in &layer_data {
-            if let Some(layer) = viewer_layers.iter_mut().find(|l| l.source == *source) {
-                if layer.kind != *kind {
-                    layer.kind = *kind;
-                }
-                if layer.texture != *new_tex {
-                    layer.texture = new_tex.clone();
-                }
-                // A processing node that just finished has a new output file;
-                // without this the sidebar canvas keeps loading the stale one.
-                if layer.source_path != *source_path {
-                    layer.source_path = source_path.clone();
-                }
-                if layer.source_name != *source_name {
-                    layer.source_name = source_name.clone();
-                }
+            let Some(index) = existing_sources.iter().position(|s| s == source) else {
+                continue;
+            };
+            let layer = &mut viewer_layers[index];
+            if layer.source != *source {
+                layer.source = *source;
+            }
+            if layer.kind != *kind {
+                layer.kind = *kind;
+            }
+            if layer.texture != *new_tex {
+                layer.texture = new_tex.clone();
+            }
+            // A processing node that just finished has a new output file;
+            // without this the sidebar canvas keeps loading the stale one.
+            if layer.source_path != *source_path {
+                layer.source_path = source_path.clone();
+            }
+            if layer.source_name != *source_name {
+                layer.source_name = source_name.clone();
             }
         }
         return;
@@ -357,13 +423,14 @@ pub(crate) fn refresh_viewer(
 
     // Build new layers list, reusing existing layer data where possible.
     let mut new_layers = Vec::with_capacity(sources.len());
-    for (source, kind, source_name, source_path, _) in &layer_data {
+    for (source, kind, source_name, source_path, new_tex) in &layer_data {
         let source = *source;
-        // Reuse existing layer data if we already had this source.
-        let mut layer = viewer_layers
+        // Reuse existing layer data if we already had this source (possibly
+        // through a Route).
+        let mut layer = existing_sources
             .iter()
-            .find(|l| l.source == source)
-            .cloned()
+            .position(|s| *s == source)
+            .map(|index| viewer_layers[index].clone())
             .unwrap_or_else(|| ViewerLayer {
                 source,
                 kind: *kind,
@@ -374,14 +441,11 @@ pub(crate) fn refresh_viewer(
                 size: egui::Vec2::ZERO,
                 angle: 0.0,
             });
+        layer.source = source;
 
         // Update texture if changed (texture was pre-fetched in phase 2).
-        let new_tex = layer_data
-            .iter()
-            .find(|(s, _, _, _, _)| *s == source)
-            .and_then(|(_, _, _, _, tex)| tex.clone());
-        if layer.texture != new_tex {
-            layer.texture = new_tex;
+        if layer.texture != *new_tex {
+            layer.texture = new_tex.clone();
         }
 
         new_layers.push(layer);
@@ -396,6 +460,7 @@ pub(crate) fn effective_dimensions(
     node: NodeId,
     assets: &AssetStore,
 ) -> Option<(u32, u32)> {
+    let node = resolve_route(snarl, node);
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     while let Some(image) = snarl[current].image_node() {
@@ -426,6 +491,7 @@ pub(crate) fn effective_dimensions(
 /// Source name used for output filenames. It follows Image pass-through chains
 /// and prefers an asset's original name.
 pub(crate) fn source_name(snarl: &Snarl<Node>, node: NodeId) -> String {
+    let node = resolve_route(snarl, node);
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     while let Some(image) = snarl[current].image_node() {

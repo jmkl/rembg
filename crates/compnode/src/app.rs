@@ -178,7 +178,11 @@ impl CompNodeApp {
         let filter_ids: Vec<NodeId> = self
             .snarl
             .node_ids()
-            .filter(|(id, node)| node.filter_node().is_some() && needed.contains(id))
+            .filter(|(id, node)| {
+                node.filter_node()
+                    .is_some_and(|filter| filter.kind != crate::model::FilterKind::Route)
+                    && needed.contains(id)
+            })
             .map(|(id, _)| id)
             .collect();
 
@@ -1370,6 +1374,9 @@ pub fn run() -> eframe::Result<()> {
 /// True when a layer's node has no full-resolution output file of its own, so
 /// its low-res preview texture is the only correct content (plain filters).
 fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
+    // Layers normally point at the real source, but older sessions may still
+    // store a Route id; resolve it before deciding.
+    let source = crate::graph::resolve_route(snarl, source);
     matches!(snarl[source], crate::model::Node::Filter(_)) && snarl[source].output_path().is_none()
 }
 

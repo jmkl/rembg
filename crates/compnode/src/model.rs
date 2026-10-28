@@ -517,6 +517,12 @@ impl Node {
         }
     }
 
+    /// A Route node is a pure pass-through: downstream nodes resolve its
+    /// upstream wire as if the Route were not in the graph.
+    pub(crate) fn is_route(&self) -> bool {
+        matches!(self, Self::Filter(node) if node.kind == FilterKind::Route)
+    }
+
     pub(crate) fn filter(&self) -> Option<&FilterNode> {
         self.filter_node()
     }

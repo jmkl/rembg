@@ -795,6 +795,256 @@ fn full_res_inputs_never_walk_past_a_filter() {
 }
 
 #[test]
+fn route_is_transparent_to_downstream_nodes() {
+    let ctx = egui::Context::default();
+    let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+    let source_tex = rgba_to_texture(&ctx, &image);
+    let route_tex = rgba_to_texture(&ctx, &image);
+
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        image_node("C:/tmp/source.png", source_tex),
+    );
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
+    for (from, to) in [(source, route), (route, curve)] {
+        snarl.connect(
+            egui_snarl::OutPinId {
+                node: from,
+                output: 0,
+            },
+            egui_snarl::InPinId { node: to, input: 0 },
+        );
+    }
+
+    // Downstream wires resolve as if the Route were not in the graph.
+    assert_eq!(crate::graph::resolve_route(&snarl, route), source);
+    assert_eq!(crate::graph::upstream(&snarl, curve), Some(source));
+    assert_eq!(crate::graph::source_name(&snarl, route), "source.png");
+    assert_eq!(
+        crate::graph::effective_output_path(&snarl, route),
+        Some(PathBuf::from("C:/tmp/source.png")),
+    );
+    assert_eq!(
+        full_res_source_path(&snarl, route),
+        Some(PathBuf::from("C:/tmp/source.png")),
+    );
+
+    // A filter behind a Route must still render before it can be consumed.
+    let filter = snarl.insert_node(egui::pos2(600.0, 0.0), Node::new_filter(FilterKind::Hsv));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: curve,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        },
+    );
+    let route_after =
+        snarl.insert_node(egui::pos2(800.0, 0.0), Node::new_filter(FilterKind::Route));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: filter,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: route_after,
+            input: 0,
+        },
+    );
+    assert!(full_res_source_path(&snarl, route_after).is_none());
+    snarl[filter].set_output_path(Some(PathBuf::from("C:/tmp/filter.png")));
+    assert_eq!(
+        full_res_source_path(&snarl, route_after),
+        Some(PathBuf::from("C:/tmp/filter.png")),
+    );
+
+    // A stale Route texture (from an older session/render) must not win over
+    // the real upstream preview.
+    snarl[route].filter_node_mut().unwrap().preview.texture = Some(route_tex);
+    assert_eq!(
+        upstream_texture(&snarl, curve).map(|tex| tex.id()),
+        snarl[source].texture().map(|tex| tex.id()),
+    );
+}
+
+#[test]
+fn route_matches_a_direct_connection_during_eval() {
+    let ctx = egui::Context::default();
+    let input = image::RgbaImage::from_fn(16, 12, |x, y| {
+        image::Rgba([(x * 7) as u8, (y * 11) as u8, ((x + y) * 3) as u8, 255])
+    });
+
+    let build = |with_route: bool| {
+        let mut snarl = Snarl::new();
+        let source = snarl.insert_node(
+            egui::pos2(0.0, 0.0),
+            Node::image("C:/missing/route-eval.png"),
+        );
+        snarl[source].set_cpu(input.clone());
+        let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
+        if with_route {
+            let route =
+                snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+            snarl.connect(
+                egui_snarl::OutPinId {
+                    node: source,
+                    output: 0,
+                },
+                egui_snarl::InPinId {
+                    node: route,
+                    input: 0,
+                },
+            );
+            snarl.connect(
+                egui_snarl::OutPinId {
+                    node: route,
+                    output: 0,
+                },
+                egui_snarl::InPinId {
+                    node: curve,
+                    input: 0,
+                },
+            );
+        } else {
+            snarl.connect(
+                egui_snarl::OutPinId {
+                    node: source,
+                    output: 0,
+                },
+                egui_snarl::InPinId {
+                    node: curve,
+                    input: 0,
+                },
+            );
+        }
+        crate::eval::ensure_all(&mut snarl, &ctx);
+        (snarl, curve)
+    };
+
+    let (direct, direct_curve) = build(false);
+    let (routed, routed_curve) = build(true);
+    assert_eq!(
+        direct[direct_curve].cpu().map(|img| img.as_raw()),
+        routed[routed_curve].cpu().map(|img| img.as_raw()),
+    );
+    assert!(routed[routed_curve].cpu().is_some());
+}
+
+#[test]
+fn route_is_never_rendered() {
+    let mut editor = test_editor();
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/source.png"));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: route,
+            input: 0,
+        },
+    );
+
+    let ctx = egui::Context::default();
+    assert!(!editor.start_filter_render(&mut snarl, route, 1, &ctx));
+    let filter = snarl[route].filter_node().unwrap();
+    assert!(filter.job.is_none());
+    assert!(filter.output_path.is_none());
+}
+
+#[test]
+fn viewer_layers_follow_routes_and_keep_transforms() {
+    let ctx = egui::Context::default();
+    let image = image::RgbaImage::from_pixel(4, 4, image::Rgba([40, 50, 60, 255]));
+    let texture = rgba_to_texture(&ctx, &image);
+
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        image_node("C:/missing/source.png", texture),
+    );
+    let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        },
+    );
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+
+    // User move/scale on the layer.
+    if let Some(node) = snarl[viewer].viewer_node_mut() {
+        let layer = &mut node.layers[0];
+        layer.center = egui::vec2(120.0, 80.0);
+        layer.size = egui::vec2(640.0, 360.0);
+        layer.angle = 0.3;
+    }
+
+    // Insert a Route between the image and the viewer.
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    snarl.disconnect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        },
+    );
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: route,
+            input: 0,
+        },
+    );
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: route,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        },
+    );
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+
+    let node = snarl[viewer].viewer_node().unwrap();
+    assert_eq!(node.layers.len(), 1);
+    assert_eq!(node.layers[0].source, source);
+    assert_eq!(node.layers[0].center, egui::vec2(120.0, 80.0));
+    assert_eq!(node.layers[0].size, egui::vec2(640.0, 360.0));
+    assert_eq!(node.layers[0].angle, 0.3);
+    assert!(node.layers[0].texture.is_some());
+
+    // Sessions saved before Route-aware layers may store the Route id; a
+    // refresh must repair it without discarding the saved transform.
+    snarl[viewer].viewer_node_mut().unwrap().layers[0].source = route;
+    snarl[viewer].viewer_node_mut().unwrap().layers[0].center = egui::vec2(7.0, 9.0);
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+
+    let node = snarl[viewer].viewer_node().unwrap();
+    assert_eq!(node.layers.len(), 1);
+    assert_eq!(node.layers[0].source, source);
+    assert_eq!(node.layers[0].center, egui::vec2(7.0, 9.0));
+}
+
+#[test]
 fn filter_renders_are_reclaimed_after_invalidation() {
     let mut snarl = Snarl::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/input.png"));
