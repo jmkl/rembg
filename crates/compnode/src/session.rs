@@ -417,6 +417,7 @@ pub(crate) fn load(
                     .find(|t| id_map.get(&t.source).copied() == Some(source));
                 crate::model::ViewerLayer {
                     source,
+                    kind: next[source].kind(),
                     texture: None,
                     source_name: String::new(),
                     source_path: None,

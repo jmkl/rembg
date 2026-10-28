@@ -16,7 +16,7 @@ use rembg_core::{
 };
 
 use crate::cache::{OutputCache, cache_key, cache_key_layers, cache_key_refs};
-use crate::model::{FilterKind, JobOutput, RunTiming, ViewerLayer};
+use crate::model::{FilterKind, JobOutput, Kind, RunTiming, ViewerLayer};
 use crate::params::Params;
 
 pub(crate) enum Job {
@@ -88,6 +88,7 @@ impl FilterInput {
 #[derive(Clone, Debug)]
 pub(crate) struct CompositeLayer {
     pub source: NodeId,
+    pub kind: Kind,
     pub path: PathBuf,
     pub center: egui::Vec2,
     pub size: egui::Vec2,
@@ -176,6 +177,7 @@ fn composite_full(
             (
                 ViewerLayer {
                     source: layer.source,
+                    kind: layer.kind,
                     texture: None,
                     source_name: String::new(),
                     source_path: Some(layer.path.clone()),

@@ -378,6 +378,7 @@ impl GraphEditor {
             };
             layers.push(crate::worker::CompositeLayer {
                 source: layer.source,
+                kind: layer.kind,
                 path,
                 center: layer.center,
                 size: layer.size,
@@ -789,6 +790,7 @@ impl SnarlViewer<Node> for GraphEditor {
             if !layer_exists {
                 viewer.layers.push(ViewerLayer {
                     source,
+                    kind: spec.kind,
                     texture: None,
                     source_name,
                     source_path,

@@ -255,6 +255,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
     if let Some(node) = app.snarl[viewer].viewer_node_mut() {
         node.layers.push(ViewerLayer {
             source: bg_node,
+            kind: Kind::RemoveBg,
             texture: None,
             source_name: String::new(),
             source_path: None,

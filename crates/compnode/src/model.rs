@@ -361,6 +361,7 @@ pub(crate) struct JobOutput {
 #[derive(Clone)]
 pub struct ViewerLayer {
     pub source: NodeId,
+    pub kind: Kind,
     pub texture: Option<TextureHandle>,
     /// Human-readable title of the source node (e.g. "Remove Background").
     pub source_name: String,
@@ -376,9 +377,10 @@ pub struct ViewerLayer {
 
 impl ViewerLayer {
     #[allow(dead_code)]
-    pub fn new(source: NodeId, texture: Option<TextureHandle>) -> Self {
+    pub fn new(source: NodeId, kind: Kind, texture: Option<TextureHandle>) -> Self {
         Self {
             source,
+            kind,
             texture,
             source_name: String::new(),
             source_path: None,

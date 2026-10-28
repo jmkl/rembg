@@ -959,6 +959,7 @@ impl CompNodeApp {
             // Collect layers from the edited node (bottom-to-top).
             let layers: Vec<(
                 egui_snarl::NodeId,
+                Kind,
                 String,
                 Option<egui::TextureHandle>,
                 Option<PathBuf>,
@@ -972,6 +973,7 @@ impl CompNodeApp {
                             .map(|l| {
                                 (
                                     l.source,
+                                    l.kind,
                                     l.source_name.clone(),
                                     l.texture.clone(),
                                     l.source_path.clone(),
@@ -993,6 +995,7 @@ impl CompNodeApp {
                     .map(|l| {
                         (
                             l.source,
+                            l.kind,
                             l.source_name.clone(),
                             l.texture.clone(),
                             l.source_path.clone(),

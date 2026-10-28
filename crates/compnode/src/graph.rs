@@ -10,7 +10,7 @@ use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use crate::assets::AssetStore;
 use crate::catalog;
 use crate::memory::ImageMemory;
-use crate::model::{Node, Preview, ViewerLayer};
+use crate::model::{Kind, Node, Preview, ViewerLayer};
 
 /// Ensure the graph has exactly one Output node, creating one if missing and
 /// removing any extras (dropping their wires).
@@ -311,14 +311,15 @@ pub(crate) fn refresh_viewer(
     }
 
     // Phase 2: Read all texture data immutably (before borrowing viewer mutably).
-    let mut layer_data: Vec<(NodeId, String, Option<PathBuf>, Option<TextureHandle>)> =
+    let mut layer_data: Vec<(NodeId, Kind, String, Option<PathBuf>, Option<TextureHandle>)> =
         Vec::with_capacity(sources.len());
     for source in &sources {
         let spec = catalog::spec(snarl[*source].kind());
         let source_name = spec.title.to_string();
+        let source_kind = spec.kind;
         let source_path = snarl[*source].output_path().map(|p| p.to_path_buf());
         let existing_tex = effective_texture(snarl, *source);
-        layer_data.push((*source, source_name, source_path, existing_tex));
+        layer_data.push((*source, source_kind, source_name, source_path, existing_tex));
     }
 
     // Phase 3: Get the layers mutably and update.
@@ -333,8 +334,11 @@ pub(crate) fn refresh_viewer(
     if sources.len() == existing_sources.len()
         && sources.iter().all(|s| existing_sources.contains(s))
     {
-        for (source, source_name, source_path, new_tex) in &layer_data {
+        for (source, kind, source_name, source_path, new_tex) in &layer_data {
             if let Some(layer) = viewer_layers.iter_mut().find(|l| l.source == *source) {
+                if layer.kind != *kind {
+                    layer.kind = *kind;
+                }
                 if layer.texture != *new_tex {
                     layer.texture = new_tex.clone();
                 }
@@ -353,7 +357,7 @@ pub(crate) fn refresh_viewer(
 
     // Build new layers list, reusing existing layer data where possible.
     let mut new_layers = Vec::with_capacity(sources.len());
-    for (source, source_name, source_path, _) in &layer_data {
+    for (source, kind, source_name, source_path, _) in &layer_data {
         let source = *source;
         // Reuse existing layer data if we already had this source.
         let mut layer = viewer_layers
@@ -362,6 +366,7 @@ pub(crate) fn refresh_viewer(
             .cloned()
             .unwrap_or_else(|| ViewerLayer {
                 source,
+                kind: *kind,
                 texture: None,
                 source_name: source_name.clone(),
                 source_path: source_path.clone(),
@@ -373,8 +378,8 @@ pub(crate) fn refresh_viewer(
         // Update texture if changed (texture was pre-fetched in phase 2).
         let new_tex = layer_data
             .iter()
-            .find(|(s, _, _, _)| *s == source)
-            .and_then(|(_, _, _, tex)| tex.clone());
+            .find(|(s, _, _, _, _)| *s == source)
+            .and_then(|(_, _, _, _, tex)| tex.clone());
         if layer.texture != new_tex {
             layer.texture = new_tex;
         }
