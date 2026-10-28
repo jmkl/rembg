@@ -157,10 +157,19 @@ impl CompNodeApp {
             if !self.snarl.node_ids().any(|(id, _)| id == done.node) {
                 continue;
             }
+            let is_blend = self.snarl[done.node]
+                .filter_node()
+                .is_some_and(|f| f.kind == crate::model::FilterKind::Blend);
             let node = &mut self.snarl[done.node];
             match done.result {
                 Ok(output) => {
-                    let texture = rgba_to_texture(ctx, &output.image);
+                    // Blend node uses full-resolution texture so its canvas preview
+                    // does not drop back down to the 256px thumbnail.
+                    let texture = if is_blend {
+                        crate::eval::upload(ctx, done.node, &output.image)
+                    } else {
+                        rgba_to_texture(ctx, &output.image)
+                    };
                     node.finish_job(done.token, Ok((texture, output)));
                 }
                 Err(message) => node.finish_job(done.token, Err(message)),

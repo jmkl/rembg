@@ -1,11 +1,109 @@
 //! Multi-input compositing: Group, Blend and Mask.
 
 use image::{RgbaImage, imageops::FilterType};
+use rayon::prelude::*;
 
 use crate::model::ViewerLayer;
 use crate::params::{self, Params};
 
 type Rgb = [f32; 3];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlendOp {
+    SourceOver,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl BlendOp {
+    pub(crate) fn from_str(s: &str) -> Self {
+        match s {
+            "multiply" => Self::Multiply,
+            "screen" => Self::Screen,
+            "overlay" => Self::Overlay,
+            "darken" => Self::Darken,
+            "lighten" => Self::Lighten,
+            "color-dodge" => Self::ColorDodge,
+            "color-burn" => Self::ColorBurn,
+            "hard-light" => Self::HardLight,
+            "soft-light" => Self::SoftLight,
+            "difference" => Self::Difference,
+            "exclusion" => Self::Exclusion,
+            "hue" => Self::Hue,
+            "saturation" => Self::Saturation,
+            "color" => Self::Color,
+            "luminosity" => Self::Luminosity,
+            _ => Self::SourceOver,
+        }
+    }
+
+    #[inline(always)]
+    fn blend(&self, cb: Rgb, cs: Rgb) -> Rgb {
+        match self {
+            Self::SourceOver => cs,
+            Self::Multiply => [cb[0] * cs[0], cb[1] * cs[1], cb[2] * cs[2]],
+            Self::Screen => [
+                cb[0] + cs[0] - cb[0] * cs[0],
+                cb[1] + cs[1] - cb[1] * cs[1],
+                cb[2] + cs[2] - cb[2] * cs[2],
+            ],
+            Self::Overlay => [
+                hard_light(cs[0], cb[0]),
+                hard_light(cs[1], cb[1]),
+                hard_light(cs[2], cb[2]),
+            ],
+            Self::Darken => [cb[0].min(cs[0]), cb[1].min(cs[1]), cb[2].min(cs[2])],
+            Self::Lighten => [cb[0].max(cs[0]), cb[1].max(cs[1]), cb[2].max(cs[2])],
+            Self::Difference => [
+                (cb[0] - cs[0]).abs(),
+                (cb[1] - cs[1]).abs(),
+                (cb[2] - cs[2]).abs(),
+            ],
+            Self::Exclusion => [
+                cb[0] + cs[0] - 2.0 * cb[0] * cs[0],
+                cb[1] + cs[1] - 2.0 * cb[1] * cs[1],
+                cb[2] + cs[2] - 2.0 * cb[2] * cs[2],
+            ],
+            Self::HardLight => [
+                hard_light(cb[0], cs[0]),
+                hard_light(cb[1], cs[1]),
+                hard_light(cb[2], cs[2]),
+            ],
+            Self::SoftLight => [
+                soft_light(cb[0], cs[0]),
+                soft_light(cb[1], cs[1]),
+                soft_light(cb[2], cs[2]),
+            ],
+            Self::ColorDodge => [
+                dodge(cb[0], cs[0]),
+                dodge(cb[1], cs[1]),
+                dodge(cb[2], cs[2]),
+            ],
+            Self::ColorBurn => [
+                burn(cb[0], cs[0]),
+                burn(cb[1], cs[1]),
+                burn(cb[2], cs[2]),
+            ],
+            Self::Hue => set_luminosity(set_saturation(cs, saturation(cb)), luminosity(cb)),
+            Self::Saturation => set_luminosity(set_saturation(cb, saturation(cs)), luminosity(cb)),
+            Self::Color => set_luminosity(cs, luminosity(cb)),
+            Self::Luminosity => set_luminosity(cb, luminosity(cs)),
+        }
+    }
+}
 
 fn resize_to(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
     if image.dimensions() == (width, height) {
@@ -15,11 +113,12 @@ fn resize_to(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
     }
 }
 
+#[inline(always)]
 fn rgb_of(pixel: [u8; 4]) -> Rgb {
     [
-        pixel[0] as f32 / 255.0,
-        pixel[1] as f32 / 255.0,
-        pixel[2] as f32 / 255.0,
+        pixel[0] as f32 * (1.0 / 255.0),
+        pixel[1] as f32 * (1.0 / 255.0),
+        pixel[2] as f32 * (1.0 / 255.0),
     ]
 }
 
@@ -46,7 +145,7 @@ pub(crate) fn stack(layers: &[RgbaImage]) -> Result<RgbaImage, String> {
                 continue;
             }
             let target = out.get_pixel_mut(x, y);
-            *target = image::Rgba(composite(target.0, pixel.0, 1.0, |_cb, cs| cs));
+            *target = image::Rgba(composite_pixel(target.0, pixel.0, 1.0, BlendOp::SourceOver));
         }
     }
     Ok(out)
@@ -88,19 +187,27 @@ pub(crate) fn blend(
     if let Some(top) = top {
         let fitted = fit_canvas(top, width.max(1), height.max(1));
         if bottom.is_some() {
-            // Blend effect and opacity affect the top layer over the bottom layer.
-            for (x, y, src) in fitted.enumerate_pixels() {
-                let target = out.get_pixel_mut(x, y);
-                *target = image::Rgba(composite(target.0, src.0, opacity, |cb, cs| {
-                    blend_rgb(mode, cb, cs)
-                }));
-            }
+            let op = BlendOp::from_str(mode);
+            out.as_mut()
+                .par_chunks_exact_mut(4)
+                .zip(fitted.as_raw().par_chunks_exact(4))
+                .for_each(|(target, src)| {
+                    let base = [target[0], target[1], target[2], target[3]];
+                    let source = [src[0], src[1], src[2], src[3]];
+                    let res = composite_pixel(base, source, opacity, op);
+                    target.copy_from_slice(&res);
+                });
         } else {
             // Only top layer connected: drawn with opacity.
-            for (x, y, src) in fitted.enumerate_pixels() {
-                let target = out.get_pixel_mut(x, y);
-                *target = image::Rgba(composite(target.0, src.0, opacity, |_cb, cs| cs));
-            }
+            out.as_mut()
+                .par_chunks_exact_mut(4)
+                .zip(fitted.as_raw().par_chunks_exact(4))
+                .for_each(|(target, src)| {
+                    let base = [target[0], target[1], target[2], target[3]];
+                    let source = [src[0], src[1], src[2], src[3]];
+                    let res = composite_pixel(base, source, opacity, BlendOp::SourceOver);
+                    target.copy_from_slice(&res);
+                });
         }
     }
 
@@ -150,7 +257,7 @@ pub(crate) fn apply_mask(
         let brightness = (0.2126 * mask_pixel[0] as f32
             + 0.7152 * mask_pixel[1] as f32
             + 0.0722 * mask_pixel[2] as f32)
-            / 255.0;
+            * (1.0 / 255.0);
         let mask_alpha = if dark_is_opaque {
             1.0 - brightness
         } else {
@@ -163,14 +270,18 @@ pub(crate) fn apply_mask(
 }
 
 /// W3C source-over compositing with an RGB blend function.
-fn composite(
+#[inline(always)]
+fn composite_pixel(
     base: [u8; 4],
     source: [u8; 4],
     opacity: f32,
-    blend: impl Fn(Rgb, Rgb) -> Rgb,
+    op: BlendOp,
 ) -> [u8; 4] {
-    let alpha_s = (source[3] as f32 / 255.0) * opacity;
-    let alpha_b = base[3] as f32 / 255.0;
+    let alpha_s = (source[3] as f32 * (1.0 / 255.0)) * opacity;
+    if alpha_s <= 0.0 {
+        return base;
+    }
+    let alpha_b = base[3] as f32 * (1.0 / 255.0);
     let alpha_o = alpha_s + alpha_b * (1.0 - alpha_s);
     if alpha_o <= 0.0 {
         return [0, 0, 0, 0];
@@ -178,77 +289,57 @@ fn composite(
 
     let cb = rgb_of(base);
     let cs = rgb_of(source);
-    let mixed = blend(cb, cs);
+    let mixed = op.blend(cb, cs);
 
-    let mut out = [0u8; 4];
-    for channel in 0..3 {
-        let premultiplied = alpha_s * (1.0 - alpha_b) * cs[channel]
-            + alpha_s * alpha_b * mixed[channel]
-            + (1.0 - alpha_s) * alpha_b * cb[channel];
-        out[channel] = ((premultiplied / alpha_o) * 255.0)
-            .round()
-            .clamp(0.0, 255.0) as u8;
-    }
-    out[3] = (alpha_o * 255.0).round().clamp(0.0, 255.0) as u8;
-    out
+    let inv_alpha_o = 255.0 / alpha_o;
+    let s_term = alpha_s * (1.0 - alpha_b);
+    let mix_term = alpha_s * alpha_b;
+    let b_term = (1.0 - alpha_s) * alpha_b;
+
+    [
+        ((s_term * cs[0] + mix_term * mixed[0] + b_term * cb[0]) * inv_alpha_o + 0.5)
+            .clamp(0.0, 255.0) as u8,
+        ((s_term * cs[1] + mix_term * mixed[1] + b_term * cb[1]) * inv_alpha_o + 0.5)
+            .clamp(0.0, 255.0) as u8,
+        ((s_term * cs[2] + mix_term * mixed[2] + b_term * cb[2]) * inv_alpha_o + 0.5)
+            .clamp(0.0, 255.0) as u8,
+        (alpha_o * 255.0 + 0.5).clamp(0.0, 255.0) as u8,
+    ]
 }
 
-fn blend_rgb(mode: &str, cb: Rgb, cs: Rgb) -> Rgb {
-    match mode {
-        "hue" => set_luminosity(set_saturation(cs, saturation(cb)), luminosity(cb)),
-        "saturation" => set_luminosity(set_saturation(cb, saturation(cs)), luminosity(cb)),
-        "color" => set_luminosity(cs, luminosity(cb)),
-        "luminosity" => set_luminosity(cb, luminosity(cs)),
-        _ => [
-            blend_channel(mode, cb[0], cs[0]),
-            blend_channel(mode, cb[1], cs[1]),
-            blend_channel(mode, cb[2], cs[2]),
-        ],
-    }
-}
-
-fn blend_channel(mode: &str, cb: f32, cs: f32) -> f32 {
-    match mode {
-        "multiply" => cb * cs,
-        "screen" => cb + cs - cb * cs,
-        "overlay" => hard_light(cs, cb),
-        "darken" => cb.min(cs),
-        "lighten" => cb.max(cs),
-        "color-dodge" => {
-            if cb <= 0.0 {
-                0.0
-            } else if cs >= 1.0 {
-                1.0
-            } else {
-                (cb / (1.0 - cs)).min(1.0)
-            }
-        }
-        "color-burn" => {
-            if cb >= 1.0 {
-                1.0
-            } else if cs <= 0.0 {
-                0.0
-            } else {
-                1.0 - ((1.0 - cb) / cs).min(1.0)
-            }
-        }
-        "hard-light" => hard_light(cb, cs),
-        "soft-light" => soft_light(cb, cs),
-        "difference" => (cb - cs).abs(),
-        "exclusion" => cb + cs - 2.0 * cb * cs,
-        // "source-over" and anything unknown behave like Normal.
-        _ => cs,
+#[inline(always)]
+fn dodge(cb: f32, cs: f32) -> f32 {
+    if cb <= 0.0 {
+        0.0
+    } else if cs >= 1.0 {
+        1.0
+    } else {
+        (cb / (1.0 - cs)).min(1.0)
     }
 }
 
+#[inline(always)]
+fn burn(cb: f32, cs: f32) -> f32 {
+    if cb >= 1.0 {
+        1.0
+    } else if cs <= 0.0 {
+        0.0
+    } else {
+        1.0 - ((1.0 - cb) / cs).min(1.0)
+    }
+}
+
+#[inline(always)]
 fn luminosity(color: Rgb) -> f32 {
     0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2]
 }
 
+#[inline(always)]
 fn saturation(color: Rgb) -> f32 {
     color[0].max(color[1]).max(color[2]) - color[0].min(color[1]).min(color[2])
 }
 
+#[inline(always)]
 fn hard_light(cb: f32, cs: f32) -> f32 {
     if cs <= 0.5 {
         2.0 * cb * cs
@@ -257,6 +348,7 @@ fn hard_light(cb: f32, cs: f32) -> f32 {
     }
 }
 
+#[inline(always)]
 fn soft_light(cb: f32, cs: f32) -> f32 {
     if cs <= 0.5 {
         cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb)
@@ -346,64 +438,114 @@ pub(crate) fn composite_layers_with(
     let (cw, ch) = canvas;
     let longest = cw.max(ch).max(1);
     let scale = match max_edge {
-        Some(cap) if longest as u64 > cap => cap as f64 / longest as f64,
+        Some(cap) if longest as u64 > cap => cap as f32 / longest as f32,
         _ => 1.0,
     };
-    let out_w = ((cw as f64 * scale).round() as u32).max(1);
-    let out_h = ((ch as f64 * scale).round() as u32).max(1);
+    let out_w = ((cw as f32 * scale).round() as u32).max(1);
+    let out_h = ((ch as f32 * scale).round() as u32).max(1);
     let mut out = RgbaImage::new(out_w, out_h);
 
+    let op = BlendOp::from_str(mode);
+
     for (index, (layer, src)) in layers.iter().enumerate() {
-        let (src_w, src_h) = (src.width() as f64, src.height() as f64);
-        // An unplaced layer (no canvas transform yet) fills the canvas,
-        // preserving its aspect ratio, centred on the document.
+        let (src_w, src_h) = (src.width() as f32, src.height() as f32);
+        if src_w <= 0.0 || src_h <= 0.0 {
+            continue;
+        }
         let (cx, cy, sw, sh) = if layer.size.x > 0.0 && layer.size.y > 0.0 {
             (
-                layer.center.x as f64 * scale,
-                layer.center.y as f64 * scale,
-                (layer.size.x as f64 * scale).max(1.0),
-                (layer.size.y as f64 * scale).max(1.0),
+                layer.center.x * scale,
+                layer.center.y * scale,
+                (layer.size.x * scale).max(1.0),
+                (layer.size.y * scale).max(1.0),
             )
         } else {
-            let fit = fit_size(src_w, src_h, cw.max(1) as f64, ch.max(1) as f64);
+            let fit = fit_size(src_w as f64, src_h as f64, cw.max(1) as f64, ch.max(1) as f64);
             (
-                cw.max(1) as f64 * scale / 2.0,
-                ch.max(1) as f64 * scale / 2.0,
-                (fit.0 * scale).max(1.0),
-                (fit.1 * scale).max(1.0),
+                cw.max(1) as f32 * scale / 2.0,
+                ch.max(1) as f32 * scale / 2.0,
+                (fit.0 as f32 * scale).max(1.0),
+                (fit.1 as f32 * scale).max(1.0),
             )
         };
-        let cos = layer.angle.cos() as f64;
-        let sin = layer.angle.sin() as f64;
 
-        for oy in 0..out_h {
-            for ox in 0..out_w {
-                let px = ox as f64 + 0.5;
-                let py = oy as f64 + 0.5;
-                let rx = px - cx;
-                let ry = py - cy;
-                // inverse rotate by -angle
-                let lx = rx * cos + ry * sin;
-                let ly = -rx * sin + ry * cos;
-                let sx = (lx + sw / 2.0) / sw * src_w;
-                let sy = (ly + sh / 2.0) / sh * src_h;
-                let Some(rgba) = sample_bilinear(src, sx, sy) else {
-                    continue;
-                };
-                let dst = *out.get_pixel(ox, oy);
-                // The bottom layer is the (opaque) base; everything above it
-                // honours the node's blend mode and opacity.
-                let (layer_mode, layer_opacity) = if index == 0 {
-                    ("source-over", 1.0)
-                } else {
-                    (mode, opacity)
-                };
-                *out.get_pixel_mut(ox, oy) =
-                    image::Rgba(composite(dst.0, rgba, layer_opacity, |cb, cs| {
-                        blend_rgb(layer_mode, cb, cs)
-                    }));
-            }
+        let layer_op = if index == 0 {
+            BlendOp::SourceOver
+        } else {
+            op
+        };
+        let layer_opacity = if index == 0 { 1.0 } else { opacity };
+        if layer_opacity <= 0.0 {
+            continue;
         }
+
+        let inv_sw = src_w / sw;
+        let inv_sh = src_h / sh;
+        let cos = layer.angle.cos();
+        let sin = layer.angle.sin();
+        let is_unrotated = layer.angle.abs() < 1e-5;
+
+        let src_raw = src.as_raw();
+        let row_stride = out_w as usize * 4;
+        let src_w_u32 = src.width();
+        let src_h_u32 = src.height();
+
+        out.as_mut()
+            .par_chunks_exact_mut(row_stride)
+            .enumerate()
+            .for_each(|(oy, row)| {
+                let py = (oy as f32 + 0.5) - cy;
+
+                if is_unrotated {
+                    let sy = (py + sh * 0.5) * inv_sh;
+                    if sy < 0.0 || sy >= src_h {
+                        return;
+                    }
+                    let ox_min_f = (cx - sw * 0.5) - 0.5;
+                    let ox_max_f = (cx + sw * 0.5) + 0.5;
+                    let ox_start = (ox_min_f.floor().max(0.0) as usize).min(out_w as usize);
+                    let ox_end = (ox_max_f.ceil().max(0.0) as usize).min(out_w as usize);
+
+                    for ox in ox_start..ox_end {
+                        let px = (ox as f32 + 0.5) - cx;
+                        let sx = (px + sw * 0.5) * inv_sw;
+                        if sx < 0.0 || sx >= src_w {
+                            continue;
+                        }
+                        let rgba = sample_bilinear_fast(src_raw, src_w_u32, src_h_u32, sx, sy);
+                        let offset = ox * 4;
+                        let base = [
+                            row[offset],
+                            row[offset + 1],
+                            row[offset + 2],
+                            row[offset + 3],
+                        ];
+                        let mixed = composite_pixel(base, rgba, layer_opacity, layer_op);
+                        row[offset..offset + 4].copy_from_slice(&mixed);
+                    }
+                } else {
+                    for ox in 0..out_w as usize {
+                        let px = (ox as f32 + 0.5) - cx;
+                        let lx = px * cos + py * sin;
+                        let ly = -px * sin + py * cos;
+                        let sx = (lx + sw * 0.5) * inv_sw;
+                        let sy = (ly + sh * 0.5) * inv_sh;
+                        if sx < 0.0 || sy < 0.0 || sx >= src_w || sy >= src_h {
+                            continue;
+                        }
+                        let rgba = sample_bilinear_fast(src_raw, src_w_u32, src_h_u32, sx, sy);
+                        let offset = ox * 4;
+                        let base = [
+                            row[offset],
+                            row[offset + 1],
+                            row[offset + 2],
+                            row[offset + 3],
+                        ];
+                        let mixed = composite_pixel(base, rgba, layer_opacity, layer_op);
+                        row[offset..offset + 4].copy_from_slice(&mixed);
+                    }
+                }
+            });
     }
     Ok(out)
 }
@@ -418,28 +560,33 @@ fn fit_size(src_w: f64, src_h: f64, canvas_w: f64, canvas_h: f64) -> (f64, f64) 
 }
 
 /// Bilinear sample of `src` at (possibly fractional) source coordinates.
-/// Returns `None` when the point is outside the image.
-fn sample_bilinear(src: &image::RgbaImage, sx: f64, sy: f64) -> Option<[u8; 4]> {
-    if sx < 0.0 || sy < 0.0 || sx >= src.width() as f64 || sy >= src.height() as f64 {
-        return None;
-    }
-    let x0 = sx.floor() as u32;
-    let y0 = sy.floor() as u32;
-    let x1 = (x0 + 1).min(src.width().saturating_sub(1));
-    let y1 = (y0 + 1).min(src.height().saturating_sub(1));
-    let fx = sx - x0 as f64;
-    let fy = sy - y0 as f64;
-    let c00 = src.get_pixel(x0, y0);
-    let c10 = src.get_pixel(x1, y0);
-    let c01 = src.get_pixel(x0, y1);
-    let c11 = src.get_pixel(x1, y1);
-    let mut rgba = [0u8; 4];
-    for c in 0..4 {
-        let v = c00[c] as f64 * (1.0 - fx) * (1.0 - fy)
-            + c10[c] as f64 * fx * (1.0 - fy)
-            + c01[c] as f64 * (1.0 - fx) * fy
-            + c11[c] as f64 * fx * fy;
-        rgba[c] = v.round().clamp(0.0, 255.0) as u8;
-    }
-    Some(rgba)
+#[inline(always)]
+fn sample_bilinear_fast(raw: &[u8], src_w: u32, src_h: u32, sx: f32, sy: f32) -> [u8; 4] {
+    let x0 = (sx.floor() as u32).min(src_w.saturating_sub(1));
+    let y0 = (sy.floor() as u32).min(src_h.saturating_sub(1));
+    let x1 = (x0 + 1).min(src_w.saturating_sub(1));
+    let y1 = (y0 + 1).min(src_h.saturating_sub(1));
+    let fx = sx - x0 as f32;
+    let fy = sy - y0 as f32;
+
+    let stride = src_w as usize * 4;
+    let r0 = y0 as usize * stride;
+    let r1 = y1 as usize * stride;
+
+    let i00 = r0 + x0 as usize * 4;
+    let i10 = r0 + x1 as usize * 4;
+    let i01 = r1 + x0 as usize * 4;
+    let i11 = r1 + x1 as usize * 4;
+
+    let w00 = (1.0 - fx) * (1.0 - fy);
+    let w10 = fx * (1.0 - fy);
+    let w01 = (1.0 - fx) * fy;
+    let w11 = fx * fy;
+
+    [
+        (raw[i00] as f32 * w00 + raw[i10] as f32 * w10 + raw[i01] as f32 * w01 + raw[i11] as f32 * w11 + 0.5) as u8,
+        (raw[i00 + 1] as f32 * w00 + raw[i10 + 1] as f32 * w10 + raw[i01 + 1] as f32 * w01 + raw[i11 + 1] as f32 * w11 + 0.5) as u8,
+        (raw[i00 + 2] as f32 * w00 + raw[i10 + 2] as f32 * w10 + raw[i01 + 2] as f32 * w01 + raw[i11 + 2] as f32 * w11 + 0.5) as u8,
+        (raw[i00 + 3] as f32 * w00 + raw[i10 + 3] as f32 * w10 + raw[i01 + 3] as f32 * w01 + raw[i11 + 3] as f32 * w11 + 0.5) as u8,
+    ]
 }

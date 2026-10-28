@@ -72,8 +72,14 @@ fn ensure_filter(
         };
         let layers = snarl[node].layers().map(|s| s.to_vec()).unwrap_or_default();
         let mut resolved: Vec<(crate::model::ViewerLayer, RgbaImage)> = Vec::new();
+        let full_res = kind == FilterKind::Blend;
         for layer in &layers {
-            if let Some(img) = resolve_image(snarl, layer.source, ctx, stack) {
+            let img = if full_res {
+                resolve_image_full(snarl, layer.source, ctx, stack)
+            } else {
+                resolve_image(snarl, layer.source, ctx, stack)
+            };
+            if let Some(img) = img {
                 resolved.push((layer.clone(), img));
             }
         }
@@ -85,7 +91,7 @@ fn ensure_filter(
             ops::composite::composite_layers_with(
                 &resolved,
                 canvas,
-                Some(ops::EVAL_MAX_EDGE as u64),
+                None, // Full resolution with Rayon multithreading for crisp, fast preview
                 mode,
                 opacity,
             )
@@ -252,10 +258,39 @@ fn resolve_image(
     if let Some(path) = snarl[id].reload_path()
         && let Ok(image) = image::open(path)
     {
-        return Some(limit_image(&image.to_rgba8()));
+        let rgba = image.to_rgba8();
+        snarl[id].set_cpu(rgba.clone());
+        return Some(limit_image(&rgba));
     }
     None
 }
+
+/// Full-resolution image resolution for Blend nodes (no EVAL_MAX_EDGE cap).
+fn resolve_image_full(
+    snarl: &mut Snarl<Node>,
+    id: NodeId,
+    ctx: &egui::Context,
+    stack: &mut HashSet<NodeId>,
+) -> Option<RgbaImage> {
+    let id = crate::graph::resolve_route(snarl, id);
+    if snarl[id].filter().is_some() {
+        ensure_filter(snarl, id, ctx, stack);
+        return snarl[id].cpu().cloned();
+    }
+
+    if let Some(cpu) = snarl[id].cpu() {
+        return Some(cpu.clone());
+    }
+    if let Some(path) = snarl[id].reload_path()
+        && let Ok(image) = image::open(path)
+    {
+        let rgba = image.to_rgba8();
+        snarl[id].set_cpu(rgba.clone());
+        return Some(rgba);
+    }
+    None
+}
+
 
 fn limit_image(image: &RgbaImage) -> RgbaImage {
     let (width, height) = image.dimensions();
@@ -274,7 +309,7 @@ fn limit_image(image: &RgbaImage) -> RgbaImage {
     )
 }
 
-fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> TextureHandle {
+pub(crate) fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> TextureHandle {
     let (width, height) = image.dimensions();
     let color_image =
         egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw());

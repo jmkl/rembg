@@ -240,12 +240,15 @@ pub(crate) struct RenderState {
 
 impl FilterNode {
     pub(crate) fn new(kind: FilterKind) -> Self {
+        // Blend node hides its node-body preview by default; the canvas_ui
+        // shows the blended result directly when the node is selected.
+        let preview_enabled = kind != FilterKind::Blend;
         Self {
             kind,
             params: kind.defaults(),
             preview: Preview::default(),
             signature: None,
-            preview_enabled: true,
+            preview_enabled,
             layers: Vec::new(),
             canvas_size: egui::Vec2::ZERO,
             job: None,
