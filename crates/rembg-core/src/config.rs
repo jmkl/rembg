@@ -15,14 +15,21 @@ pub const MODEL_GFPGAN_FILE: &str = "GFPGANv1.4.onnx";
 pub const MODEL_BIREFNET_FILE: &str = "birefnet.onnx";
 pub const MODEL_RMBG_FILE: &str = "rmbg-1.4.onnx";
 pub const MODEL_SCRFD_FILE: &str = "det_10g.onnx";
+pub const MODEL_SAM2_ENCODER_FILE: &str = "sam2.1_hiera_small.encoder.onnx";
+pub const MODEL_SAM2_DECODER_FILE: &str = "sam2.1_hiera_small.decoder.onnx";
+pub const MODEL_YOLO_FILE: &str = "yolo11n.onnx";
 
 pub const MODEL_GFPGAN: &str = "models/GFPGANv1.4.onnx";
 pub const MODEL_BIREFNET: &str = "models/birefnet.onnx";
 pub const MODEL_RMBG: &str = "models/rmbg-1.4.onnx";
 pub const MODEL_SCRFD: &str = "models/det_10g.onnx";
+pub const MODEL_SAM2_ENCODER: &str = "models/sam2.1_hiera_small.encoder.onnx";
+pub const MODEL_SAM2_DECODER: &str = "models/sam2.1_hiera_small.decoder.onnx";
+pub const MODEL_YOLO: &str = "models/yolo11n.onnx";
 
 pub const SIZE_GFPGAN: u32 = 512;
 pub const SIZE_BIREFNET: u32 = 1024;
+pub const SIZE_YOLO: u32 = 640;
 pub const MAX_WIDTH: u32 = 1920;
 pub const SIGMOID: bool = true;
 
@@ -32,6 +39,8 @@ pub const STD_IMAGENET: [f32; 3] = [0.229, 0.224, 0.225];
 pub const VRAM_LIMIT_GFPGAN_MB: usize = 0;
 pub const VRAM_LIMIT_BIREFNET_MB: usize = 0;
 pub const VRAM_LIMIT_SCRFD_MB: usize = 0;
+pub const VRAM_LIMIT_SAM2_MB: usize = 0;
+pub const VRAM_LIMIT_YOLO_MB: usize = 0;
 
 pub fn cuda_ep(vram_limit_mb: usize) -> ExecutionProviderDispatch {
     let mut cuda = ep::CUDA::default()

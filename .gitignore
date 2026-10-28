@@ -29,3 +29,6 @@ models/
 *.safetensors
 models/
 autosave*
+
+test_images/
+test_output*

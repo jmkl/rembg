@@ -177,6 +177,58 @@ function reportRoutingError(message, error) {
   });
 }
 
+const CHATGPT_URLS = ["https://chatgpt.com/*", "https://chat.openai.com/*"];
+
+// Pick the ChatGPT tab the user is most likely looking at. `tabs.query`
+// returns tabs in an unspecified order, and the first match may be a stale
+// background tab; prefer the active tab of the last focused window.
+async function findChatGptTab() {
+  const scopes = [
+    { active: true, lastFocusedWindow: true },
+    { active: true },
+    {},
+  ];
+  for (const scope of scopes) {
+    const tabs = (
+      await chrome.tabs.query({ url: CHATGPT_URLS, ...scope })
+    ).filter((tab) => tab.id != null);
+    if (!tabs.length) continue;
+    if (scope.active) return tabs[0];
+    // No ChatGPT tab is active: prefer the most recently used one.
+    tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
+    return tabs[0];
+  }
+  return null;
+}
+
+// `chrome.tabs.sendMessage` reports this when no content script is listening
+// in the tab (Vivaldi/Chrome wording).
+function isMissingReceiver(error) {
+  return /receiving end does not exist|could not establish connection/i.test(
+    String(error?.message ?? error),
+  );
+}
+
+// Deliver a message to a tab, injecting content.js first when the tab predates
+// the extension (or the extension was just reloaded). `content.js` guards
+// against duplicate listeners, so a tab that already runs it is unaffected.
+async function sendToTab(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    if (!isMissingReceiver(error)) throw error;
+    console.warn(
+      "[GPasTe] No content script in tab; injecting it on demand:",
+      tabId,
+    );
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+    return await chrome.tabs.sendMessage(tabId, message);
+  }
+}
+
 async function routePrompt(message) {
   const requestId = message.request_id;
   const text = message.text ?? message.prompt ?? "";
@@ -191,11 +243,7 @@ async function routePrompt(message) {
     throw new Error(`Duplicate request_id: ${requestId}`);
   if (abortedRequests.has(requestId)) return;
 
-  const tabs = await chrome.tabs.query({
-    url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-  });
-
-  const tab = tabs.find((item) => item.id != null);
+  const tab = await findChatGptTab();
 
   // The GUI may have aborted while we were looking up the tab.
   if (abortedRequests.has(requestId)) return;
@@ -206,7 +254,7 @@ async function routePrompt(message) {
 
   pendingRequests.set(requestId, { tabId: tab.id, startedAt: Date.now() });
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, {
+    const response = await sendToTab(tab.id, {
       type: "send_prompt",
       request_id: requestId,
       text,

@@ -3,13 +3,13 @@
   "name": "Rust ChatGPT Bridge",
   "version": "0.1.0",
   "description": "Connect a local Rust GUI to the active ChatGPT conversation.",
-  "permissions": ["nativeMessaging", "tabs", "clipboardWrite"],
-  "host_permissions": ["https://chatgpt.com/*"],
+  "permissions": ["nativeMessaging", "tabs", "scripting", "clipboardWrite"],
+  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   "background": { "service_worker": "background.js" },
   "action": {},
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
