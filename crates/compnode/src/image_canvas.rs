@@ -166,19 +166,20 @@ impl Item {
         self.kind == Kind::Filter(FilterKind::Texts)
     }
 
+    /// Visible content rect in normalized texture coordinates relative to
+    /// the texture center: min/max within `[-0.5, 0.5]`.
+    fn norm_bounds(&self) -> (Vec2, Vec2) {
+        match self.content_uv {
+            Some([u0, v0, u1, v1]) => (vec2(u0 - 0.5, v0 - 0.5), vec2(u1 - 0.5, v1 - 0.5)),
+            None => (vec2(-0.5, -0.5), vec2(0.5, 0.5)),
+        }
+    }
+
     /// Visible content bounds in local (unrotated) coordinates, relative to
     /// `center`. Without a content rect this is the full texture.
     fn local_bounds(&self) -> (Vec2, Vec2) {
-        match self.content_uv {
-            Some([u0, v0, u1, v1]) => (
-                vec2((u0 - 0.5) * self.size.x, (v0 - 0.5) * self.size.y),
-                vec2((u1 - 0.5) * self.size.x, (v1 - 0.5) * self.size.y),
-            ),
-            None => (
-                vec2(-self.size.x * 0.5, -self.size.y * 0.5),
-                vec2(self.size.x * 0.5, self.size.y * 0.5),
-            ),
-        }
+        let (n0, n1) = self.norm_bounds();
+        (n0 * self.size, n1 * self.size)
     }
 
     /// Size of the visible content in canvas units.
@@ -234,10 +235,16 @@ impl Item {
     }
 
     fn hit_handle(&self, p: Vec2, tol: f32, rot_dist: f32) -> Option<Handle> {
-        // Texts layers are move-only: scaling or rotating the full-canvas
-        // bitmap would drag the baked content around instead of resizing it.
+        let scale = || {
+            SCALE_HANDLES
+                .iter()
+                .map(|&(x, y)| Handle::Scale(x, y))
+                .find(|&h| (self.handle_pos(h, rot_dist) - p).length() <= tol)
+        };
+        // Texts can be resized, but not individually rotated: rotation is
+        // about the texture center, which makes the baked ink orbit.
         if self.is_text() {
-            return None;
+            return scale();
         }
         std::iter::once(Handle::Rotate)
             .chain(SCALE_HANDLES.iter().map(|&(x, y)| Handle::Scale(x, y)))
@@ -949,15 +956,14 @@ impl ImageCanvas {
             {
                 ui.separator();
 
-                // Single-layer X/Y are the unrotated layer's top-left. For
-                // Texts they describe the tight content rect: the texture
-                // itself is canvas-sized, and W/H follow the node's raster
-                // size, so only X/Y are editable.
-                let is_text = node.is_text();
-                let (lmin, _) = node.local_bounds();
+                // Single-layer X/Y are the unrotated content's top-left. W/H
+                // are the visible content size; the texture is scaled to match
+                // (identical to the old behaviour when the content fills it).
+                let (n0, n1) = node.norm_bounds();
+                let (wn, hn) = ((n1.x - n0.x).max(0.001), (n1.y - n0.y).max(0.001));
                 let content = node.content_size();
-                let orig_x = node.center.x + lmin.x;
-                let orig_y = node.center.y + lmin.y;
+                let orig_x = node.center.x + n0.x * node.size.x;
+                let orig_y = node.center.y + n0.y * node.size.y;
                 let mut x = orig_x;
                 let mut y = orig_y;
                 let aspect_ratio = content.x / content.y;
@@ -973,8 +979,7 @@ impl ImageCanvas {
 
                     ui.label("W");
                     let width_changed = ui
-                        .add_enabled(
-                            !is_text,
+                        .add(
                             egui::DragValue::new(&mut width)
                                 .range(MIN_SIZE..=f32::MAX)
                                 .speed(1.0),
@@ -983,8 +988,7 @@ impl ImageCanvas {
 
                     ui.label("H");
                     let height_changed = ui
-                        .add_enabled(
-                            !is_text,
+                        .add(
                             egui::DragValue::new(&mut height)
                                 .range(MIN_SIZE..=f32::MAX)
                                 .speed(1.0),
@@ -993,12 +997,7 @@ impl ImageCanvas {
 
                     ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
 
-                    if is_text {
-                        if x_changed || y_changed {
-                            node.center += vec2(x - orig_x, y - orig_y);
-                            transform_changed = true;
-                        }
-                    } else if x_changed || y_changed || width_changed || height_changed {
+                    if x_changed || y_changed || width_changed || height_changed {
                         if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
                             if width_changed && !height_changed {
                                 height = width / aspect_ratio;
@@ -1007,10 +1006,11 @@ impl ImageCanvas {
                             }
                         }
 
-                        let size = vec2(width.max(MIN_SIZE), height.max(MIN_SIZE));
-
-                        // Convert top-left back to the internal center position.
-                        node.center = vec2(x, y) + size * 0.5;
+                        let content = vec2(width.max(MIN_SIZE), height.max(MIN_SIZE));
+                        // Convert the content size back to texture size, then
+                        // keep the content's top-left pinned at (x, y).
+                        let size = vec2(content.x / wn, content.y / hn);
+                        node.center = vec2(x, y) - vec2(n0.x * size.x, n0.y * size.y);
                         node.size = size;
 
                         transform_changed = true;
@@ -1353,31 +1353,62 @@ impl ImageCanvas {
             }
             Drag::Scale { sx, sy, start } => {
                 let (fx, fy) = (sx as f32, sy as f32);
-                let (w0, h0) = (start.size.x, start.size.y);
-                let lp = rot(p - start.center, -start.angle);
-                // the opposite handle (anchor) stays fixed in world space
-                let (ax, ay) = (-fx * w0 / 2.0, -fy * h0 / 2.0);
-                let (mut w, mut h) = (w0, h0);
+                let (w0, h0) = (start.size.x.max(1.0), start.size.y.max(1.0));
+
+                // Scale relative to the visible content, not the full texture.
+                // Texts ink sits off-center in a canvas-sized bitmap, so
+                // anchoring on the bitmap's opposite corner would drag the
+                // text sideways while resizing. `an` is the normalized content
+                // anchor (the opposite edge under the fixed handle).
+                let (n0, n1) = it.norm_bounds();
+                let (wn, hn) = ((n1.x - n0.x).max(0.001), (n1.y - n0.y).max(0.001));
+                let min_w = MIN_SIZE / wn;
+                let min_h = MIN_SIZE / hn;
+                let an = vec2(
+                    if fx > 0.0 {
+                        n0.x
+                    } else if fx < 0.0 {
+                        n1.x
+                    } else {
+                        0.0
+                    },
+                    if fy > 0.0 {
+                        n0.y
+                    } else if fy < 0.0 {
+                        n1.y
+                    } else {
+                        0.0
+                    },
+                );
+                let anchor_world = start.center + rot(an * start.size, start.angle);
+                let lp = rot(p - anchor_world, -start.angle);
+
+                // Texture size implied by putting the moving content edge
+                // under the pointer.
+                let mut w = w0;
+                let mut h = h0;
                 if sx != 0 && sy != 0 {
-                    let dw = ((lp.x - ax) * fx).max(MIN_SIZE);
-                    let dh = ((lp.y - ay) * fy).max(MIN_SIZE);
-                    let s = (dw / w0).max(dh / h0);
-                    w = w0 * s;
-                    h = h0 * s;
+                    let kx = (lp.x * fx / wn).max(min_w) / w0;
+                    let ky = (lp.y * fy / hn).max(min_h) / h0;
+                    let k = kx.max(ky);
+                    w = w0 * k;
+                    h = h0 * k;
                 } else if sx != 0 {
-                    w = ((lp.x - ax) * fx).max(MIN_SIZE);
+                    w = (lp.x * fx / wn).max(min_w);
                 } else {
-                    h = ((lp.y - ay) * fy).max(MIN_SIZE);
+                    h = (lp.y * fy / hn).max(min_h);
                 }
 
-                // Snap the moving edge(s). Only for unrotated layers, where the
-                // edges are axis-aligned in canvas space.
+                // Snap the moving edge(s). Only for unrotated layers, where
+                // the edges are axis-aligned in canvas space.
                 if start.angle.abs() < 1e-3 {
-                    let anchor = start.center + vec2(ax, ay);
-                    let ex = anchor.x + fx * w; // moving vertical edge
-                    let ey = anchor.y + fy * h; // moving horizontal edge
+                    let ex = anchor_world.x + fx * w * wn;
+                    let ey = anchor_world.y + fy * h * hn;
                     let snap_x = if sx != 0 { snap1(ex, &xs, tol) } else { None };
                     let snap_y = if sy != 0 { snap1(ey, &ys, tol) } else { None };
+                    // Convert a target edge position back to a texture width.
+                    let width_to = |edge: f32| ((edge - anchor_world.x) * fx / wn).max(min_w);
+                    let height_to = |edge: f32| ((edge - anchor_world.y) * fy / hn).max(min_h);
 
                     if sx != 0 && sy != 0 {
                         // corner = uniform scale: follow whichever axis is closer
@@ -1390,34 +1421,33 @@ impl ImageCanvas {
                         match use_x {
                             Some(true) => {
                                 let (d, t) = snap_x.unwrap();
-                                let nw = (w + fx * d).max(MIN_SIZE);
-                                let s = nw / w0;
-                                w = w0 * s;
-                                h = h0 * s;
+                                let k = width_to(ex + d) / w0;
+                                w = w0 * k;
+                                h = h0 * k;
                                 guides.push(Guide::V(t));
                             }
                             Some(false) => {
                                 let (d, t) = snap_y.unwrap();
-                                let nh = (h + fy * d).max(MIN_SIZE);
-                                let s = nh / h0;
-                                w = w0 * s;
-                                h = h0 * s;
+                                let k = height_to(ey + d) / h0;
+                                w = w0 * k;
+                                h = h0 * k;
                                 guides.push(Guide::H(t));
                             }
                             None => {}
                         }
                     } else if let Some((d, t)) = snap_x {
-                        w = (w + fx * d).max(MIN_SIZE);
+                        w = width_to(ex + d);
                         guides.push(Guide::V(t));
                     } else if let Some((d, t)) = snap_y {
-                        h = (h + fy * d).max(MIN_SIZE);
+                        h = height_to(ey + d);
                         guides.push(Guide::H(t));
                     }
                 }
 
-                let anchor_world = start.center + rot(vec2(ax, ay), start.angle);
                 it.size = vec2(w, h);
-                it.center = anchor_world + rot(vec2(fx * w / 2.0, fy * h / 2.0), start.angle);
+                // Move the texture center so the opposite content edge stays
+                // exactly where it was when the drag started.
+                it.center = anchor_world - rot(an * it.size, start.angle);
             }
             _ => {}
         }
@@ -1765,25 +1795,25 @@ impl ImageCanvas {
             let pts: Vec<Pos2> = it.corners().iter().map(|&c| to_screen(c)).collect();
             gp.add(Shape::closed_line(pts, Stroke::new(1.5, pal::ACCENT)));
 
-            // Texts layers are move-only (see `Item::hit_handle`), so only
-            // the frame is drawn for them.
+            // Scale handles for every layer. Texts has no rotate handle:
+            // rotating the full-canvas raster makes the ink orbit its center.
             if !it.is_text() {
                 let top_mid = to_screen(it.handle_pos(Handle::Scale(0, -1), rot_dist));
                 let rot_pos = to_screen(it.handle_pos(Handle::Rotate, rot_dist));
                 gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::ACCENT));
                 gp.circle(rot_pos, HANDLE_R, pal::WHITE, Stroke::new(2.0, pal::ACCENT));
+            }
 
-                for &(sx, sy) in &SCALE_HANDLES {
-                    let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
-                    let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
-                    gp.rect_filled(r, CornerRadius::same(1), pal::WHITE);
-                    gp.rect_stroke(
-                        r,
-                        CornerRadius::same(1),
-                        Stroke::new(2.0, pal::ACCENT),
-                        StrokeKind::Inside,
-                    );
-                }
+            for &(sx, sy) in &SCALE_HANDLES {
+                let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
+                let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
+                gp.rect_filled(r, CornerRadius::same(1), pal::WHITE);
+                gp.rect_stroke(
+                    r,
+                    CornerRadius::same(1),
+                    Stroke::new(2.0, pal::ACCENT),
+                    StrokeKind::Inside,
+                );
             }
         }
     }
@@ -2145,7 +2175,12 @@ mod tests {
         assert!(!item.contains(vec2(640.0, 100.0)));
         assert!(!item.contains(vec2(100.0, 500.0)));
 
-        // Texts exposes no scale/rotate handles.
+        // Texts can be resized, but has no individual rotate handle.
+        let corner = item.handle_pos(super::Handle::Scale(1, -1), 10.0);
+        assert!(matches!(
+            item.hit_handle(corner, 4.0, 10.0),
+            Some(super::Handle::Scale(1, -1))
+        ));
         assert!(
             item.hit_handle(item.handle_pos(super::Handle::Rotate, 10.0), 4.0, 10.0)
                 .is_none()
