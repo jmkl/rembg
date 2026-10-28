@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">CompNode</title>
+  <defs>
+    <linearGradient id="surface" x1="30" y1="24" x2="224" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#262626"/>
+      <stop offset="1" stop-color="#0a0a0a"/>
+    </linearGradient>
+    <linearGradient id="image" x1="83" y1="72" x2="179" y2="184" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#surface)"/>
+  <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="57.25" stroke="#ffffff" stroke-opacity=".1" stroke-width="1.5"/>
+  <!-- A picture frame at the output, connected to two processing nodes. -->
+  <path d="M83 128h34m22 0h34M128 94v-8" fill="none" stroke="#a3a3a3" stroke-width="8" stroke-linecap="round"/>
+  <rect x="54" y="105" width="44" height="46" rx="13" fill="#16a34a"/>
+  <rect x="158" y="105" width="44" height="46" rx="13" fill="#f59e0b"/>
+  <circle cx="76" cy="128" r="5" fill="#f5f5f5"/>
+  <circle cx="180" cy="128" r="5" fill="#f5f5f5"/>
+  <rect x="92" y="58" width="72" height="72" rx="20" fill="#3b82f6" stroke="#bfdbfe" stroke-opacity=".55" stroke-width="2"/>
+  <path d="M105 111l16-20 12 13 8-9 18 22h-54z" fill="#eff6ff"/>
+  <circle cx="143" cy="78" r="6" fill="#fde68a"/>
+  <path d="M128 141v25" fill="none" stroke="#a3a3a3" stroke-width="8" stroke-linecap="round"/>
+  <rect x="92" y="161" width="72" height="38" rx="13" fill="#262626" stroke="#525252" stroke-width="3"/>
+  <path d="M111 180h34" stroke="#60a5fa" stroke-width="6" stroke-linecap="round"/>
+</svg>

@@ -144,6 +144,13 @@ pub struct Item {
     /// the layer only when the real resolution changes (e.g. preview ->
     /// full-res), without resetting user transforms on same-size re-renders.
     tex_dims: (u32, u32),
+    /// Transform written by the last automatic fit. A layer still sitting at
+    /// exactly this transform has never been positioned/scaled by the user, so
+    /// a texture resolution change may refit it. Any user edit (move, scale,
+    /// rotate, inspector) makes the layer differ, and then it is never refit
+    /// again: re-rendering an upstream node (preview <-> full-res) must not
+    /// throw the canvas layout away.
+    auto_fit: Option<Snap>,
     /// Normalized `[u0, v0, u1, v1]` of the non-transparent part of `tex`.
     ///
     /// Texts is rasterized on a full canvas-sized bitmap, with the ink (plus
@@ -164,6 +171,16 @@ impl Item {
 
     fn is_text(&self) -> bool {
         self.kind == Kind::Filter(FilterKind::Texts)
+    }
+
+    /// True when the layer still has the transform produced by the last
+    /// automatic fit (i.e. the user never moved/scaled/rotated it).
+    fn is_pristine(&self) -> bool {
+        self.auto_fit.is_some_and(|fit| {
+            (self.center - fit.center).length() <= 0.01
+                && (self.size - fit.size).length() <= 0.01
+                && (self.angle - fit.angle).abs() <= 1e-4
+        })
     }
 
     /// Visible content rect in normalized texture coordinates relative to
@@ -472,6 +489,33 @@ impl ImageCanvas {
         self.last_activity = Instant::now();
     }
 
+    /// Forget every item, selection and remembered transform because the graph
+    /// was replaced wholesale (new document or opened session).
+    ///
+    /// Without this, items from the previous graph could survive when their
+    /// source id and file path match, and `sync_layers` deliberately leaves the
+    /// transform of existing items alone: a later save would then write those
+    /// stale transforms over the ones restored from the session.
+    pub fn reset_graph(&mut self) {
+        self.items.clear();
+        self.remembered.clear();
+        self.selected = None;
+        self.extra.clear();
+        self.selection_suppressed = false;
+        self.drag = Drag::None;
+        self.group_start.clear();
+        self.marquee = None;
+        self.list_drag = None;
+        self.layer_count = 0;
+        // Force the next `begin_sync` to rebuild the items even when the layer
+        // signature happens to match the previous document.
+        self.last_sig = None;
+        self.dirty = true;
+        self.in_use.clear();
+        self.committed_activity = None;
+        self.guides.clear();
+    }
+
     fn select(&mut self, id: NodeId) {
         self.selected = Some(id);
         self.extra.clear();
@@ -563,6 +607,12 @@ impl ImageCanvas {
             self.last_sync = Instant::now();
         }
         due
+    }
+
+    /// True while a transform change has not been written back to the graph
+    /// yet. Used to schedule the frames the idle commit needs.
+    pub fn has_uncommitted_transform(&self) -> bool {
+        self.committed_activity != Some(self.last_activity)
     }
 
     /// True exactly once after the user stops interacting for `secs`
@@ -694,9 +744,10 @@ impl ImageCanvas {
                         tex_is_full: false,
                         visible: true,
                         center: snap.map_or(canvas_size / 2.0, |s| s.center),
-                        // Texts always maps its full canvas-sized raster.
+                        // A new Texts layer maps its full canvas-sized
+                        // raster; a restored one keeps the user's scale.
                         size: if is_text {
-                            canvas_size
+                            snap.map_or(canvas_size, |s| s.size)
                         } else {
                             snap.map_or(vec2(200.0, 200.0), |s| s.size)
                         },
@@ -706,6 +757,8 @@ impl ImageCanvas {
                         // A restored transform is authoritative: don't refit it
                         // just because the texture dims arrive now.
                         tex_dims: if snap.is_some() { display_dims } else { (0, 0) },
+                        // A restored transform is user-owned, not an auto fit.
+                        auto_fit: None,
                         content_uv: None,
                     });
                     self.items.len() - 1
@@ -725,11 +778,12 @@ impl ImageCanvas {
                 it.tex = Some(display_tex.clone());
             }
 
-            // Only refit when the real resolution changes. A same-size
-            // re-render (e.g. tweaking a filter) must not reset the user's
-            // scale.
+            // Refit only a layer the user never touched. The texture can change
+            // resolution when a filter re-renders (preview <-> full-res); that
+            // must not reset the canvas scale/position. A pristine layer still
+            // follows the new resolution, so the initial fit stays correct.
             let dims_changed = it.tex_dims != display_dims;
-            if it.fit_pending || dims_changed {
+            if it.fit_pending || (dims_changed && it.is_pristine()) {
                 // Texts is rasterized at the canvas resolution; anything else
                 // is fitted into the canvas at its natural aspect.
                 it.size = if is_text {
@@ -738,6 +792,7 @@ impl ImageCanvas {
                     fit_inside(display_dims, canvas_size)
                 };
                 it.fit_pending = false;
+                it.auto_fit = Some(it.snap());
             }
             it.tex_dims = display_dims;
 
@@ -2162,6 +2217,7 @@ mod tests {
             source_path: None,
             fit_pending: false,
             tex_dims: (1280, 720),
+            auto_fit: None,
             content_uv: Some([0.25, 0.5, 0.75, 0.9]),
         };
 

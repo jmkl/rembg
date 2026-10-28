@@ -225,7 +225,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         .snarl
         .insert_node(egui::pos2(250.0, 80.0), Node::remove_bg());
     if let Some(process) = app.snarl[bg_node].process_mut() {
-        process.preview.texture = Some(tex);
+        process.preview.texture = Some(tex.clone());
         process.preview.cpu = Some(img.clone());
         process.output_path = Some(output_path.clone());
     }
@@ -259,9 +259,9 @@ fn session_roundtrip_restores_graph_and_cached_output() {
             texture: None,
             source_name: String::new(),
             source_path: None,
-            center: egui::Vec2::ZERO,
-            size: egui::Vec2::ZERO,
-            angle: 0.0,
+            center: egui::vec2(111.0, 222.0),
+            size: egui::vec2(333.0, 444.0),
+            angle: 0.25,
         });
     }
 
@@ -325,6 +325,148 @@ fn session_roundtrip_restores_graph_and_cached_output() {
     let layers = &loaded.snarl[viewer].viewer_node().unwrap().layers;
     assert_eq!(layers.len(), 1);
     assert_eq!(layers[0].source, bg);
+    assert_eq!(layers[0].center, egui::vec2(111.0, 222.0));
+    assert_eq!(layers[0].size, egui::vec2(333.0, 444.0));
+    assert_eq!(layers[0].angle, 0.25);
+
+    // Reopening in the *same* app must not keep canvas items from the old
+    // document: a later save would otherwise commit their stale transforms
+    // over the restored ones.
+    let stale_layers = [(
+        bg,
+        Kind::RemoveBg,
+        String::from("stale"),
+        Some(tex),
+        Some(output_path.clone()),
+        (egui::vec2(9.0, 9.0), egui::vec2(50.0, 50.0), 0.5),
+        false,
+    )];
+    loaded.image_canvas.sync_layers(&ctx, &stale_layers);
+    assert_eq!(loaded.image_canvas.layers().count(), 1);
+    loaded.load_session(&session, &ctx).unwrap();
+    assert_eq!(loaded.image_canvas.layers().count(), 0);
+
+    // Save immediately after opening: the restored transforms must survive.
+    let resaved = root.join("resaved.rembg.json");
+    loaded.save_session(&resaved).unwrap();
+    let mut again = app_with_cache(OutputCache::new(root.join("cache")));
+    again.load_session(&resaved, &ctx).unwrap();
+    let viewer = again
+        .snarl
+        .node_ids()
+        .find_map(|(id, node)| matches!(node, Node::Output(_)).then_some(id))
+        .expect("viewer restored");
+    let layers = &again.snarl[viewer].viewer_node().unwrap().layers;
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].center, egui::vec2(111.0, 222.0));
+    assert_eq!(layers[0].size, egui::vec2(333.0, 444.0));
+    assert_eq!(layers[0].angle, 0.25);
+
+    // Saving must flush canvas transforms immediately: they normally wait for
+    // an idle timer, so a save right after a drag/resize must not miss them.
+    let bg_again = again
+        .snarl
+        .node_ids()
+        .find_map(|(id, node)| matches!(node, Node::RemoveBg(_)).then_some(id))
+        .expect("remove-bg restored");
+    let moved_layers = [(
+        bg_again,
+        Kind::RemoveBg,
+        String::from("moved"),
+        again.snarl[bg_again]
+            .process()
+            .unwrap()
+            .preview
+            .texture
+            .clone(),
+        Some(output_path.clone()),
+        (egui::vec2(40.0, 60.0), egui::vec2(640.0, 480.0), 0.0),
+        false,
+    )];
+    again.image_canvas.sync_layers(&ctx, &moved_layers);
+    again.save_session(&resaved).unwrap();
+    let mut third = app_with_cache(OutputCache::new(root.join("cache")));
+    third.load_session(&resaved, &ctx).unwrap();
+    let viewer = third
+        .snarl
+        .node_ids()
+        .find_map(|(id, node)| matches!(node, Node::Output(_)).then_some(id))
+        .expect("viewer restored");
+    let layers = &third.snarl[viewer].viewer_node().unwrap().layers;
+    assert_eq!(layers[0].center, egui::vec2(40.0, 60.0));
+    assert_eq!(layers[0].size, egui::vec2(640.0, 480.0));
+    assert_eq!(layers[0].angle, 0.0);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn filter_rerender_keeps_user_canvas_transform() {
+    let root = std::env::temp_dir().join("compnode-filter-refit-test");
+    let _ = fs::remove_dir_all(&root);
+    let ctx = egui::Context::default();
+    let mut app = app_with_cache(OutputCache::new(root.join("cache")));
+    let node = app
+        .snarl
+        .insert_node(egui::pos2(0.0, 0.0), Node::image("curve.png"));
+
+    // A solid texture stands in for the layer raster; only its pixel size
+    // matters here (preview textures are capped, full renders are not).
+    let solid = |name: &str, w: u32, h: u32| {
+        let rgba = vec![255u8; (w * h * 4) as usize];
+        ctx.load_texture(
+            name,
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
+            egui::TextureOptions::LINEAR,
+        )
+    };
+
+    let sync = |app: &mut CompNodeApp, tex: &egui::TextureHandle| {
+        app.image_canvas.sync_layers(
+            &ctx,
+            &[(
+                node,
+                Kind::Filter(FilterKind::Curves),
+                String::from("Curves"),
+                Some(tex.clone()),
+                None,
+                (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
+                true,
+            )],
+        );
+    };
+
+    // Full-resolution render arrives first.
+    let full = solid("full", 1280, 720);
+    sync(&mut app, &full);
+    // The user places and scales the layer.
+    let (center, size) = (egui::vec2(300.0, 200.0), egui::vec2(400.0, 225.0));
+    app.image_canvas
+        .apply_transforms(&[(node, center, size, 0.0)]);
+
+    // Tweaking the Curves node invalidates its output: the canvas falls back
+    // to the capped preview (different pixel dims). The user transform must
+    // survive that swap and the later full-res re-render.
+    let preview = solid("preview", 256, 144);
+    sync(&mut app, &preview);
+    let layer = app.image_canvas.layers().next().expect("layer stays");
+    assert_eq!(layer.center, center);
+    assert_eq!(layer.size, size);
+
+    sync(&mut app, &full);
+    let layer = app.image_canvas.layers().next().expect("layer stays");
+    assert_eq!(layer.center, center);
+    assert_eq!(layer.size, size);
+
+    // A layer the user never touched still follows the texture resolution.
+    app.image_canvas.reset_graph();
+    let square = solid("square", 1000, 1000);
+    sync(&mut app, &square);
+    let fitted = app.image_canvas.layers().next().unwrap().size;
+    let wide = solid("wide", 200, 100);
+    sync(&mut app, &wide);
+    let refitted = app.image_canvas.layers().next().unwrap().size;
+    assert_ne!(fitted, refitted);
 
     let _ = fs::remove_dir_all(&root);
 }

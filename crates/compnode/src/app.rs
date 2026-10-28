@@ -306,6 +306,10 @@ impl CompNodeApp {
     /// Write the current graph as a single JSON file. The snapshot is returned
     /// so the autosave path can remember exactly what it wrote.
     fn write_session(&mut self, path: &Path) -> Result<session::SessionFile, String> {
+        // Canvas transforms are normally flushed on an idle timer. A save (or
+        // autosave/quit) can happen before that timer fires, so always copy
+        // the current canvas state first: the snapshot must match the screen.
+        self.commit_canvas_layers();
         self.cache_pending_outputs();
         self.editor.assets.retain_used(&self.snarl);
         let snapshot = self.snapshot();
@@ -457,6 +461,9 @@ impl CompNodeApp {
         self.editor.assets = assets;
         self.images_need_load = true;
         self.snarl = snarl;
+        // Drop canvas items left over from the previous document so they can't
+        // shadow the restored layer transforms.
+        self.image_canvas.reset_graph();
         self.editor.reset_view();
         self.session_path = Some(path.to_path_buf());
         self.set_notice(
@@ -753,6 +760,7 @@ impl CompNodeApp {
     fn clear(&mut self) {
         self.snarl = Snarl::default();
         crate::graph::ensure_output_node(&mut self.snarl);
+        self.image_canvas.reset_graph();
         self.editor.reset_view();
         self.session_path = None;
     }
@@ -1011,53 +1019,70 @@ impl CompNodeApp {
         // Write transforms/order back to the viewer layers once,
         // after the canvas has been idle for 3s (not every frame).
         if self.image_canvas.take_stable_commit(0.3) {
-            let canvas_transforms: std::collections::HashMap<
-                egui_snarl::NodeId,
-                (egui::Vec2, egui::Vec2, f32),
-            > = self
-                .image_canvas
-                .layers()
-                .map(|l| (l.id, (l.center, l.size, l.angle)))
-                .collect();
-            let canvas_layer_order: Vec<egui_snarl::NodeId> =
-                self.image_canvas.layers().map(|l| l.id).collect();
-
-            let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
-                self.snarl.get_node_info(*id).is_some()
-                    && self.snarl[*id]
-                        .filter_node()
-                        .map(|f| f.kind == crate::model::FilterKind::Group)
-                        .unwrap_or(false)
-            });
-            // fallback: single output node
-            let target_id = edited_id.or_else(|| {
-                self.snarl
-                    .node_ids()
-                    .find(|(_, n)| n.viewer_node().is_some())
-                    .map(|(id, _)| id)
-            });
-
-            if let Some(tid) = target_id {
-                if let Some(layers) = self.snarl[tid].layers_mut() {
-                    for layer in layers.iter_mut() {
-                        if let Some((center, size, angle)) = canvas_transforms.get(&layer.source) {
-                            layer.center = *center;
-                            layer.size = *size;
-                            layer.angle = *angle;
-                        }
-                    }
-                    layers.sort_by_key(|l| {
-                        canvas_layer_order
-                            .iter()
-                            .position(|id| *id == l.source)
-                            .unwrap_or(usize::MAX)
-                    });
-                }
-            }
+            self.commit_canvas_layers();
+            // A canvas transform is session state even when no node changed.
+            // `autosave_tick` only re-checks the graph after an edit, and this
+            // commit happens with no input activity, so schedule the save here.
+            self.autosave_due
+                .get_or_insert_with(|| Instant::now() + Duration::from_millis(700));
+        } else if self.image_canvas.has_uncommitted_transform() {
+            // The idle commit needs a frame after the timeout. Request one so
+            // it (and the autosave it schedules) is not delayed until the next
+            // mouse move.
+            ctx.request_repaint_after(Duration::from_millis(350));
         }
 
         // Render the image canvas widget in the sidebar.
         self.image_canvas.show(ui, &self.settings);
+    }
+
+    /// Copy the canvas item transforms/order into the edited Group or Output
+    /// node. Also called before saving so a session never captures a stale
+    /// transform that is still waiting for the idle timer.
+    fn commit_canvas_layers(&mut self) {
+        let canvas_transforms: std::collections::HashMap<
+            egui_snarl::NodeId,
+            (egui::Vec2, egui::Vec2, f32),
+        > = self
+            .image_canvas
+            .layers()
+            .map(|l| (l.id, (l.center, l.size, l.angle)))
+            .collect();
+        let canvas_layer_order: Vec<egui_snarl::NodeId> =
+            self.image_canvas.layers().map(|l| l.id).collect();
+
+        let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
+            self.snarl.get_node_info(*id).is_some()
+                && self.snarl[*id]
+                    .filter_node()
+                    .map(|f| f.kind == crate::model::FilterKind::Group)
+                    .unwrap_or(false)
+        });
+        // fallback: single output node
+        let target_id = edited_id.or_else(|| {
+            self.snarl
+                .node_ids()
+                .find(|(_, n)| n.viewer_node().is_some())
+                .map(|(id, _)| id)
+        });
+
+        if let Some(tid) = target_id {
+            if let Some(layers) = self.snarl[tid].layers_mut() {
+                for layer in layers.iter_mut() {
+                    if let Some((center, size, angle)) = canvas_transforms.get(&layer.source) {
+                        layer.center = *center;
+                        layer.size = *size;
+                        layer.angle = *angle;
+                    }
+                }
+                layers.sort_by_key(|l| {
+                    canvas_layer_order
+                        .iter()
+                        .position(|id| *id == l.source)
+                        .unwrap_or(usize::MAX)
+                });
+            }
+        }
     }
 }
 
