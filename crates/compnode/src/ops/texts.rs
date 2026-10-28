@@ -166,6 +166,7 @@ fn draw_line(
 
 struct Layout<'a> {
     rows: Vec<(&'a str, f32, [u8; 3], f32)>, // text, size, color, baseline (block-local, top = 0)
+    widths: Vec<f32>,                        // pen width of each row
     width: f32,                              // widest pen width
     spacing: f32,                            // letter spacing at this scale
     fx: Fx,                                  // effects at this scale
@@ -195,6 +196,7 @@ fn layout<'a>(
     let spacing = letter_spacing * s;
 
     let mut rows = Vec::with_capacity(lines.len());
+    let mut widths = Vec::with_capacity(lines.len());
     let mut cursor_y = 0.0f32;
     let mut width = 0.0f32;
     for &(line, size, color) in lines {
@@ -207,12 +209,14 @@ fn layout<'a>(
             .sum::<f32>()
             + spacing * line.chars().count().saturating_sub(1) as f32;
         width = width.max(pen);
+        widths.push(pen);
         rows.push((line, size, color, baseline));
         // Space between rows = your gap, plus what the outline and extrusion occupy.
         cursor_y = baseline + gap + fx.outer() * 2.0 + fx.depth as f32 * fx.dir.1.abs() as f32;
     }
     Layout {
         rows,
+        widths,
         width,
         spacing,
         fx,
@@ -257,14 +261,34 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
         natural
     };
 
-    // 3. Draw straight into the canvas.
+    // 3. Draw straight into the canvas, anchored to its bottom-left corner.
     let reach = lay.fx.reach().ceil();
     let x0 = margin + reach;
-    let y_shift = margin + reach; // block top is 0, so baselines move down by this
+    let inner_w = (cw as f32 - 2.0 * x0).max(1.0);
+    let centered = params::string(params, "align", "left") == "center";
+    let xs: Vec<f32> = lay
+        .widths
+        .iter()
+        .map(|&pen| {
+            if centered {
+                x0 + (inner_w - pen) * 0.5
+            } else {
+                x0
+            }
+        })
+        .collect();
+
+    // Bottom of the text block = last baseline plus its descender. `reach`
+    // keeps room below the glyphs for shadows/outlines/extrusion.
+    let descent = lay.rows.last().map_or(0.0, |&(_, size, _, _)| {
+        (-font.as_scaled(size).descent()).max(0.0)
+    });
+    let block_h = lay.rows.last().map_or(0.0, |&(_, _, _, baseline)| baseline) + descent;
+    let y_shift = (ch as f32 - margin - reach - block_h).max(margin + reach);
 
     if lay.fx.is_plain() {
         let mut img = RgbaImage::new(cw, ch);
-        for (line, size, color, baseline) in &lay.rows {
+        for ((line, size, color, baseline), &x) in lay.rows.iter().zip(&xs) {
             draw_line(
                 &mut img,
                 &font,
@@ -272,7 +296,7 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
                 line,
                 *color,
                 lay.spacing,
-                x0,
+                x,
                 baseline + y_shift,
             );
         }
@@ -281,9 +305,9 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
         effects::render_styled(
             &font,
             &lay.rows,
+            &xs,
             &lay.fx,
             lay.spacing,
-            x0,
             y_shift,
             cw as usize,
             ch as usize,

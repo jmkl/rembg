@@ -225,9 +225,9 @@ fn line_mask(
 pub fn render_styled(
     font: &FontRef,
     rows: &[(&str, f32, [u8; 3], f32)], // text, size, color, baseline
+    xs: &[f32],                         // pen start x per row
     fx: &Fx,
     letter_spacing: f32,
-    x0: f32,
     y_shift: f32,
     w: usize,
     h: usize,
@@ -240,15 +240,17 @@ pub fn render_styled(
     }
 
     let outer = fx.outer();
+    debug_assert_eq!(xs.len(), rows.len());
     let prepared: Vec<Prepared> = rows
         .iter()
-        .map(|(line, size, color, baseline)| {
+        .zip(xs)
+        .map(|((line, size, color, baseline), &x)| {
             let glyph = line_mask(
                 font,
                 *size,
                 line,
                 letter_spacing,
-                x0,
+                x,
                 baseline + y_shift,
                 w,
                 h,

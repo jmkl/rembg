@@ -176,6 +176,16 @@ pub(crate) fn show_body(
             changed = true;
         }
 
+        // Horizontal alignment of the stacked rows: left or centred.
+        let mut centered = params::string(params, "align", "left") == "center";
+        if ui
+            .add(Checkbox::new(&mut centered, "Center text"))
+            .changed()
+        {
+            params::set_string(params, "align", if centered { "center" } else { "left" });
+            changed = true;
+        }
+
         egui::CollapsingHeader::new("Letter Gap & Spacing")
             .default_open(false)
             .show(ui, |ui| {
@@ -251,19 +261,9 @@ pub(crate) fn show_body(
             egui::CollapsingHeader::new("3D depth")
                 .default_open(false)
                 .show(ui, |ui| {
-                    changed |= param_slider(
-                        ui,
-                        params,
-                        "depth",
-                        "Depth",
-                        0.0..=30.0,
-                        0.0,
-                        " px",
-                        1.0,
-                        0,
-                    );
                     changed |=
-                        param_color(ui, params, "depth_color", "Side color", Color32::BLACK);
+                        param_slider(ui, params, "depth", "Depth", 0.0..=30.0, 0.0, " px", 1.0, 0);
+                    changed |= param_color(ui, params, "depth_color", "Side color", Color32::BLACK);
                     changed |= param_slider(
                         ui,
                         params,
