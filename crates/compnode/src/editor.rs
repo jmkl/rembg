@@ -28,6 +28,13 @@ pub(crate) struct GraphEditor {
     pub(crate) to_global: egui::emath::TSTransform,
     pub(crate) assets: AssetStore,
     pub(crate) node_rects: std::collections::HashMap<egui_snarl::NodeId, egui::Rect>,
+    /// Screen-space Y of each pin row, recorded while the node is drawn. Wires
+    /// are straight lines between the node edges and these heights, which is
+    /// all the cut gesture needs.
+    input_pin_y: std::collections::HashMap<InPinId, f32>,
+    output_pin_y: std::collections::HashMap<OutPinId, f32>,
+    /// Active Ctrl+drag wire cut (Blender-style). Screen coordinates.
+    cut_drag: Option<CutDrag>,
     jobs: std::sync::mpsc::Sender<WorkerRequest>,
     next_token: u64,
     /// ID for the Snarl widget's temporary view state. Replaced when the graph
@@ -46,6 +53,14 @@ pub(crate) struct GraphEditor {
     image_memory: ImageMemory,
 }
 
+/// Path of a Ctrl+drag wire cut, in screen coordinates.
+#[derive(Clone, Copy)]
+struct CutDrag {
+    start: egui::Pos2,
+    last: egui::Pos2,
+    clip: egui::Rect,
+}
+
 impl GraphEditor {
     pub(crate) fn new(jobs: std::sync::mpsc::Sender<WorkerRequest>) -> Self {
         Self {
@@ -53,6 +68,9 @@ impl GraphEditor {
             to_global: egui::emath::TSTransform::IDENTITY,
             assets: AssetStore::default(),
             node_rects: std::collections::HashMap::new(),
+            input_pin_y: std::collections::HashMap::new(),
+            output_pin_y: std::collections::HashMap::new(),
+            cut_drag: None,
             jobs,
             next_token: 1,
             view_id: egui::Id::new("snarl"),
@@ -83,6 +101,113 @@ impl GraphEditor {
         self.node_pressed = false;
         self.image_memory.clear();
         self.node_rects.clear();
+        self.input_pin_y.clear();
+        self.output_pin_y.clear();
+        self.cut_drag = None;
+    }
+
+    /// Start a Blender-style wire cut when Ctrl+primary is pressed on empty
+    /// graph background. Called before the Snarl widget so the started drag
+    /// does not pan the canvas (`current_transform` suppresses that).
+    pub(crate) fn begin_cut_drag(&mut self, ctx: &egui::Context, graph_rect: egui::Rect) {
+        let Some(start) = ctx.input(|input| {
+            (input.modifiers.command && input.pointer.primary_pressed())
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        }) else {
+            return;
+        };
+        if !graph_rect.contains(start) {
+            return;
+        }
+        // Never start over a node (or its pins), so Ctrl+click on a node still
+        // toggles its selection.
+        if self
+            .node_rects
+            .values()
+            .any(|rect| rect.expand(6.0).contains(start))
+        {
+            return;
+        }
+        self.cut_drag = Some(CutDrag {
+            start,
+            last: start,
+            clip: graph_rect,
+        });
+    }
+
+    /// Finish a Ctrl+drag wire cut. Runs after the Snarl widget has drawn, so
+    /// this frame's pin heights are available. Every wire crossing the gesture
+    /// is disconnected.
+    pub(crate) fn update_cut_drag(&mut self, ctx: &egui::Context, snarl: &mut Snarl<Node>) {
+        let Some(drag) = self.cut_drag.as_mut() else {
+            return;
+        };
+        if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos()) {
+            drag.last = pointer;
+        }
+
+        let down = ctx.input(|input| input.pointer.primary_down());
+        if down {
+            // Cut preview: a thin bright line with a soft dark outline.
+            // `Order::Middle` keeps it above the canvas but below popups.
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new("snarl_cut_gesture"),
+            ));
+            let painter = painter.with_clip_rect(drag.clip);
+            painter.line_segment(
+                [drag.start, drag.last],
+                Stroke::new(4.0, egui::Color32::from_black_alpha(120)),
+            );
+            painter.line_segment(
+                [drag.start, drag.last],
+                Stroke::new(1.5, egui::Color32::from_rgb(255, 90, 90)),
+            );
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+            ctx.request_repaint();
+            return;
+        }
+
+        let (start, end) = (drag.start, drag.last);
+        self.cut_drag = None;
+        if start.distance(end) < 4.0 {
+            return;
+        }
+        self.cut_wires(snarl, start, end);
+        // The sidebar layer list and canvas need to reflect the removed wires.
+        ctx.request_repaint();
+    }
+
+    /// Disconnect every wire whose straight line crosses `from`–`to`.
+    fn cut_wires(&mut self, snarl: &mut Snarl<Node>, from: egui::Pos2, to: egui::Pos2) {
+        let wires: Vec<(OutPinId, InPinId)> = snarl
+            .wires()
+            .filter(|(out, input)| {
+                let (Some(out_rect), Some(in_rect)) = (
+                    self.node_rects.get(&out.node),
+                    self.node_rects.get(&input.node),
+                ) else {
+                    return false;
+                };
+                let (Some(out_y), Some(in_y)) =
+                    (self.output_pin_y.get(out), self.input_pin_y.get(input))
+                else {
+                    return false;
+                };
+                segments_intersect(
+                    from,
+                    to,
+                    egui::pos2(out_rect.right(), *out_y),
+                    egui::pos2(in_rect.left(), *in_y),
+                )
+            })
+            .collect();
+
+        for (out, input) in wires {
+            snarl.disconnect(out, input);
+            invalidate_node(snarl, input.node);
+        }
     }
 
     pub(crate) fn touch_image(&mut self, node: NodeId) {
@@ -211,9 +336,11 @@ impl GraphEditor {
     pub(crate) fn finish_frame(
         &mut self,
         ctx: &egui::Context,
-        snarl: &Snarl<Node>,
+        snarl: &mut Snarl<Node>,
         canvas: &egui::Response,
     ) -> bool {
+        self.update_cut_drag(ctx, snarl);
+
         self.selected
             .retain(|node| snarl.get_node_info(*node).is_some());
 
@@ -665,11 +792,12 @@ impl SnarlViewer<Node> for GraphEditor {
             snarl.open_node(node, !open);
         }
 
-        // Title (centre).
+        // Title (centre). Match the sidebar layer list naming so the node a
+        // layer comes from is identifiable at a glance: `{type} #{node id}`.
         ui.painter().text(
             title.center(),
             Align2::CENTER_CENTER,
-            spec.title,
+            format!("{} #{}", spec.title, node.0),
             FontId::proportional(font::BUTTON),
             pal::HEADER_TEXT,
         );
@@ -699,6 +827,7 @@ impl SnarlViewer<Node> for GraphEditor {
         // Square pins for multi-input nodes (Group, Output) and nodes that receive layers
         let spec = catalog::spec(snarl[pin.id.node].kind());
         let is_multi = spec.multi_input;
+        self.input_pin_y.insert(pin.id, pin_screen_y(ui));
         // Remove label - connectors should not have labels
         if is_multi {
             return PinInfo::square()
@@ -711,10 +840,11 @@ impl SnarlViewer<Node> for GraphEditor {
 
     fn show_output(
         &mut self,
-        _pin: &OutPin,
+        pin: &OutPin,
         ui: &mut egui::Ui,
         _snarl: &mut Snarl<Node>,
     ) -> impl SnarlPin + 'static {
+        self.output_pin_y.insert(pin.id, pin_screen_y(ui));
         socket(ui, "")
     }
 
@@ -880,9 +1010,54 @@ impl SnarlViewer<Node> for GraphEditor {
         to_global: &mut egui::emath::TSTransform,
         _snarl: &mut Snarl<Node>,
     ) {
+        // Pin heights are recorded again while this frame's nodes are drawn.
+        self.input_pin_y.clear();
+        self.output_pin_y.clear();
+
+        // egui-snarl's `Scene` pans on primary drag for every button. While a
+        // Ctrl+drag cut is active the canvas must stay put.
+        if self.cut_drag.is_some() {
+            to_global.translation = self.to_global.translation;
+        }
+
         self.to_global = *to_global;
         self.zoom = to_global.scaling.max(0.05);
     }
+}
+
+/// Screen-space Y of the pin row currently being drawn.
+fn pin_screen_y(ui: &egui::Ui) -> f32 {
+    let to_global = ui
+        .ctx()
+        .layer_transform_to_global(ui.layer_id())
+        .unwrap_or(egui::emath::TSTransform::IDENTITY);
+    (to_global * ui.max_rect().center()).y
+}
+
+/// Whether the line segments `a`–`b` and `c`–`d` cross or touch.
+fn segments_intersect(a: egui::Pos2, b: egui::Pos2, c: egui::Pos2, d: egui::Pos2) -> bool {
+    fn cross(p: egui::Pos2, q: egui::Pos2, r: egui::Pos2) -> f32 {
+        (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+    }
+    fn on_segment(p: egui::Pos2, q: egui::Pos2, r: egui::Pos2) -> bool {
+        q.x >= p.x.min(r.x) && q.x <= p.x.max(r.x) && q.y >= p.y.min(r.y) && q.y <= p.y.max(r.y)
+    }
+
+    let d1 = cross(c, d, a);
+    let d2 = cross(c, d, b);
+    let d3 = cross(a, b, c);
+    let d4 = cross(a, b, d);
+
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+
+    (d1 == 0.0 && on_segment(c, a, d))
+        || (d2 == 0.0 && on_segment(c, b, d))
+        || (d3 == 0.0 && on_segment(a, c, b))
+        || (d4 == 0.0 && on_segment(a, d, b))
 }
 
 /// Full-resolution file that a processing node should consume: the output of
@@ -961,5 +1136,80 @@ fn filter_input(snarl: &Snarl<Node>, node: NodeId, assets: &AssetStore) -> Optio
                 return None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cut_segment_detects_crossings() {
+        let a = egui::pos2(0.0, 0.0);
+        let b = egui::pos2(100.0, 0.0);
+
+        // Perpendicular crossing.
+        assert!(segments_intersect(
+            a,
+            b,
+            egui::pos2(50.0, -10.0),
+            egui::pos2(50.0, 10.0),
+        ));
+        // Parallel, no crossing.
+        assert!(!segments_intersect(
+            a,
+            b,
+            egui::pos2(0.0, 10.0),
+            egui::pos2(100.0, 10.0),
+        ));
+        // Crosses the infinite line but not the segment.
+        assert!(!segments_intersect(
+            a,
+            b,
+            egui::pos2(150.0, -10.0),
+            egui::pos2(150.0, 10.0),
+        ));
+        // Touching an endpoint still cuts.
+        assert!(segments_intersect(
+            a,
+            b,
+            egui::pos2(100.0, 0.0),
+            egui::pos2(100.0, 10.0),
+        ));
+    }
+
+    #[test]
+    fn cut_gesture_disconnects_only_crossed_wires() {
+        let (jobs, _jobs_rx) = std::sync::mpsc::channel();
+        let mut editor = GraphEditor::new(jobs);
+        let mut snarl = Snarl::new();
+
+        let image = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/a.png"));
+        let filter = snarl.insert_node(egui::pos2(300.0, 0.0), Node::remove_bg());
+        let from = OutPinId {
+            node: image,
+            output: 0,
+        };
+        let to = InPinId {
+            node: filter,
+            input: 0,
+        };
+        snarl.connect(from, to);
+
+        let image_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
+        let filter_rect =
+            egui::Rect::from_min_size(egui::pos2(300.0, 0.0), egui::vec2(200.0, 100.0));
+        editor.node_rects.insert(image, image_rect);
+        editor.node_rects.insert(filter, filter_rect);
+        editor.output_pin_y.insert(from, 50.0);
+        editor.input_pin_y.insert(to, 50.0);
+
+        // A swipe below the wire leaves it connected.
+        editor.cut_wires(&mut snarl, egui::pos2(250.0, 70.0), egui::pos2(250.0, 90.0));
+        assert_eq!(snarl.wires().count(), 1);
+
+        // A swipe across the wire cuts it.
+        editor.cut_wires(&mut snarl, egui::pos2(250.0, 20.0), egui::pos2(250.0, 80.0));
+        assert_eq!(snarl.wires().count(), 0);
     }
 }

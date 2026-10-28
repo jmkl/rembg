@@ -1293,6 +1293,7 @@ impl App for CompNodeApp {
 
         let central = egui::CentralPanel::default().show(ui, |ui| {
             let view_id = self.editor.view_id();
+            self.editor.begin_cut_drag(ui.ctx(), ui.max_rect());
             SnarlWidget::new().id(view_id).style(self.style).show(
                 &mut self.snarl,
                 &mut self.editor,
@@ -1300,7 +1301,9 @@ impl App for CompNodeApp {
             )
         });
         let snarl_response = central.inner;
-        let graph_background_clicked = self.editor.finish_frame(&ctx, &self.snarl, &snarl_response);
+        let graph_background_clicked =
+            self.editor
+                .finish_frame(&ctx, &mut self.snarl, &snarl_response);
         if graph_background_clicked {
             // Match the graph's node deselection: clicking empty graph space
             // also dismisses the sidebar layer selection and its canvas gizmos.
