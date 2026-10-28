@@ -40,6 +40,9 @@ const DRAG_HANDLE_DOT: f32 = 4.0;
 const DRAG_HANDLE_GAP: f32 = 3.0;
 const DRAG_HANDLE_SIZE: f32 = 24.0;
 const SNAP_PX: f32 = 6.0;
+/// Alpha above which a pixel counts as visible ink for the Texts content
+/// rect. Soft shadows fade below this, so the frame hugs what the eye sees.
+const CONTENT_ALPHA: u8 = 8;
 
 const SCALE_HANDLES: [(i8, i8); 8] = [
     (-1, -1),
@@ -137,6 +140,17 @@ pub struct Item {
     /// Size is still the provisional default and must be fitted once the
     /// real image dimensions are known.
     fit_pending: bool,
+    /// Pixel dimensions of the image currently backing `tex`. Used to refit
+    /// the layer only when the real resolution changes (e.g. preview ->
+    /// full-res), without resetting user transforms on same-size re-renders.
+    tex_dims: (u32, u32),
+    /// Normalized `[u0, v0, u1, v1]` of the non-transparent part of `tex`.
+    ///
+    /// Texts is rasterized on a full canvas-sized bitmap, with the ink (plus
+    /// outlines/shadow/extrusion) occupying only a small region. `size` stays
+    /// canvas-sized so the Viewer and Group export keep working, but the
+    /// canvas gizmo, hit-testing and mesh UVs use this tighter rect.
+    content_uv: Option<[f32; 4]>,
 }
 
 impl Item {
@@ -148,32 +162,83 @@ impl Item {
         }
     }
 
+    fn is_text(&self) -> bool {
+        self.kind == Kind::Filter(FilterKind::Texts)
+    }
+
+    /// Visible content bounds in local (unrotated) coordinates, relative to
+    /// `center`. Without a content rect this is the full texture.
+    fn local_bounds(&self) -> (Vec2, Vec2) {
+        match self.content_uv {
+            Some([u0, v0, u1, v1]) => (
+                vec2((u0 - 0.5) * self.size.x, (v0 - 0.5) * self.size.y),
+                vec2((u1 - 0.5) * self.size.x, (v1 - 0.5) * self.size.y),
+            ),
+            None => (
+                vec2(-self.size.x * 0.5, -self.size.y * 0.5),
+                vec2(self.size.x * 0.5, self.size.y * 0.5),
+            ),
+        }
+    }
+
+    /// Size of the visible content in canvas units.
+    fn content_size(&self) -> Vec2 {
+        let (min, max) = self.local_bounds();
+        max - min
+    }
+
     fn to_local(&self, p: Vec2) -> Vec2 {
         rot(p - self.center, -self.angle)
     }
 
     fn contains(&self, p: Vec2) -> bool {
         let l = self.to_local(p);
-        l.x.abs() <= self.size.x / 2.0 && l.y.abs() <= self.size.y / 2.0
+        let (min, max) = self.local_bounds();
+        l.x >= min.x && l.x <= max.x && l.y >= min.y && l.y <= max.y
     }
 
     fn corners(&self) -> [Vec2; 4] {
-        let (hw, hh) = (self.size.x / 2.0, self.size.y / 2.0);
-        [vec2(-hw, -hh), vec2(hw, -hh), vec2(hw, hh), vec2(-hw, hh)]
-            .map(|l| self.center + rot(l, self.angle))
+        let (min, max) = self.local_bounds();
+        [
+            vec2(min.x, min.y),
+            vec2(max.x, min.y),
+            vec2(max.x, max.y),
+            vec2(min.x, max.y),
+        ]
+        .map(|l| self.center + rot(l, self.angle))
     }
 
     fn handle_pos(&self, h: Handle, rot_dist: f32) -> Vec2 {
+        let (min, max) = self.local_bounds();
+        let (cx, cy) = ((min.x + max.x) * 0.5, (min.y + max.y) * 0.5);
         let local = match h {
-            Handle::Scale(sx, sy) => {
-                vec2(sx as f32 * self.size.x / 2.0, sy as f32 * self.size.y / 2.0)
-            }
-            Handle::Rotate => vec2(0.0, -self.size.y / 2.0 - rot_dist),
+            Handle::Scale(sx, sy) => vec2(
+                if sx < 0 {
+                    min.x
+                } else if sx > 0 {
+                    max.x
+                } else {
+                    cx
+                },
+                if sy < 0 {
+                    min.y
+                } else if sy > 0 {
+                    max.y
+                } else {
+                    cy
+                },
+            ),
+            Handle::Rotate => vec2(cx, min.y - rot_dist),
         };
         self.center + rot(local, self.angle)
     }
 
     fn hit_handle(&self, p: Vec2, tol: f32, rot_dist: f32) -> Option<Handle> {
+        // Texts layers are move-only: scaling or rotating the full-canvas
+        // bitmap would drag the baked content around instead of resizing it.
+        if self.is_text() {
+            return None;
+        }
         std::iter::once(Handle::Rotate)
             .chain(SCALE_HANDLES.iter().map(|&(x, y)| Handle::Scale(x, y)))
             .find(|&h| (self.handle_pos(h, rot_dist) - p).length() <= tol)
@@ -208,6 +273,45 @@ fn fit_inside(dims: (u32, u32), canvas: Vec2) -> Vec2 {
     let (w, h) = (dims.0.max(1) as f32, dims.1.max(1) as f32);
     let k = (canvas.x * 0.8 / w).min(canvas.y * 0.8 / h).min(1.0);
     vec2(w * k, h * k)
+}
+
+/// Normalized `[u0, v0, u1, v1]` of the pixels whose alpha exceeds
+/// `threshold`. `None` for a fully transparent image.
+///
+/// Scans row slices instead of `enumerate_pixels` so empty rows cost almost
+/// nothing, which matters for the canvas-sized Texts bitmap.
+fn alpha_content_uv(img: &RgbaImage, threshold: u8) -> Option<[f32; 4]> {
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let raw = img.as_raw();
+    let stride = w as usize * 4;
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, 0u32, 0u32);
+    let mut found = false;
+    for y in 0..h as usize {
+        let row = &raw[y * stride..(y + 1) * stride];
+        let Some(first) = row.chunks_exact(4).position(|p| p[3] > threshold) else {
+            continue;
+        };
+        let last = row
+            .chunks_exact(4)
+            .rposition(|p| p[3] > threshold)
+            .unwrap_or(first);
+        found = true;
+        min_x = min_x.min(first as u32);
+        max_x = max_x.max(last as u32);
+        min_y = min_y.min(y as u32);
+        max_y = y as u32;
+    }
+    found.then(|| {
+        [
+            min_x as f32 / w as f32,
+            min_y as f32 / h as f32,
+            (max_x + 1) as f32 / w as f32,
+            (max_y + 1) as f32 / h as f32,
+        ]
+    })
 }
 
 fn group_handle_pos(bb: (Vec2, Vec2), h: Handle, rot_dist: f32) -> Vec2 {
@@ -532,28 +636,30 @@ impl ImageCanvas {
         let canvas_size = self.canvas_size;
         for (source_id, source_kind, source_name, preview, path, saved, use_preview) in layers {
             let use_preview = *use_preview;
+            let is_text = *source_kind == Kind::Filter(FilterKind::Texts);
             // Ask the cache first: hit = already a CPU image + texture.
             let cached = path
                 .as_deref()
                 .and_then(|p| self.cache.get_or_load(ctx, p))
-                .map(|c| (c.texture.clone(), c.dims));
+                .map(|c| (c.texture.clone(), c.dims, c.cpu.clone()));
 
             // Texture selection: the on-disk file is the highest-quality
             // correct content *when it is the node's own output*. For a
             // plain filter without its own output the preview texture is the
             // only correct content, so it wins even though it is low-res.
-            let (display_tex, display_dims) = if use_preview {
+            // The CPU image is only available when the cached file is used.
+            let (display_tex, display_dims, cached_cpu) = if use_preview {
                 if let Some(p) = preview.clone() {
-                    (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
-                } else if let Some(c) = cached.clone() {
-                    c
+                    (p.clone(), (p.size()[0] as u32, p.size()[1] as u32), None)
+                } else if let Some((tex, dims, cpu)) = cached.clone() {
+                    (tex, dims, Some(cpu))
                 } else {
                     continue;
                 }
-            } else if let Some(c) = cached.clone() {
-                c
+            } else if let Some((tex, dims, cpu)) = cached.clone() {
+                (tex, dims, Some(cpu))
             } else if let Some(p) = preview.clone() {
-                (p.clone(), (p.size()[0] as u32, p.size()[1] as u32))
+                (p.clone(), (p.size()[0] as u32, p.size()[1] as u32), None)
             } else {
                 continue;
             };
@@ -581,10 +687,19 @@ impl ImageCanvas {
                         tex_is_full: false,
                         visible: true,
                         center: snap.map_or(canvas_size / 2.0, |s| s.center),
-                        size: snap.map_or(vec2(200.0, 200.0), |s| s.size),
+                        // Texts always maps its full canvas-sized raster.
+                        size: if is_text {
+                            canvas_size
+                        } else {
+                            snap.map_or(vec2(200.0, 200.0), |s| s.size)
+                        },
                         angle: snap.map_or(0.0, |s| s.angle),
                         source_path: path.clone(),
                         fit_pending: snap.is_none(),
+                        // A restored transform is authoritative: don't refit it
+                        // just because the texture dims arrive now.
+                        tex_dims: if snap.is_some() { display_dims } else { (0, 0) },
+                        content_uv: None,
                     });
                     self.items.len() - 1
                 }
@@ -598,19 +713,39 @@ impl ImageCanvas {
                 it.tex_is_full = false;
             }
 
-            if it.tex.as_ref().map(|t| t.id()) != Some(display_tex.id()) {
+            let tex_changed = it.tex.as_ref().map(|t| t.id()) != Some(display_tex.id());
+            if tex_changed {
                 it.tex = Some(display_tex.clone());
             }
 
-            if it.fit_pending {
-                it.size = fit_inside(display_dims, canvas_size);
+            // Only refit when the real resolution changes. A same-size
+            // re-render (e.g. tweaking a filter) must not reset the user's
+            // scale.
+            let dims_changed = it.tex_dims != display_dims;
+            if it.fit_pending || dims_changed {
+                // Texts is rasterized at the canvas resolution; anything else
+                // is fitted into the canvas at its natural aspect.
+                it.size = if is_text {
+                    canvas_size
+                } else {
+                    fit_inside(display_dims, canvas_size)
+                };
                 it.fit_pending = false;
-            } else {
-                // Texture changed (e.g., preview -> full-res): refit to new dimensions
-                let texture_changed = it.tex.as_ref().map(|t| t.id()) != Some(display_tex.id());
-                if texture_changed {
-                    it.size = fit_inside(display_dims, canvas_size);
+            }
+            it.tex_dims = display_dims;
+
+            // Tight content rect for canvas-sized layers that are mostly
+            // transparent (Texts ink + outline/shadow/3D). Recomputed from the
+            // full-res CPU pixels only when a new texture arrives; forced syncs
+            // run every 750 ms and must not rescan the bitmap.
+            if is_text {
+                if tex_changed {
+                    it.content_uv = cached_cpu
+                        .as_deref()
+                        .and_then(|img| alpha_content_uv(img, CONTENT_ALPHA));
                 }
+            } else {
+                it.content_uv = None;
             }
             it.tex_is_full = true;
         }
@@ -814,12 +949,20 @@ impl ImageCanvas {
             {
                 ui.separator();
 
-                // Single-layer X/Y are the unrotated layer's top-left.
-                let mut x = node.center.x - node.size.x * 0.5;
-                let mut y = node.center.y - node.size.y * 0.5;
-                let aspect_ratio = node.size.x / node.size.y;
-                let mut width = node.size.x;
-                let mut height = node.size.y;
+                // Single-layer X/Y are the unrotated layer's top-left. For
+                // Texts they describe the tight content rect: the texture
+                // itself is canvas-sized, and W/H follow the node's raster
+                // size, so only X/Y are editable.
+                let is_text = node.is_text();
+                let (lmin, _) = node.local_bounds();
+                let content = node.content_size();
+                let orig_x = node.center.x + lmin.x;
+                let orig_y = node.center.y + lmin.y;
+                let mut x = orig_x;
+                let mut y = orig_y;
+                let aspect_ratio = content.x / content.y;
+                let mut width = content.x;
+                let mut height = content.y;
 
                 ui.horizontal(|ui| {
                     ui.label("X");
@@ -830,7 +973,8 @@ impl ImageCanvas {
 
                     ui.label("W");
                     let width_changed = ui
-                        .add(
+                        .add_enabled(
+                            !is_text,
                             egui::DragValue::new(&mut width)
                                 .range(MIN_SIZE..=f32::MAX)
                                 .speed(1.0),
@@ -839,7 +983,8 @@ impl ImageCanvas {
 
                     ui.label("H");
                     let height_changed = ui
-                        .add(
+                        .add_enabled(
+                            !is_text,
                             egui::DragValue::new(&mut height)
                                 .range(MIN_SIZE..=f32::MAX)
                                 .speed(1.0),
@@ -848,7 +993,12 @@ impl ImageCanvas {
 
                     ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
 
-                    if x_changed || y_changed || width_changed || height_changed {
+                    if is_text {
+                        if x_changed || y_changed {
+                            node.center += vec2(x - orig_x, y - orig_y);
+                            transform_changed = true;
+                        }
+                    } else if x_changed || y_changed || width_changed || height_changed {
                         if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
                             if width_changed && !height_changed {
                                 height = width / aspect_ratio;
@@ -1417,15 +1567,6 @@ impl ImageCanvas {
     }
 
     fn canvas_ui(&mut self, ui: &mut egui::Ui, scale: f32) {
-        // Texts is rasterized at the canvas resolution, so its frame is pinned
-        // to the canvas instead of keeping an arbitrary layer size.
-        let canvas_size = self.canvas_size;
-        for it in &mut self.items {
-            if it.kind == Kind::Filter(FilterKind::Texts) {
-                it.size = canvas_size;
-            }
-        }
-
         let (resp, painter) =
             ui.allocate_painter(self.canvas_size * scale, Sense::click_and_drag());
         let rect = resp.rect;
@@ -1517,12 +1658,15 @@ impl ImageCanvas {
             }
             let Some(tex) = &it.tex else { continue };
             let c = it.corners();
-            let uvs = [
-                Pos2::new(0.0, 0.0),
-                Pos2::new(1.0, 0.0),
-                Pos2::new(1.0, 1.0),
-                Pos2::new(0.0, 1.0),
-            ];
+            let uvs = match it.content_uv {
+                Some([u0, v0, u1, v1]) => [pos2(u0, v0), pos2(u1, v0), pos2(u1, v1), pos2(u0, v1)],
+                None => [
+                    pos2(0.0, 0.0),
+                    pos2(1.0, 0.0),
+                    pos2(1.0, 1.0),
+                    pos2(0.0, 1.0),
+                ],
+            };
             let mut mesh = Mesh::with_texture(tex.id());
             for k in 0..4 {
                 mesh.vertices.push(Vertex {
@@ -1621,21 +1765,25 @@ impl ImageCanvas {
             let pts: Vec<Pos2> = it.corners().iter().map(|&c| to_screen(c)).collect();
             gp.add(Shape::closed_line(pts, Stroke::new(1.5, pal::ACCENT)));
 
-            let top_mid = to_screen(it.handle_pos(Handle::Scale(0, -1), rot_dist));
-            let rot_pos = to_screen(it.handle_pos(Handle::Rotate, rot_dist));
-            gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::ACCENT));
-            gp.circle(rot_pos, HANDLE_R, pal::WHITE, Stroke::new(2.0, pal::ACCENT));
+            // Texts layers are move-only (see `Item::hit_handle`), so only
+            // the frame is drawn for them.
+            if !it.is_text() {
+                let top_mid = to_screen(it.handle_pos(Handle::Scale(0, -1), rot_dist));
+                let rot_pos = to_screen(it.handle_pos(Handle::Rotate, rot_dist));
+                gp.line_segment([top_mid, rot_pos], Stroke::new(1.5, pal::ACCENT));
+                gp.circle(rot_pos, HANDLE_R, pal::WHITE, Stroke::new(2.0, pal::ACCENT));
 
-            for &(sx, sy) in &SCALE_HANDLES {
-                let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
-                let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
-                gp.rect_filled(r, CornerRadius::same(1), pal::WHITE);
-                gp.rect_stroke(
-                    r,
-                    CornerRadius::same(1),
-                    Stroke::new(2.0, pal::ACCENT),
-                    StrokeKind::Inside,
-                );
+                for &(sx, sy) in &SCALE_HANDLES {
+                    let c = to_screen(it.handle_pos(Handle::Scale(sx, sy), rot_dist));
+                    let r = Rect::from_center_size(c, Vec2::splat(HANDLE_R * 1.6));
+                    gp.rect_filled(r, CornerRadius::same(1), pal::WHITE);
+                    gp.rect_stroke(
+                        r,
+                        CornerRadius::same(1),
+                        Stroke::new(2.0, pal::ACCENT),
+                        StrokeKind::Inside,
+                    );
+                }
             }
         }
     }
@@ -1938,4 +2086,69 @@ fn snap1(val: f32, targets: &[f32], tol: f32) -> Option<(f32, f32)> {
         .map(|&t| (t - val, t))
         .filter(|(d, _)| d.abs() <= tol)
         .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alpha_content_uv;
+    use image::{Rgba, RgbaImage};
+
+    #[test]
+    fn alpha_content_uv_finds_ink_rect() {
+        let mut img = RgbaImage::from_pixel(10, 8, Rgba([0, 0, 0, 0]));
+        for y in 2..5 {
+            for x in 3..7 {
+                img.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        assert_eq!(alpha_content_uv(&img, 8), Some([0.3, 0.25, 0.7, 0.625]));
+    }
+
+    #[test]
+    fn alpha_content_uv_uses_threshold() {
+        let mut img = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 0]));
+        img.put_pixel(1, 1, Rgba([255, 255, 255, 4]));
+        assert_eq!(alpha_content_uv(&img, 8), None);
+        img.put_pixel(2, 2, Rgba([255, 255, 255, 9]));
+        assert_eq!(alpha_content_uv(&img, 8), Some([0.5, 0.5, 0.75, 0.75]));
+    }
+
+    #[test]
+    fn text_content_rect_drives_hit_testing() {
+        use crate::model::{FilterKind, Kind};
+        use eframe::egui::vec2;
+        use egui_snarl::NodeId;
+
+        let item = super::Item {
+            id: NodeId(0),
+            kind: Kind::Filter(FilterKind::Texts),
+            name: String::new(),
+            tex: None,
+            tex_is_full: false,
+            visible: true,
+            center: vec2(640.0, 360.0),
+            size: vec2(1280.0, 720.0),
+            angle: 0.0,
+            source_path: None,
+            fit_pending: false,
+            tex_dims: (1280, 720),
+            content_uv: Some([0.25, 0.5, 0.75, 0.9]),
+        };
+
+        let (min, max) = item.local_bounds();
+        assert!((min - vec2(-320.0, 0.0)).length() < 0.01);
+        assert!((max - vec2(320.0, 288.0)).length() < 0.01);
+        assert!((item.content_size() - vec2(640.0, 288.0)).length() < 0.01);
+
+        // Inside the ink rect, not the full canvas bitmap.
+        assert!(item.contains(vec2(640.0, 500.0)));
+        assert!(!item.contains(vec2(640.0, 100.0)));
+        assert!(!item.contains(vec2(100.0, 500.0)));
+
+        // Texts exposes no scale/rotate handles.
+        assert!(
+            item.hit_handle(item.handle_pos(super::Handle::Rotate, 10.0), 4.0, 10.0)
+                .is_none()
+        );
+    }
 }

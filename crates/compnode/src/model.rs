@@ -168,7 +168,12 @@ impl FilterKind {
             Self::Texts => {
                 params::set_string(&mut params, "font", "unisans");
                 params::set_string(&mut params, "align", "left");
+                params::set_bool(&mut params, "uppercase", true);
                 params::set_bool(&mut params, "effects", true);
+                params::set_bool(&mut params, "box", false);
+                params::set_string(&mut params, "box_color", "#000000");
+                params::set_f32(&mut params, "box_padding_x", 24.0);
+                params::set_f32(&mut params, "box_padding_y", 12.0);
                 params::set_f32(&mut params, "line_gap", -16.0);
                 params::set_f32(&mut params, "letter_spacing", -2.0);
                 params::set_f32(&mut params, "outline_width", 0.0);

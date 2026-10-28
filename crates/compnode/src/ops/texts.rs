@@ -224,7 +224,12 @@ fn layout<'a>(
 }
 
 pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, String> {
-    let text = params::string(params, "text", "");
+    let source = params::string(params, "text", "");
+    let text = if params::bool(params, "uppercase", true) {
+        source.to_uppercase()
+    } else {
+        source.to_owned()
+    };
     let font_id = params::string(params, "font", "inter");
     let font = FontRef::try_from_slice(font_bytes(font_id))
         .map_err(|err| format!("Could not load font: {err}"))?;
@@ -234,7 +239,7 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
     let letter_spacing = params::f32(params, "letter_spacing", 0.0).clamp(-256.0, 512.0);
     let margin = params::f32(params, "margin", 0.0).clamp(0.0, 512.0);
 
-    let lines: Vec<(&str, f32, [u8; 3])> = split_lines(text)
+    let lines: Vec<(&str, f32, [u8; 3])> = split_lines(&text)
         .iter()
         .enumerate()
         .map(|(i, &line)| {
@@ -286,7 +291,7 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
     let block_h = lay.rows.last().map_or(0.0, |&(_, _, _, baseline)| baseline) + descent;
     let y_shift = (ch as f32 - margin - reach - block_h).max(margin + reach);
 
-    if lay.fx.is_plain() {
+    let mut img = if lay.fx.is_plain() {
         let mut img = RgbaImage::new(cw, ch);
         for ((line, size, color, baseline), &x) in lay.rows.iter().zip(&xs) {
             draw_line(
@@ -300,7 +305,7 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
                 baseline + y_shift,
             );
         }
-        Ok(img)
+        img
     } else {
         effects::render_styled(
             &font,
@@ -312,6 +317,54 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
             cw as usize,
             ch as usize,
         )
-        .ok_or_else(|| "Could not build text image".to_owned())
+        .ok_or_else(|| "Could not build text image".to_owned())?
+    };
+
+    // 4. Optional backdrop box, composited underneath the text. Its bounds are
+    // the text block (widest rows) grown by the paddings.
+    if params::bool(params, "box", false) {
+        let pad_x = params::f32(params, "box_padding_x", 24.0).clamp(0.0, 1024.0);
+        let pad_y = params::f32(params, "box_padding_y", 12.0).clamp(0.0, 1024.0);
+        let left = xs.iter().copied().fold(f32::INFINITY, f32::min) - pad_x;
+        let right = xs
+            .iter()
+            .zip(&lay.widths)
+            .map(|(&x, &w)| x + w)
+            .fold(f32::NEG_INFINITY, f32::max)
+            + pad_x;
+        let rect = (left, y_shift - pad_y, right, y_shift + block_h + pad_y);
+        paint_box(
+            &mut img,
+            rect,
+            params::color(params, "box_color", "#000000"),
+        );
+    }
+
+    Ok(img)
+}
+
+/// Fill an axis-aligned rectangle with an opaque colour, compositing any text
+/// already drawn on top of it.
+fn paint_box(
+    img: &mut RgbaImage,
+    (left, top, right, bottom): (f32, f32, f32, f32),
+    color: [u8; 3],
+) {
+    let (cw, ch) = img.dimensions();
+    let x0 = left.floor().clamp(0.0, cw as f32) as u32;
+    let y0 = top.floor().clamp(0.0, ch as f32) as u32;
+    let x1 = right.ceil().clamp(0.0, cw as f32) as u32;
+    let y1 = bottom.ceil().clamp(0.0, ch as f32) as u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let pixel = img.get_pixel_mut(x, y);
+            let alpha = pixel.0[3] as f32 / 255.0;
+            for channel in 0..3 {
+                let src = pixel.0[channel] as f32 * alpha;
+                let dst = color[channel] as f32 * (1.0 - alpha);
+                pixel.0[channel] = (src + dst).round() as u8;
+            }
+            pixel.0[3] = 255;
+        }
     }
 }

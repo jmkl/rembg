@@ -186,6 +186,49 @@ pub(crate) fn show_body(
             changed = true;
         }
 
+        // Case handling for every rendered row.
+        let mut uppercase = params::bool(params, "uppercase", true);
+        if ui.add(Checkbox::new(&mut uppercase, "Uppercase")).changed() {
+            params::set_bool(params, "uppercase", uppercase);
+            changed = true;
+        }
+
+        // Backdrop rectangle painted underneath the text block.
+        egui::CollapsingHeader::new("Box")
+            .default_open(false)
+            .show(ui, |ui| {
+                let mut box_on = params::bool(params, "box", false);
+                if ui.add(Checkbox::new(&mut box_on, "Enable box")).changed() {
+                    params::set_bool(params, "box", box_on);
+                    changed = true;
+                }
+                ui.add_enabled_ui(box_on, |ui| {
+                    changed |= param_color(ui, params, "box_color", "Color", Color32::BLACK);
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "box_padding_x",
+                        "Padding X",
+                        0.0..=400.0,
+                        24.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "box_padding_y",
+                        "Padding Y",
+                        0.0..=400.0,
+                        12.0,
+                        " px",
+                        1.0,
+                        0,
+                    );
+                });
+            });
+
         egui::CollapsingHeader::new("Letter Gap & Spacing")
             .default_open(false)
             .show(ui, |ui| {
@@ -357,7 +400,11 @@ pub(crate) fn show_body(
 
         // One row per parsed line, each with its own size and colour.
         ui.add_space(6.0);
-        let lines = texts::split_lines(&text);
+        let case_text = match uppercase {
+            true => text.to_uppercase(),
+            false => text,
+        };
+        let lines = texts::split_lines(&case_text);
         let mut styles = texts::read_styles(params);
         let mut rows_changed = false;
         egui::Grid::new("text_line_styles")
