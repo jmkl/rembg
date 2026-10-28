@@ -478,9 +478,10 @@ impl GraphEditor {
         }
     }
 
-    /// Kick off a full-resolution Group render from on-disk source images.
-    /// Returns `false` when the node is not a Group, has no renderable layers
-    /// (e.g. a generator source without an output file) or the worker is gone.
+    /// Kick off a full-resolution Group/Blend render from on-disk source
+    /// images. Returns `false` when the node is not a layer-compositing
+    /// filter, has no renderable layers (e.g. a generator source without an
+    /// output file) or the worker is gone.
     pub(crate) fn start_group_render(
         &mut self,
         snarl: &mut Snarl<Node>,
@@ -491,14 +492,31 @@ impl GraphEditor {
         let Some(filter) = snarl[node].filter_node() else {
             return false;
         };
-        if filter.kind != crate::model::FilterKind::Group {
+        if !filter.kind.is_layer_kind() {
             return false;
         }
-        let canvas_vec = filter.canvas_size;
+        let is_blend = filter.kind == crate::model::FilterKind::Blend;
+        let canvas_vec = if filter.canvas_size.x < 1.0 || filter.canvas_size.y < 1.0 {
+            let (w, h) = crate::eval::canvas_size(snarl);
+            egui::vec2(w as f32, h as f32)
+        } else {
+            filter.canvas_size
+        };
         if canvas_vec.x < 1.0 || canvas_vec.y < 1.0 {
             return false;
         }
         let canvas = (canvas_vec.x as u32, canvas_vec.y as u32);
+
+        // Blend keeps its base/overlay semantics: the bottom layer is the
+        // base, layers above it use the node's mode and opacity.
+        let (mode, opacity) = if is_blend {
+            (
+                crate::params::string(&filter.params, "mode", "source-over").to_owned(),
+                crate::params::f32(&filter.params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0,
+            )
+        } else {
+            ("source-over".to_owned(), 1.0)
+        };
 
         let mut layers = Vec::new();
         for layer in &filter.layers {
@@ -529,6 +547,8 @@ impl GraphEditor {
             node,
             layers,
             canvas,
+            mode,
+            opacity,
             source_name,
         };
         if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
@@ -547,11 +567,11 @@ impl GraphEditor {
 
     /// Kick off a full-resolution render for any filter kind.
     ///
-    /// Group nodes keep their layer-based composite path. Every other filter
-    /// evaluates its inputs at full resolution on the worker thread. Returns
-    /// `false` when an input is not ready yet (for example an upstream filter
-    /// has not finished its own full-resolution render), so the caller can
-    /// retry after the debounce window.
+    /// Group and Blend keep their layer-based composite path. Every other
+    /// filter evaluates its inputs at full resolution on the worker thread.
+    /// Returns `false` when an input is not ready yet (for example an upstream
+    /// filter has not finished its own full-resolution render), so the caller
+    /// can retry after the debounce window.
     pub(crate) fn start_filter_render(
         &mut self,
         snarl: &mut Snarl<Node>,
@@ -568,7 +588,7 @@ impl GraphEditor {
             // so it never needs a render of its own.
             return false;
         }
-        if kind == crate::model::FilterKind::Group {
+        if kind.is_layer_kind() {
             return self.start_group_render(snarl, node, signature, ctx);
         }
         let params = filter.params.clone();

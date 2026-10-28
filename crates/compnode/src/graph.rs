@@ -343,17 +343,29 @@ pub(crate) fn refresh_viewer(
     ctx: &egui::Context,
     assets: &mut AssetStore,
 ) {
-    let remotes = snarl.in_pin(InPinId { node, input: 0 }).remotes.clone();
+    let sockets = catalog::spec(snarl[node].kind()).sockets.len();
+    let is_blend = snarl[node]
+        .filter_node()
+        .is_some_and(|f| f.kind == crate::model::FilterKind::Blend);
 
-    // Build the set of source node IDs that should have layers. Route nodes
-    // are transparent, so a layer always belongs to the node that really
-    // produces the content, even when a Route sits in between.
-    let mut sources: Vec<NodeId> = remotes
-        .iter()
-        .map(|remote| resolve_route(snarl, remote.node))
-        .collect();
-    sources.sort_by_key(|source| source.0);
-    sources.dedup();
+    // Build the set of source node IDs that should have layers.
+    // For Blend: Socket 1 is Bottom Layer (layer 0/base), Socket 0 is Top Layer (layer 1/overlay).
+    // For Viewer/Group: sockets are checked in socket order.
+    let mut sources: Vec<NodeId> = Vec::new();
+    let socket_order: Vec<usize> = if is_blend && sockets == 2 {
+        vec![1, 0]
+    } else {
+        (0..sockets).collect()
+    };
+    for input in socket_order {
+        let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
+        for remote in remotes {
+            let source = resolve_route(snarl, remote.node);
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+    }
 
     // Existing layers are matched by their resolved source, so inserting or
     // removing a Route keeps the layer identity (and its user transform).

@@ -413,6 +413,7 @@ pub struct ImageCanvas {
     canvas_win_w: f32,
     guides: Vec<Guide>,
     keep_aspect_ratio: bool,
+    blend_preview: Option<TextureHandle>,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -446,7 +447,12 @@ impl ImageCanvas {
             canvas_win_w: 1200.0,
             guides: Vec::new(),
             keep_aspect_ratio: true,
+            blend_preview: None,
         }
+    }
+
+    pub fn set_blend_preview(&mut self, preview: Option<TextureHandle>) {
+        self.blend_preview = preview;
     }
 
     pub(crate) fn gpaste_app(&mut self) -> &mut GPasTeApp {
@@ -1629,31 +1635,57 @@ impl ImageCanvas {
             row += 1;
         }
 
-        for it in &self.items {
-            if !it.visible {
-                continue;
-            }
-            let Some(tex) = &it.tex else { continue };
-            let c = it.corners();
-            let uvs = match it.content_uv {
-                Some([u0, v0, u1, v1]) => [pos2(u0, v0), pos2(u1, v0), pos2(u1, v1), pos2(u0, v1)],
-                None => [
-                    pos2(0.0, 0.0),
-                    pos2(1.0, 0.0),
-                    pos2(1.0, 1.0),
-                    pos2(0.0, 1.0),
-                ],
-            };
+        if let Some(tex) = &self.blend_preview {
             let mut mesh = Mesh::with_texture(tex.id());
-            for k in 0..4 {
-                mesh.vertices.push(Vertex {
-                    pos: to_screen(c[k]),
-                    uv: uvs[k],
-                    color: pal::WHITE,
-                });
-            }
+            mesh.vertices.push(Vertex {
+                pos: rect.left_top(),
+                uv: pos2(0.0, 0.0),
+                color: pal::WHITE,
+            });
+            mesh.vertices.push(Vertex {
+                pos: rect.right_top(),
+                uv: pos2(1.0, 0.0),
+                color: pal::WHITE,
+            });
+            mesh.vertices.push(Vertex {
+                pos: rect.right_bottom(),
+                uv: pos2(1.0, 1.0),
+                color: pal::WHITE,
+            });
+            mesh.vertices.push(Vertex {
+                pos: rect.left_bottom(),
+                uv: pos2(0.0, 1.0),
+                color: pal::WHITE,
+            });
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
             painter.add(Shape::mesh(mesh));
+        } else {
+            for it in &self.items {
+                if !it.visible {
+                    continue;
+                }
+                let Some(tex) = &it.tex else { continue };
+                let c = it.corners();
+                let uvs = match it.content_uv {
+                    Some([u0, v0, u1, v1]) => [pos2(u0, v0), pos2(u1, v0), pos2(u1, v1), pos2(u0, v1)],
+                    None => [
+                        pos2(0.0, 0.0),
+                        pos2(1.0, 0.0),
+                        pos2(1.0, 1.0),
+                        pos2(0.0, 1.0),
+                    ],
+                };
+                let mut mesh = Mesh::with_texture(tex.id());
+                for k in 0..4 {
+                    mesh.vertices.push(Vertex {
+                        pos: to_screen(c[k]),
+                        uv: uvs[k],
+                        color: pal::WHITE,
+                    });
+                }
+                mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+                painter.add(Shape::mesh(mesh));
+            }
         }
         painter.rect_stroke(
             rect,

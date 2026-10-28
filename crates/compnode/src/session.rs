@@ -382,7 +382,7 @@ pub(crate) fn load(
                 let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
                     continue;
                 };
-                if filter_kind == FilterKind::Group {
+                if filter_kind.is_layer_kind() {
                     pending_layers = Some((layers, transforms));
                 }
                 Node::Filter(FilterNode::restore(
@@ -404,8 +404,8 @@ pub(crate) fn load(
         }
     }
 
-    // Restore Viewer/Group layer order and transforms after every node has
-    // its new id. `refresh_viewer` reuses these layers when the restored
+    // Restore Viewer/Group/Blend layer order and transforms after every node
+    // has its new id. `refresh_viewer` reuses these layers when the restored
     // wires match, keeping the saved transforms.
     for (owner, old_layers, transforms) in pending_viewers {
         let layers = old_layers

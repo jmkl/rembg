@@ -511,9 +511,9 @@ fn legacy_cache_key_sessions_still_parse() {
 
 #[test]
 fn preview_textures_are_capped() {
-    assert_eq!(crate::graph::preview_dimensions(4000, 2000), (200, 100));
-    assert_eq!(crate::graph::preview_dimensions(800, 600), (200, 150));
-    assert_eq!(crate::graph::preview_dimensions(100, 4000), (5, 200));
+    assert_eq!(crate::graph::preview_dimensions(4000, 2000), (256, 128));
+    assert_eq!(crate::graph::preview_dimensions(800, 600), (256, 192));
+    assert_eq!(crate::graph::preview_dimensions(100, 4000), (6, 256));
 }
 
 #[test]
@@ -1071,4 +1071,215 @@ fn filter_renders_are_reclaimed_after_invalidation() {
     invalidate_node(&mut snarl, filter);
     assert!(snarl[filter].output_path().is_none());
     assert!(snarl[filter].filter_node().unwrap().rendered.is_none());
+}
+
+fn blend_layers_for(
+    snarl: &mut Snarl<Node>,
+    blend: egui_snarl::NodeId,
+    sources: &[egui_snarl::NodeId],
+) {
+    let kind = snarl[blend].kind();
+    let layers = snarl[blend].layers_mut().unwrap();
+    for source in sources {
+        layers.push(ViewerLayer {
+            source: *source,
+            kind,
+            texture: None,
+            source_name: String::new(),
+            source_path: None,
+            center: egui::Vec2::ZERO,
+            size: egui::Vec2::ZERO,
+            angle: 0.0,
+        });
+    }
+}
+
+#[test]
+fn blend_collects_layers_from_both_sockets() {
+    let ctx = egui::Context::default();
+    let mut editor = test_editor();
+    let mut snarl = Snarl::new();
+    let mut img = image::RgbaImage::new(4, 4);
+    img.put_pixel(0, 0, image::Rgba([40, 50, 60, 255]));
+    let tex = rgba_to_texture(&ctx, &img);
+
+    let base = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("base", tex.clone()));
+    let overlay = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("overlay", tex));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+
+    // Socket order: Socket 0 is Top Layer (overlay), Socket 1 is Bottom Layer (base).
+    for (source, input) in [(overlay, 0usize), (base, 1usize)] {
+        let from = snarl.out_pin(egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        });
+        let to = snarl.in_pin(egui_snarl::InPinId { node: blend, input });
+        editor.connect(&from, &to, &mut snarl);
+    }
+
+    refresh_viewer(&mut snarl, blend, &ctx, &mut AssetStore::default());
+    let layers = snarl[blend].layers().unwrap();
+    assert_eq!(layers.len(), 2);
+    // In viewer layers (bottom to top): base feeds the bottom layer (index 0).
+    assert_eq!(layers[0].source, base);
+    assert_eq!(layers[1].source, overlay);
+    assert!(layers.iter().all(|layer| layer.texture.is_some()));
+}
+
+#[test]
+fn blend_composites_layers_on_the_document_canvas() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+
+    let base = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        Node::image("C:/missing/blend-base.png"),
+    );
+    snarl[base].set_cpu(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([128, 128, 128, 255]),
+    ));
+    let overlay = snarl.insert_node(
+        egui::pos2(0.0, 100.0),
+        Node::image("C:/missing/blend-overlay.png"),
+    );
+    snarl[overlay].set_cpu(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([255, 255, 255, 255]),
+    ));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: base,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: blend,
+            input: 0,
+        },
+    );
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: overlay,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: blend,
+            input: 1,
+        },
+    );
+
+    // Document canvas, synced by the app like the Group node's.
+    if let Some(filter) = snarl[blend].filter_mut() {
+        filter.canvas_size = egui::vec2(16.0, 12.0);
+    }
+    blend_layers_for(&mut snarl, blend, &[base, overlay]);
+
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    // Unplaced layers fill the canvas preserving their aspect ratio.
+    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    assert_eq!(out.dimensions(), (16, 12));
+    assert_eq!(out.get_pixel(8, 6), &image::Rgba([255, 255, 255, 255]));
+
+    // Moving the top layer away reveals the base underneath.
+    {
+        let layers = snarl[blend].layers_mut().unwrap();
+        layers[0].center = egui::vec2(8.0, 6.0);
+        layers[0].size = egui::vec2(16.0, 12.0);
+        layers[1].center = egui::vec2(40.0, 40.0);
+        layers[1].size = egui::vec2(8.0, 8.0);
+    }
+    crate::eval::ensure_all(&mut snarl, &ctx);
+    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    assert_eq!(out.get_pixel(2, 2), &image::Rgba([128, 128, 128, 255]));
+}
+
+#[test]
+fn blend_mode_applies_to_layers_above_the_base() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+
+    let base = snarl.insert_node(
+        egui::pos2(0.0, 0.0),
+        Node::image("C:/missing/mode-base.png"),
+    );
+    snarl[base].set_cpu(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([128, 128, 128, 255]),
+    ));
+    let overlay = snarl.insert_node(
+        egui::pos2(0.0, 100.0),
+        Node::image("C:/missing/mode-overlay.png"),
+    );
+    snarl[overlay].set_cpu(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([255, 255, 255, 255]),
+    ));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: base,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: blend,
+            input: 0,
+        },
+    );
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: overlay,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: blend,
+            input: 1,
+        },
+    );
+
+    if let Some(filter) = snarl[blend].filter_mut() {
+        filter.canvas_size = egui::vec2(8.0, 8.0);
+        crate::params::set_string(&mut filter.params, "mode", "multiply");
+    }
+    blend_layers_for(&mut snarl, blend, &[base, overlay]);
+
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    // White multiplied over mid-grey stays mid-grey (source-over would be white).
+    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    assert_eq!(out.get_pixel(4, 4), &image::Rgba([128, 128, 128, 255]));
+}
+
+#[test]
+fn blend_op_canvas_size_and_top_layer_effects() {
+    let mut params = crate::params::Params::new();
+    crate::params::set_string(&mut params, "mode", "multiply");
+    crate::params::set_f32(&mut params, "opacity", 50.0);
+
+    // Top layer: white (255, 255, 255)
+    let top = image::RgbaImage::from_pixel(100, 100, image::Rgba([255, 255, 255, 255]));
+    // Bottom layer: mid-grey (128, 128, 128)
+    let bottom = image::RgbaImage::from_pixel(100, 100, image::Rgba([128, 128, 128, 255]));
+
+    // Canvas size from settings: 800 x 600
+    let canvas = (800, 600);
+    let result = crate::ops::composite::blend(Some(&top), Some(&bottom), &params, canvas).unwrap();
+
+    assert_eq!(result.dimensions(), (800, 600));
+
+    // Mid-pixel: White multiplied by mid-grey = mid-grey (128).
+    // At 50% opacity of top layer over 128:
+    // composite mixes cs (white multiplied = 128) at 50% over cb (128) -> 128.
+    let px = result.get_pixel(400, 300);
+    assert_eq!(px[0], 128);
+    assert_eq!(px[1], 128);
+    assert_eq!(px[2], 128);
+    assert_eq!(px[3], 255);
 }

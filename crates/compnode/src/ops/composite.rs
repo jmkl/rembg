@@ -52,40 +52,83 @@ pub(crate) fn stack(layers: &[RgbaImage]) -> Result<RgbaImage, String> {
     Ok(out)
 }
 
-/// Composite `blend` over `base` with one of the 16 CSS blend modes.
+/// Composite `top` over `bottom` on the base canvas (following settings canvas width and height).
+/// Each input is fitted into the canvas preserving its aspect ratio, centred.
+/// The blend mode and opacity affect the top layer.
 pub(crate) fn blend(
-    base: Option<&RgbaImage>,
-    blend: Option<&RgbaImage>,
+    top: Option<&RgbaImage>,
+    bottom: Option<&RgbaImage>,
     params: &Params,
     canvas: (u32, u32),
 ) -> Result<RgbaImage, String> {
-    if base.is_none() && blend.is_none() {
+    if top.is_none() && bottom.is_none() {
         return Err("No input connected".to_owned());
     }
-    let (width, height) = base
-        .map(RgbaImage::dimensions)
-        .or_else(|| blend.map(RgbaImage::dimensions))
-        .unwrap_or(canvas);
+    // The output is the document canvas when one is known; otherwise fall back
+    // to the bottom (then top) image size.
+    let (width, height) = if canvas.0 > 0 && canvas.1 > 0 {
+        canvas
+    } else {
+        bottom
+            .map(RgbaImage::dimensions)
+            .or_else(|| top.map(RgbaImage::dimensions))
+            .unwrap_or((1, 1))
+    };
 
-    let mut out = match base {
-        Some(base) => resize_to(base, width, height),
-        None => RgbaImage::new(width, height),
-    };
-    let Some(blend) = blend else {
-        return Ok(out);
-    };
-    let blend = resize_to(blend, width, height);
+    let mut out = RgbaImage::new(width.max(1), height.max(1));
 
     let mode = params::string(params, "mode", "source-over");
     let opacity = params::f32(params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
 
-    for (x, y, source) in blend.enumerate_pixels() {
-        let target = out.get_pixel_mut(x, y);
-        *target = image::Rgba(composite(target.0, source.0, opacity, |cb, cs| {
-            blend_rgb(mode, cb, cs)
-        }));
+    // Bottom layer acts as the base canvas image (drawn normally, no mode).
+    if let Some(bottom) = bottom {
+        paste_fitted(&mut out, bottom);
     }
+
+    if let Some(top) = top {
+        let fitted = fit_canvas(top, width.max(1), height.max(1));
+        if bottom.is_some() {
+            // Blend effect and opacity affect the top layer over the bottom layer.
+            for (x, y, src) in fitted.enumerate_pixels() {
+                let target = out.get_pixel_mut(x, y);
+                *target = image::Rgba(composite(target.0, src.0, opacity, |cb, cs| {
+                    blend_rgb(mode, cb, cs)
+                }));
+            }
+        } else {
+            // Only top layer connected: drawn with opacity.
+            for (x, y, src) in fitted.enumerate_pixels() {
+                let target = out.get_pixel_mut(x, y);
+                *target = image::Rgba(composite(target.0, src.0, opacity, |_cb, cs| cs));
+            }
+        }
+    }
+
     Ok(out)
+}
+
+/// Fit `src` inside `canvas` keeping its aspect ratio, centred, on a
+/// transparent `canvas`-sized image.
+fn fit_canvas(src: &RgbaImage, canvas_w: u32, canvas_h: u32) -> RgbaImage {
+    let mut out = RgbaImage::new(canvas_w, canvas_h);
+    paste_fitted(&mut out, src);
+    out
+}
+
+/// Draw `src` centred inside `dst`, scaled to fit while keeping its aspect.
+fn paste_fitted(dst: &mut RgbaImage, src: &RgbaImage) {
+    let (dw, dh) = (dst.width() as f64, dst.height() as f64);
+    let (sw, sh) = (src.width() as f64, src.height() as f64);
+    if sw <= 0.0 || sh <= 0.0 || dw <= 0.0 || dh <= 0.0 {
+        return;
+    }
+    let factor = (dw / sw).min(dh / sh);
+    let fit_w = ((sw * factor).round() as u32).max(1).min(dst.width());
+    let fit_h = ((sh * factor).round() as u32).max(1).min(dst.height());
+    let resized = resize_to(src, fit_w, fit_h);
+    let x0 = (dst.width().saturating_sub(fit_w)) / 2;
+    let y0 = (dst.height().saturating_sub(fit_h)) / 2;
+    image::imageops::overlay(dst, &resized, x0 as i64, y0 as i64);
 }
 
 /// Multiply the image alpha by a mask's luminance.
@@ -275,15 +318,27 @@ pub(crate) fn composite_layers(
     layers: &[(ViewerLayer, image::RgbaImage)],
     canvas: (u32, u32),
 ) -> Result<RgbaImage, String> {
-    composite_layers_at(layers, canvas, Some(super::EVAL_MAX_EDGE as u64))
+    composite_layers_with(
+        layers,
+        canvas,
+        Some(super::EVAL_MAX_EDGE as u64),
+        "source-over",
+        1.0,
+    )
 }
 
 /// Composite layers at (up to) the given resolution. `max_edge = None` renders
 /// at full canvas resolution (used by the background disk render).
-pub(crate) fn composite_layers_at(
+///
+/// The bottom layer is drawn normally. Every layer above it is blended with
+/// `mode` at `opacity`, so a Blend node keeps its base/overlay semantics even
+/// when layers are moved or rotated in the canvas.
+pub(crate) fn composite_layers_with(
     layers: &[(ViewerLayer, image::RgbaImage)],
     canvas: (u32, u32),
     max_edge: Option<u64>,
+    mode: &str,
+    opacity: f32,
 ) -> Result<RgbaImage, String> {
     if layers.is_empty() {
         return Err("No layers connected".to_owned());
@@ -298,12 +353,26 @@ pub(crate) fn composite_layers_at(
     let out_h = ((ch as f64 * scale).round() as u32).max(1);
     let mut out = RgbaImage::new(out_w, out_h);
 
-    for (layer, src) in layers {
-        let cx = layer.center.x as f64 * scale;
-        let cy = layer.center.y as f64 * scale;
-        let sw = (layer.size.x as f64 * scale).max(1.0);
-        let sh = (layer.size.y as f64 * scale).max(1.0);
+    for (index, (layer, src)) in layers.iter().enumerate() {
         let (src_w, src_h) = (src.width() as f64, src.height() as f64);
+        // An unplaced layer (no canvas transform yet) fills the canvas,
+        // preserving its aspect ratio, centred on the document.
+        let (cx, cy, sw, sh) = if layer.size.x > 0.0 && layer.size.y > 0.0 {
+            (
+                layer.center.x as f64 * scale,
+                layer.center.y as f64 * scale,
+                (layer.size.x as f64 * scale).max(1.0),
+                (layer.size.y as f64 * scale).max(1.0),
+            )
+        } else {
+            let fit = fit_size(src_w, src_h, cw.max(1) as f64, ch.max(1) as f64);
+            (
+                cw.max(1) as f64 * scale / 2.0,
+                ch.max(1) as f64 * scale / 2.0,
+                (fit.0 * scale).max(1.0),
+                (fit.1 * scale).max(1.0),
+            )
+        };
         let cos = layer.angle.cos() as f64;
         let sin = layer.angle.sin() as f64;
 
@@ -318,45 +387,59 @@ pub(crate) fn composite_layers_at(
                 let ly = -rx * sin + ry * cos;
                 let sx = (lx + sw / 2.0) / sw * src_w;
                 let sy = (ly + sh / 2.0) / sh * src_h;
-                if sx < 0.0 || sy < 0.0 || sx >= src_w || sy >= src_h {
+                let Some(rgba) = sample_bilinear(src, sx, sy) else {
                     continue;
-                }
-                let x0 = sx.floor() as u32;
-                let y0 = sy.floor() as u32;
-                let x1 = (x0 + 1).min(src.width().saturating_sub(1));
-                let y1 = (y0 + 1).min(src.height().saturating_sub(1));
-                let fx = sx - x0 as f64;
-                let fy = sy - y0 as f64;
-                let c00 = src.get_pixel(x0, y0);
-                let c10 = src.get_pixel(x1, y0);
-                let c01 = src.get_pixel(x0, y1);
-                let c11 = src.get_pixel(x1, y1);
-                let mut rgba = [0u8; 4];
-                for c in 0..4 {
-                    let v = c00[c] as f64 * (1.0 - fx) * (1.0 - fy)
-                        + c10[c] as f64 * fx * (1.0 - fy)
-                        + c01[c] as f64 * (1.0 - fx) * fy
-                        + c11[c] as f64 * fx * fy;
-                    rgba[c] = v.round().clamp(0.0, 255.0) as u8;
-                }
-                let sa = rgba[3] as f64 / 255.0;
-                let dst = out.get_pixel(ox, oy);
-                let da = dst[3] as f64 / 255.0;
-                let oa = sa + da * (1.0 - sa);
-                if oa <= 0.0 {
-                    continue;
-                }
-                let mut res = [0u8; 4];
-                for c in 0..3 {
-                    let sc = rgba[c] as f64 / 255.0;
-                    let dc = dst[c] as f64 / 255.0;
-                    let oc = (sa * sc + da * dc * (1.0 - sa)) / oa;
-                    res[c] = (oc * 255.0).round().clamp(0.0, 255.0) as u8;
-                }
-                res[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
-                *out.get_pixel_mut(ox, oy) = image::Rgba(res);
+                };
+                let dst = *out.get_pixel(ox, oy);
+                // The bottom layer is the (opaque) base; everything above it
+                // honours the node's blend mode and opacity.
+                let (layer_mode, layer_opacity) = if index == 0 {
+                    ("source-over", 1.0)
+                } else {
+                    (mode, opacity)
+                };
+                *out.get_pixel_mut(ox, oy) =
+                    image::Rgba(composite(dst.0, rgba, layer_opacity, |cb, cs| {
+                        blend_rgb(layer_mode, cb, cs)
+                    }));
             }
         }
     }
     Ok(out)
+}
+
+/// Size of `src` fitted inside `canvas`, keeping its aspect ratio.
+fn fit_size(src_w: f64, src_h: f64, canvas_w: f64, canvas_h: f64) -> (f64, f64) {
+    if src_w <= 0.0 || src_h <= 0.0 {
+        return (canvas_w.max(1.0), canvas_h.max(1.0));
+    }
+    let factor = (canvas_w / src_w).min(canvas_h / src_h);
+    ((src_w * factor).max(1.0), (src_h * factor).max(1.0))
+}
+
+/// Bilinear sample of `src` at (possibly fractional) source coordinates.
+/// Returns `None` when the point is outside the image.
+fn sample_bilinear(src: &image::RgbaImage, sx: f64, sy: f64) -> Option<[u8; 4]> {
+    if sx < 0.0 || sy < 0.0 || sx >= src.width() as f64 || sy >= src.height() as f64 {
+        return None;
+    }
+    let x0 = sx.floor() as u32;
+    let y0 = sy.floor() as u32;
+    let x1 = (x0 + 1).min(src.width().saturating_sub(1));
+    let y1 = (y0 + 1).min(src.height().saturating_sub(1));
+    let fx = sx - x0 as f64;
+    let fy = sy - y0 as f64;
+    let c00 = src.get_pixel(x0, y0);
+    let c10 = src.get_pixel(x1, y0);
+    let c01 = src.get_pixel(x0, y1);
+    let c11 = src.get_pixel(x1, y1);
+    let mut rgba = [0u8; 4];
+    for c in 0..4 {
+        let v = c00[c] as f64 * (1.0 - fx) * (1.0 - fy)
+            + c10[c] as f64 * fx * (1.0 - fy)
+            + c01[c] as f64 * (1.0 - fx) * fy
+            + c11[c] as f64 * fx * fy;
+        rgba[c] = v.round().clamp(0.0, 255.0) as u8;
+    }
+    Some(rgba)
 }

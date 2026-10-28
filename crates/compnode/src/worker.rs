@@ -41,12 +41,18 @@ pub(crate) enum Job {
         only_center: bool,
         source_name: String,
     },
-    /// Full-resolution Group composite rendered from on-disk source images.
+    /// Full-resolution Group/Blend composite rendered from on-disk source
+    /// images.
     Composite {
         token: u64,
         node: NodeId,
         layers: Vec<CompositeLayer>,
         canvas: (u32, u32),
+        /// Blend mode applied to every layer above the bottom one
+        /// ("source-over" for Group).
+        mode: String,
+        /// Opacity 0..1 for the same layers.
+        opacity: f32,
         source_name: String,
     },
     /// Full-resolution render of any non-Group filter node.
@@ -114,13 +120,15 @@ pub(crate) struct JobDone {
     pub result: Result<JobOutput, String>,
 }
 
-/// Render a Group node at full resolution from on-disk source images and
+/// Render a Group/Blend node at full resolution from on-disk source images and
 /// persist the result in the output cache. Repeated renders with identical
 /// inputs hit the disk cache instead of recompositing.
 fn composite_full(
     cache: &OutputCache,
     layers: &[CompositeLayer],
     canvas: (u32, u32),
+    mode: &str,
+    opacity: f32,
     source_name: &str,
 ) -> Result<JobOutput, String> {
     let started = Instant::now();
@@ -142,6 +150,8 @@ fn composite_full(
     }
     params.extend_from_slice(&canvas.0.to_le_bytes());
     params.extend_from_slice(&canvas.1.to_le_bytes());
+    params.extend_from_slice(mode.as_bytes());
+    params.extend_from_slice(&opacity.to_le_bytes());
 
     let mut images = Vec::with_capacity(layers.len());
     for layer in layers {
@@ -151,7 +161,7 @@ fn composite_full(
         images.push(img);
     }
 
-    let key = cache_key_layers("compnode-group-v1", &images, &params);
+    let key = cache_key_layers("compnode-composite-v1", &images, &params);
 
     // Cache hit: reuse the stored composite.
     let cached_path = cache.path_for(&key);
@@ -189,9 +199,10 @@ fn composite_full(
             )
         })
         .collect();
-    let composited = crate::ops::composite::composite_layers_at(&pairs, canvas, None)?;
+    let composited =
+        crate::ops::composite::composite_layers_with(&pairs, canvas, None, mode, opacity)?;
 
-    let path = match cache.store_named(&key, source_name, "group", &composited) {
+    let path = match cache.store_named(&key, source_name, "composite", &composited) {
         Ok(path) => Some(path),
         Err(err) => {
             eprintln!("compnode: {err}");
@@ -421,9 +432,12 @@ pub(crate) fn spawn_worker(
                         node,
                         layers,
                         canvas,
+                        mode,
+                        opacity,
                         source_name,
                     }) => {
-                        let result = composite_full(&cache, &layers, canvas, &source_name);
+                        let result =
+                            composite_full(&cache, &layers, canvas, &mode, opacity, &source_name);
                         (token, node, result)
                     }
                     WorkerRequest::Job(Job::Filter {

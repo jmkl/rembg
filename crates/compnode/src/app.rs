@@ -121,6 +121,8 @@ impl CompNodeApp {
             image_canvas: ImageCanvas::new(gpaste_app),
             sidebar_restore: false,
         };
+        app.image_canvas
+            .set_canvas_size(app.settings.canvas_width, app.settings.canvas_height);
 
         if autosave_path.exists() {
             match session::load(
@@ -917,11 +919,7 @@ impl CompNodeApp {
                     viewer.canvas_size = size;
                 }
             }
-            if node
-                .filter_node()
-                .map(|f| f.kind == crate::model::FilterKind::Group)
-                .unwrap_or(false)
-            {
+            if node.filter_node().is_some_and(|f| f.kind.is_layer_kind()) {
                 let size = self.image_canvas.canvas_size();
                 if node.canvas_size() != size {
                     node.set_canvas_size(size);
@@ -931,12 +929,14 @@ impl CompNodeApp {
 
         // Only rebuild/sync layers when they changed (or a
         // decode finished). Signature is allocation-free.
-        let selected_group = self.editor.selected_nodes().first().copied().filter(|id| {
-        self.snarl.get_node_info(*id).is_some()
-            && matches!(self.snarl[*id], crate::model::Node::Filter(ref f) if f.kind == crate::model::FilterKind::Group)
-          });
-        let layer_iter_sig = if let Some(gid) = selected_group {
-            // only this group's layers
+        let selected_layers = self.editor.selected_nodes().first().copied().filter(|id| {
+            self.snarl.get_node_info(*id).is_some()
+                && self.snarl[*id]
+                    .filter_node()
+                    .is_some_and(|f| f.kind.is_layer_kind())
+        });
+        let layer_iter_sig = if let Some(gid) = selected_layers {
+            // only this node's layers
             self.snarl[gid]
                 .layers()
                 .into_iter()
@@ -977,7 +977,7 @@ impl CompNodeApp {
                 Option<PathBuf>,
                 (egui::Vec2, egui::Vec2, f32),
                 bool,
-            )> = if let Some(gid) = selected_group {
+            )> = if let Some(gid) = selected_layers {
                 self.snarl[gid]
                     .layers()
                     .map(|ls| {
@@ -1020,6 +1020,10 @@ impl CompNodeApp {
             self.image_canvas.sync_layers(&ctx, &layers);
         }
 
+        if self.image_canvas.has_uncommitted_transform() {
+            self.commit_canvas_layers();
+        }
+
         // Write transforms/order back to the viewer layers once,
         // after the canvas has been idle for 3s (not every frame).
         if self.image_canvas.take_stable_commit(0.3) {
@@ -1035,6 +1039,22 @@ impl CompNodeApp {
             // mouse move.
             ctx.request_repaint_after(Duration::from_millis(350));
         }
+
+        let blend_preview = if let Some(gid) = selected_layers {
+            if self.snarl[gid]
+                .filter_node()
+                .is_some_and(|f| f.kind == crate::model::FilterKind::Blend)
+            {
+                self.snarl[gid]
+                    .filter_node()
+                    .and_then(|f| f.preview.texture.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.image_canvas.set_blend_preview(blend_preview);
 
         // Render the image canvas widget in the sidebar.
         self.image_canvas.show(ui, &self.settings);
@@ -1059,8 +1079,7 @@ impl CompNodeApp {
             self.snarl.get_node_info(*id).is_some()
                 && self.snarl[*id]
                     .filter_node()
-                    .map(|f| f.kind == crate::model::FilterKind::Group)
-                    .unwrap_or(false)
+                    .is_some_and(|f| f.kind.is_layer_kind())
         });
         // fallback: single output node
         let target_id = edited_id.or_else(|| {
@@ -1255,6 +1274,22 @@ impl App for CompNodeApp {
             self.images_need_load = false;
         }
 
+        let canvas_size = egui::vec2(self.settings.canvas_width, self.settings.canvas_height);
+        self.image_canvas
+            .set_canvas_size(canvas_size.x, canvas_size.y);
+        for (_, node) in self.snarl.nodes_ids_mut() {
+            if let crate::model::Node::Output(viewer) = node {
+                if viewer.canvas_size != canvas_size {
+                    viewer.canvas_size = canvas_size;
+                }
+            }
+            if node.filter_node().is_some_and(|f| f.kind.is_layer_kind()) {
+                if node.canvas_size() != canvas_size {
+                    node.set_canvas_size(canvas_size);
+                }
+            }
+        }
+
         // Evaluate filter nodes (cached by signature) before the viewer is
         // refreshed so it can pick up the new preview textures.
         let filters_changed = crate::eval::ensure_all(&mut self.snarl, &ctx);
@@ -1265,10 +1300,7 @@ impl App for CompNodeApp {
             .node_ids()
             .filter(|(_, node)| {
                 node.viewer_node().is_some()
-                    || node
-                        .filter_node()
-                        .map(|f| f.kind == crate::model::FilterKind::Group)
-                        .unwrap_or(false)
+                    || node.filter_node().is_some_and(|f| f.kind.is_layer_kind())
             })
             .map(|(id, _)| id)
             .collect();
@@ -1384,9 +1416,9 @@ fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
 }
 
 /// Node ids that can reach an Output node through input wires, plus the layers
-/// of a selected Group node (the sidebar shows those instead of the Output).
-/// Full-resolution renders are only scheduled for these, so orphan filters
-/// never allocate large images.
+/// of a selected Group/Blend node (the sidebar shows those instead of the
+/// Output). Full-resolution renders are only scheduled for these, so orphan
+/// filters never allocate large images.
 fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<NodeId> {
     let mut needed = HashSet::new();
     let mut stack: Vec<NodeId> = snarl
@@ -1396,11 +1428,9 @@ fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<
         .collect();
     stack.extend(selected.iter().copied().filter(|id| {
         snarl.get_node_info(*id).is_some()
-            && matches!(
-                &snarl[*id],
-                crate::model::Node::Filter(filter)
-                    if filter.kind == crate::model::FilterKind::Group
-            )
+            && snarl[*id]
+                .filter_node()
+                .is_some_and(|filter| filter.kind.is_layer_kind())
     }));
     while let Some(id) = stack.pop() {
         if !needed.insert(id) {

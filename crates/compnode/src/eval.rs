@@ -10,6 +10,7 @@ use image::RgbaImage;
 use crate::catalog;
 use crate::model::{FilterKind, Kind, Node};
 use crate::ops;
+use crate::params;
 use crate::params::Params;
 
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
@@ -59,8 +60,8 @@ fn ensure_filter(
     let result = if has_output && cached_signature == Some(signature) {
         stack.remove(&node);
         return false;
-    } else if kind == FilterKind::Group {
-        // Composite the group's layers with their transforms.
+    } else if kind.is_layer_kind() && snarl[node].layers().is_some_and(|l| !l.is_empty()) {
+        // Group and Blend composite their layers with their canvas transforms.
         let canvas = {
             let c = snarl[node].canvas_size();
             if c.x > 0.0 && c.y > 0.0 {
@@ -76,7 +77,21 @@ fn ensure_filter(
                 resolved.push((layer.clone(), img));
             }
         }
-        ops::composite::composite_layers(&resolved, canvas)
+        // Group stacks source-over; Blend applies its mode/opacity to every
+        // layer above the bottom one.
+        if kind == FilterKind::Blend {
+            let mode = params::string(&params, "mode", "source-over");
+            let opacity = params::f32(&params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
+            ops::composite::composite_layers_with(
+                &resolved,
+                canvas,
+                Some(ops::EVAL_MAX_EDGE as u64),
+                mode,
+                opacity,
+            )
+        } else {
+            ops::composite::composite_layers(&resolved, canvas)
+        }
     } else {
         let inputs = resolve_inputs(snarl, node, kind, ctx, stack);
         let canvas = canvas_size(snarl);
@@ -122,7 +137,7 @@ fn filter_signature(
     }
     canvas_size(snarl).hash(&mut hasher);
 
-    if kind == FilterKind::Group {
+    if kind.is_layer_kind() {
         if let Some(layers) = snarl[node].layers() {
             for layer in layers {
                 layer.source.0.hash(&mut hasher);
@@ -279,6 +294,18 @@ pub(crate) fn canvas_size(snarl: &Snarl<Node>) -> (u32, u32) {
                 return (width, height);
             }
         }
+        if let Some(filter) = node.filter_node() {
+            if filter.kind.is_layer_kind() {
+                let width = filter.canvas_size.x as u32;
+                let height = filter.canvas_size.y as u32;
+                if width > 0 && height > 0 {
+                    return (width, height);
+                }
+            }
+        }
     }
-    (1280, 720)
+    let settings = crate::settings::Settings::load();
+    let w = settings.canvas_width.round().max(1.0) as u32;
+    let h = settings.canvas_height.round().max(1.0) as u32;
+    (w, h)
 }

@@ -1,0 +1,480 @@
+# CompNode Refactoring Plan
+
+## Overview
+
+This plan outlines a comprehensive refactoring of the CompNode crate to improve scalability and maintainability while preserving all existing functionality.
+
+## Current State Analysis
+
+### Strengths
+
+- **Well-structured node catalog**: `NODE_SPECS` drives menus, styling, sockets, and dispatch uniformly
+- **Clear separation of concerns**: UI thread vs worker thread vs session layer
+- **Content-addressed caching**: SHA-256 based cache for instant session restore
+- **Established patterns**: Node creation, evaluation, and persistence patterns are well-established
+
+### Areas for Improvement
+
+1. **Module fragmentation**: 30+ source files with complex interdependencies
+2. **Large individual files**: `eval.rs` (25K), `editor.rs` (42K), `model.rs` (32K), `worker.rs` (36K), `image_canvas.rs` (79K)
+3. **Tight coupling between graph and evaluation**: `eval.rs` directly accesses `snarl[node]` internals
+4. **Node body UI scattered**: Each node's `show_body` in separate files, but logic varies in consistency
+5. **Limited test coverage**: Some tests exist but comprehensive coverage is lacking
+6. **No formal plugin/extension system**: All nodes are compiled in statically
+7. **Operations module (`ops/`)**: Ad-hoc organization with `adjust.rs`, `composite.rs`, `effects.rs`, `generate.rs`, `rawfilter.rs`, `texts.rs`
+
+## Refactoring Goals
+
+1. **Modularize the codebase** into clear functional units
+2. **Improve abstraction boundaries** between UI, graph, evaluation, and worker
+3. **Create a plugin system** for node extensibility
+4. **Enhance testability** with proper unit tests
+5. **Improve type safety** and reduce downcasting
+6. **Better organize operations** (ops module)
+7. **Maintain backward compatibility** with existing sessions and settings
+
+## Proposed Structure
+
+### 1. Core Modules (refactor existing, don't split unnecessarily)
+
+- `model/` - Graph data types (`Kind`, `Node`, `Preview`, `ViewerLayer`)
+- `catalog/` - Node registry and specification matching
+- `graph/` - Graph operations (connect, disconnect, invalidate, resolve routes)
+- `eval/` - Filter evaluation pipeline (signature computation, input resolution, ops execution)
+- `worker/` - Background inference thread and model management
+- `ops/` - Organized operation implementations (currently scattered)
+- `memory/` - CPU image management and bounds
+
+### 2. New Abstractions
+
+- **Node trait**: Replace the `Node` enum with a trait-based system for better extensibility
+- **Evaluation strategy**: Abstract filter evaluation behind a trait for CPU/GPU dispatch
+- **Cache interface**: Abstract content-addressed cache for testability
+- **Worker job interface**: Cleaner job submission and result handling
+
+### 3. Operations Organization
+
+Move ops from `src/ops/` to `src/operations/` with proper module structure:
+
+- `arithmetic/` - Blend modes, opacity adjustments
+- `color/` - Hsv, curves, exposure, color balance, etc.
+- `generators/` - Gradient, noise, texts
+- `transform/` - Raw filter, resize, etc.
+- `composite/` - Layer compositing
+
+### 4. Node System Improvements
+
+- Standardize `show_body` signatures and patterns
+- Create base trait for node bodies
+- Add node registry hooks for auto-discovery
+- Improve preview management consistency
+
+### 5. Testing Framework
+
+- Add integration test suite
+- Create mock worker for UI tests
+- Test evaluation pipeline with known inputs/outputs
+- Test cache behavior
+
+## Migration Plan
+
+### Phase 1: Foundation (Weeks 1-2)
+
+1. Refactor `ops/` module into organized submodules
+2. Create `model/trait.rs` with core node traits
+3. Add unit tests for core types
+4. Ensure `cargo check` passes throughout
+
+### Phase 2: Graph & Evaluation (Weeks 3-4)
+
+1. Refactor `graph.rs` to use new abstractions
+2. Restructure `eval.rs` with strategy pattern
+3. Improve test coverage for evaluation pipeline
+4. Maintain backward compat with session format
+
+### Phase 3: Worker & Inference (Weeks 5-6)
+
+1. Refactor `worker.rs` with cleaner job interface
+2. Add model management abstractions
+3. Test inference pipeline end-to-end
+
+### Phase 4: Node System (Weeks 7-8)
+
+1. Standardize node body UI patterns
+2. Create node trait and registry improvements
+3. Add plugin discovery mechanism (optional)
+
+### Phase 5: Polish & Documentation (Weeks 9-10)
+
+1. Add comprehensive examples
+2. Ensure all existing tests pass
+3. Performance benchmarking
+
+---
+
+## Actionable Task Checklist (TODO)
+
+### Quick Fixes & Baseline Health
+
+- [ ] Fix pre-existing unit test failure in `tests::preview_textures_are_capped` (assert dimension check 256 vs 200).
+- [ ] Clean up compiler warnings:
+  - [ ] Remove unused import `self` in `src/ops/rawfilter.rs`.
+  - [ ] Remove unused variables `_t` and `_backend` in `src/ops/rf/mod.rs`.
+  - [ ] Remove dead/unused functions in `src/ops/rawfilter.rs` (`clamp01`, `luma`, `blurred`, etc.) or replace with active implementation.
+  - [ ] Remove unused `min_pixels` in `src/ops/rf/mod.rs` and `eval_image` in `src/model.rs`.
+
+### Phase 1: Operations & Core Data Foundation
+
+- [ ] **Ops Reorganization (`src/ops/`)**:
+  - [ ] Split `src/ops/` into clear submodules:
+    - [ ] `ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
+    - [ ] `ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
+    - [ ] `ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
+    - [ ] `ops/rf/`: White balance, dehaze, texture, clarity, sharpen, noise reduction (CPU & WGSL)
+  - [ ] Consolidate common math & color utilities (luma, clamping, color space conversions).
+- [ ] **Core Node Abstraction (`src/model/`)**:
+  - [ ] Define `NodeTrait` for node definitions (ports, metadata, parameter definitions).
+  - [ ] **Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `model::Kind`**:
+    - [ ] Make `Route` a dedicated structural pass-through variant (`Kind::Route`, `Node::Route`).
+    - [ ] Make `Group` a dedicated layer container node (`Kind::Group`, `Node::Group(GroupNode)`), removing `layers`, `canvas_size`, and debounce state from `FilterNode`.
+    - [ ] Make `Texts` a dedicated generator node (`Kind::Texts`, `Node::Texts(TextsNode)`) with its typographic model.
+    - [ ] Ensure backward compatibility with session parser (`SessionNodeData::Filter` mapping for legacy sessions).
+  - [ ] Standardize `Preview` structure and caching bounds across all node types.
+
+### Phase 2: Graph & Evaluation Engine
+
+- [ ] **Decouple Graph from Evaluation (`src/eval.rs`)**:
+  - [ ] Introduce an evaluation context trait to avoid `eval.rs` directly indexing `snarl[node]` during execution.
+  - [ ] Encapsulate signature computation (`filter_signature`) to make cache invalidation independently testable.
+  - [ ] Isolate evaluation downscaling (`ops::EVAL_MAX_EDGE`) into a configurable evaluation pipeline.
+- [ ] **Graph Topology Improvements (`src/graph.rs`)**:
+  - [ ] Abstract upstream traversal and `Route` resolution behind a clean graph query API.
+  - [ ] Unit test multi-hop `Route` resolution and cycle detection.
+
+### Phase 3: Worker & ML Inference Pipeline
+
+- [ ] **Job Queue & Dispatcher (`src/worker.rs`)**:
+  - [ ] Refactor `Job` enum into structured request/response types.
+  - [ ] Formalize model lifecycle management (keep-alive vs unload-on-demand) behind an `InferenceBackend` trait.
+  - [ ] Abstract disk cache interaction via `OutputCacheInterface` to enable in-memory mock testing.
+  - [ ] Add integration tests verifying token invalidation on rapid parameter changes.
+
+### Phase 4: Node UI & Catalog Modernization
+
+- [ ] **UI Body Standardization (`src/nodes/`)**:
+  - [ ] Create standardized component builders for node bodies (consistent headers, preview boxes, sliders).
+  - [ ] Standardize error/status badge displays across AI inference nodes (`RemoveBg`, `FaceRestore`).
+- [ ] **Catalog & Extensibility (`src/catalog.rs`)**:
+  - [ ] Refactor `NodeSpec` to support dynamic registration and auto-discovery.
+  - [ ] Ensure category tags / grouping in the right-click node spawn menu (`graph_menu.rs`).
+
+### Phase 5: Verification, Benchmarking & Documentation
+
+- [ ] **Regression & Compatibility Testing**:
+  - [ ] Run full test suite (`cargo test -p compnode`) with 100% pass rate.
+  - [ ] Verify backward compatibility by loading older `.rembg.json` session files without errors.
+- [ ] **Performance Benchmarks**:
+  - [ ] Re-run release benchmarks for all filter nodes on 4K/12MP images.
+  - [ ] Profile memory usage of `ImageMemory` under multi-image workloads.
+- [ ] **Documentation**:
+  - [ ] Update `README_AG.md` with final architectural changes.
+  - [ ] Verify `NODE.md` reflects any updated traits or catalog registration APIs.
+
+## Risk Mitigation
+
+- **Backward compatibility**: Session format remains unchanged (JSON with same keys)
+- **Settings persistence**: Versionless JSON, new fields added without breaking old files
+- **Incremental migration**: Each phase is independently verifiable
+- **Feature flags**: Can gate new abstractions behind feature flags if needed
+- **Rollback plan**: Git branches per phase, easy to revert
+
+## Success Metrics
+
+1. `cargo check -p compnode` passes cleanly
+2. All existing tests continue to pass
+3. No behavior changes for end users
+4. New modules are independently testable
+5. Code organization makes it easier to add new node types
+6. Reduced cyclomatic complexity in main files
+
+## Notes
+
+- The `NODE_SPECS` constant in `catalog.rs` is the single source of truth for node registry - keep it as the canonical registration point
+- Maintain the `Kind` enum in `model.rs` for session compatibility
+- The `eval.rs` signature hash must remain consistent for cache compatibility
+- Worker job tokens must continue to guard against stale results
+- Preview dimensions and caching strategy remain unchanged
+
+---
+
+## Node System Redesign Proposal (Streamlined Node Creation)
+
+### 1. Problem Statement & Motivation
+
+Currently, adding a single generic filter node to CompNode requires "shotgun surgery" across **4 separate files and 5 distinct locations**:
+1. `src/model.rs` — Declare `FilterKind` variant, string mapping in `id()`, deserializer in `from_id()`, and default parameter map in `defaults()`.
+2. `src/ops/<submodule>.rs` — Implement the pixel manipulation function.
+3. `src/ops/mod.rs` — Add a match arm to `ops::evaluate()`.
+4. `src/catalog.rs` — Define `FieldSpec` array and construct `NodeSpec` with repetitive boilerplate (`inputs: 1, outputs: 1, body_width: NODE_W`, standard socket array, `create` callback, `body` callback).
+
+#### Core Pain Points
+- **Parameter Duplication**: Parameter keys and default values are defined twice (in `catalog.rs` for UI sliders and in `model.rs` for default maps). A dedicated test is required just to verify they stay in sync.
+- **Scattered Logic**: The UI controls, metadata, and pixel operations live in different directories.
+- **Boilerplate Fatigue**: Standard single-input, single-output filters repeat ~15 lines of identical structure in `NODE_SPECS`.
+
+---
+
+### 2. Proposed Architecture
+
+The redesigned node system establishes a **single source of truth** and **locality of behavior** while maintaining 100% backward compatibility with existing saved sessions.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Self-Contained Node Module                           │
+│                       (e.g., src/nodes/filters/sepia.rs)                    │
+│                                                                             │
+│  1. Metadata (id, title, icon, accent, keywords)                           │
+│  2. Fields with embedded defaults (min, max, default, step, suffix)        │
+│  3. Pixel operation (pure function pointer)                                 │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ exports FilterSpec
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Catalog / Registry (catalog.rs)                    │
+│  - Generates NodeSpec with sensible defaults (1 in, 1 out, standard body)   │
+│  - Automatically derives FilterKind::defaults() directly from fields        │
+│  - Directly executes eval function pointer (no match table in ops/mod.rs)   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 3. Key Design Components
+
+#### Component A: Self-Defaulting `FieldKind`
+Embed the default value directly into each field definition so `FilterKind::defaults()` is auto-derived:
+
+```rust
+pub(crate) enum FieldKind {
+    Range {
+        min: f32,
+        max: f32,
+        default: f32, // ← Single source of truth for defaults
+        step: f64,
+        suffix: &'static str,
+    },
+    Number {
+        min: f32,
+        max: f32,
+        default: f32,
+        step: f64,
+    },
+    Color {
+        default: &'static str,
+    },
+    Select {
+        options: &'static [SelectOption],
+        default: &'static str,
+    },
+}
+
+impl FieldSpec {
+    pub fn apply_default(&self, params: &mut Params) {
+        match &self.kind {
+            FieldKind::Range { default, .. } | FieldKind::Number { default, .. } => {
+                params::set_f32(params, self.key, *default);
+            }
+            FieldKind::Color { default } | FieldKind::Select { default, .. } => {
+                params::set_string(params, self.key, *default);
+            }
+        }
+    }
+}
+```
+
+#### Component B: Direct `EvalFn` Pointer on `NodeSpec`
+Eliminate the manual switchboard in `ops::evaluate()`. Instead, attach the evaluation function pointer to the specification:
+
+```rust
+pub(crate) type EvalFn = fn(
+    inputs: &[Option<&RgbaImage>],
+    params: &Params,
+    canvas: (u32, u32),
+) -> Result<RgbaImage, String>;
+
+pub(crate) struct NodeSpec {
+    // ... metadata fields ...
+    pub eval: Option<EvalFn>,
+}
+```
+
+Now `ops::evaluate()` becomes generic:
+```rust
+pub(crate) fn evaluate(
+    kind: FilterKind,
+    params: &Params,
+    inputs: &[Vec<RgbaImage>],
+    canvas: (u32, u32),
+) -> Result<RgbaImage, String> {
+    let spec = catalog::spec(Kind::Filter(kind));
+    let eval_fn = spec.eval.ok_or_else(|| "Node has no eval function".to_owned())?;
+    let primary_inputs = [
+        inputs.first().and_then(|l| l.first()),
+        inputs.get(1).and_then(|l| l.first()),
+    ];
+    eval_fn(&primary_inputs, params, canvas)
+}
+```
+
+#### Component C: NodeSpec Builder Pattern
+Provide smart defaults for filter nodes so standard 1-in/1-out filters require only essential attributes:
+
+```rust
+impl NodeSpec {
+    pub const fn filter(
+        kind: FilterKind,
+        title: &'static str,
+        icon: char,
+        accent: Color32,
+        keywords: &'static [&'static str],
+        fields: &'static [FieldSpec],
+        eval: EvalFn,
+    ) -> Self {
+        Self {
+            kind: Kind::Filter(kind),
+            title,
+            icon,
+            keywords,
+            accent,
+            inputs: 1,
+            outputs: 1,
+            body_width: NODE_W,
+            multi_input: false,
+            hidden: false,
+            fields,
+            sockets: &[SocketSpec { label: "", multi: false }],
+            create: nodes::filter::create,
+            body: nodes::filter::show_body,
+            eval: Some(eval),
+        }
+    }
+}
+```
+
+#### Component D: Declarative Macro (`define_filter!`)
+For rapid node development, provide an optional declarative macro that generates the complete node definition:
+
+```rust
+define_filter! {
+    Sepia {
+        id: "sepia",
+        title: "Sepia",
+        icon: icons::FILTER,
+        accent: pal::node_header::SAND,
+        keywords: &["sepia", "vintage", "retro"],
+        fields: [
+            FieldSpec::range("amount", "Amount", 0.0, 100.0, 100.0, 1.0, " %"),
+        ],
+        eval: |inputs, params, _canvas| {
+            let src = inputs[0].ok_or("No input image")?;
+            let amount = params::f32(params, "amount", 100.0) / 100.0;
+            Ok(apply_sepia(src, amount))
+        }
+    }
+}
+```
+
+#### Component E: Unbundling `FilterKind` — Promoting `Route`, `Group`, and `Texts` to `model::Kind`
+
+Currently, `FilterKind` contains nodes that are fundamentally **not** generic pixel filters:
+- **`Route`** is a structural graph pass-through utility. It has no pixel manipulation, no preview texture, no parameters, and produces no image of its own. Downstream evaluation and layer extractors completely bypass it.
+- **`Group`** (and `Blend`) is a **layer compositing container**, not an image filter. Treating it as a `FilterNode` forces `FilterNode` to carry `layers: Vec<ViewerLayer>`, `canvas_size: egui::Vec2`, `job`, `output_path`, `render_state`, and `rendered` fields that 90% of filter nodes never use.
+- **`Texts`** is an overlay generator with custom typography, font asset binding, and complex vector layout (drop shadows, dual outlines, padding, alignment), carrying a dedicated UI module (`src/nodes/texts.rs`) rather than generic `FieldSpec` sliders.
+
+##### Proposed Architectural Separation
+
+Move these three variants directly into top-level `Kind` and give them clean, purpose-built `Node` structs:
+
+```rust
+// In src/model.rs:
+pub(crate) enum Kind {
+    Image,
+    RemoveBg,
+    RemoveBgV2,
+    FaceRestore,
+    Output,
+    Route,       // ← Promoted from FilterKind
+    Group,       // ← Promoted from FilterKind
+    Texts,       // ← Promoted from FilterKind
+    Filter(FilterKind),
+}
+
+pub(crate) enum Node {
+    Image(ImageNode),
+    RemoveBg(Process),
+    RemoveBgV2(Process),
+    FaceRestore(FaceRestoreNode),
+    Output(ViewerNode),
+    Route,                       // ← Zero state!
+    Group(GroupNode),            // ← Owns layers, canvas_size, render_state
+    Texts(TextsNode),            // ← Owns typographic state, font, effects
+    Filter(FilterNode),          // ← Clean, lightweight struct!
+}
+```
+
+##### Benefits:
+1. **Lightweight `FilterNode`**: `FilterNode` is stripped down to `{ kind, params, preview, signature, preview_enabled }`. No more dead layer-stack fields on every blur or contrast node.
+2. **Eliminates Filter Special-Casing**: Removes awkward checks throughout `eval.rs` and `editor.rs`, such as:
+   - `if filter.kind == FilterKind::Route { return false; }`
+   - `if kind.is_layer_kind() { ... }`
+3. **Session Backward Compatibility**: Handled seamlessly in `session.rs` deserialization:
+   ```rust
+   // Legacy session compatibility in SessionNodeData::Filter:
+   "route" => Kind::Route,
+   "mix" | "group" => Kind::Group,
+   "texts" | "text" => Kind::Texts,
+   other => Kind::Filter(FilterKind::from_id(other)?),
+   ```
+
+---
+
+### 4. Before vs. After Comparison
+
+#### Before (Adding a Node Today)
+- **Edit 1 (`model.rs`)**: Add `Sepia` to `FilterKind`.
+- **Edit 2 (`model.rs`)**: Add `"sepia"` to `FilterKind::id()`.
+- **Edit 3 (`model.rs`)**: Add `"sepia"` to `FilterKind::from_id()`.
+- **Edit 4 (`model.rs`)**: Add `amount: 100.0` to `FilterKind::defaults()`.
+- **Edit 5 (`ops/adjust.rs`)**: Implement `pub fn sepia(...)`.
+- **Edit 6 (`ops/mod.rs`)**: Add match arm `FilterKind::Sepia => Ok(adjust::sepia(...))` in `ops::evaluate()`.
+- **Edit 7 (`catalog.rs`)**: Define `const SEPIA_FIELDS: &[FieldSpec] = ...`.
+- **Edit 8 (`catalog.rs`)**: Add 17-line boilerplate `NodeSpec` in `NODE_SPECS`.
+
+#### After (With Proposed Redesign)
+- **Edit 1 (`model.rs`)**: Add `Sepia` to `FilterKind` (kept for serde session typing).
+- **Edit 2 (`src/nodes/sepia.rs` or `src/ops/sepia.rs`)**: Create one self-contained specification:
+  ```rust
+  pub(crate) static SPEC: NodeSpec = NodeSpec::filter(
+      FilterKind::Sepia,
+      "Sepia",
+      icons::FILTER,
+      pal::node_header::SAND,
+      &["sepia", "vintage"],
+      &[FieldSpec::range("amount", "Amount", 0.0, 100.0, 100.0, 1.0, " %")],
+      |inputs, params, _| Ok(adjust::sepia(inputs[0].ok_or("No input")?, params)),
+  );
+  ```
+- **Edit 3 (`catalog.rs`)**: Add `&sepia::SPEC` to `NODE_SPECS`.
+
+*Result: Total files reduced from 4 to 2, boilerplate reduced by >75%, zero duplication of defaults, zero chance of missing-default regressions.*
+
+---
+
+### 5. Implementation Roadmap for Proposal
+
+1. **Step 1 (Zero-Risk Refactor)**: Add `default` to `FieldKind`. Rewrite `FilterKind::defaults()` to derive values dynamically from `spec.fields`. Delete ~120 lines of redundant code in `model.rs`.
+2. **Step 2 (Execution Decoupling)**: Add `pub eval: Option<EvalFn>` to `NodeSpec`. Refactor `ops::evaluate()` to delegate through `spec.eval`.
+3. **Step 3 (Spec Builder)**: Add `NodeSpec::filter(...)` constructor and simplify all existing entries in `catalog.rs`.
+4. **Step 4 (Modularization)**: Move filter implementations into modular files (`src/nodes/filters/` or organized `src/ops/`).
+5. **Step 5 (FilterKind Unbundling)**: Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants, extracting layer state out of `FilterNode`.
+
