@@ -930,32 +930,47 @@ impl ImageCanvas {
                 let mut width = max.x - min.x;
                 let mut height = max.y - min.y;
 
-                ui.horizontal(|ui| {
-                    ui.label("X");
-                    let x_changed = ui.add(egui::DragValue::new(&mut x).speed(1.0)).changed();
+                ui.vertical(|ui| {
+                    let mut x_changed = false;
+                    let mut y_changed = false;
+                    let mut width_changed = false;
+                    let mut height_changed = false;
 
-                    ui.label("Y");
-                    let y_changed = ui.add(egui::DragValue::new(&mut y).speed(1.0)).changed();
-
-                    ui.label("W");
-                    let width_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut width)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-
-                    ui.label("H");
-                    let height_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut height)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-
-                    ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
+                    ui.columns(3, |col| {
+                        col[0].horizontal(|ui| {
+                            ui.label("X");
+                            x_changed = ui.add(egui::DragValue::new(&mut x).speed(1.0)).changed();
+                        });
+                        col[1].horizontal(|ui| {
+                            ui.label("Y");
+                            y_changed = ui.add(egui::DragValue::new(&mut y).speed(1.0)).changed();
+                        });
+                    });
+                    ui.columns(3, |col| {
+                        col[0].horizontal(|ui| {
+                            ui.label("W");
+                            width_changed = ui
+                                .add(
+                                    egui::DragValue::new(&mut width)
+                                        .range(MIN_SIZE..=f32::MAX)
+                                        .speed(1.0),
+                                )
+                                .changed();
+                        });
+                        col[1].horizontal(|ui| {
+                            ui.label("H");
+                            height_changed = ui
+                                .add(
+                                    egui::DragValue::new(&mut height)
+                                        .range(MIN_SIZE..=f32::MAX)
+                                        .speed(1.0),
+                                )
+                                .changed();
+                        });
+                        col[2].horizontal(|ui| {
+                            ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
+                        });
+                    });
 
                     if x_changed || y_changed || width_changed || height_changed {
                         let old_width = (max.x - min.x).max(1.0);
@@ -999,7 +1014,6 @@ impl ImageCanvas {
                                 );
                             }
                         }
-
                         transform_changed = true;
                     }
                 });
@@ -1024,34 +1038,48 @@ impl ImageCanvas {
                 let aspect_ratio = content.x / content.y;
                 let mut width = content.x;
                 let mut height = content.y;
+                // X/Y are the group's top-left bounding-box position.
+                ui.vertical(|ui| {
+                    let mut x_changed = false;
+                    let mut y_changed = false;
+                    let mut width_changed = false;
+                    let mut height_changed = false;
 
-                ui.horizontal(|ui| {
-                    ui.label("X");
-                    let x_changed = ui.add(egui::DragValue::new(&mut x).speed(1.0)).changed();
-
-                    ui.label("Y");
-                    let y_changed = ui.add(egui::DragValue::new(&mut y).speed(1.0)).changed();
-
-                    ui.label("W");
-                    let width_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut width)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-
-                    ui.label("H");
-                    let height_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut height)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-
-                    ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
-
+                    ui.columns(3, |col| {
+                        col[0].horizontal(|ui| {
+                            ui.label("X");
+                            x_changed = ui.add(egui::DragValue::new(&mut x).speed(1.0)).changed();
+                        });
+                        col[1].horizontal(|ui| {
+                            ui.label("Y");
+                            y_changed = ui.add(egui::DragValue::new(&mut y).speed(1.0)).changed();
+                        });
+                    });
+                    ui.columns(3, |col| {
+                        col[0].horizontal(|ui| {
+                            ui.label("W");
+                            width_changed = ui
+                                .add(
+                                    egui::DragValue::new(&mut width)
+                                        .range(MIN_SIZE..=f32::MAX)
+                                        .speed(1.0),
+                                )
+                                .changed();
+                        });
+                        col[1].horizontal(|ui| {
+                            ui.label("H");
+                            height_changed = ui
+                                .add(
+                                    egui::DragValue::new(&mut height)
+                                        .range(MIN_SIZE..=f32::MAX)
+                                        .speed(1.0),
+                                )
+                                .changed();
+                        });
+                        col[2].horizontal(|ui| {
+                            ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
+                        });
+                    });
                     if x_changed || y_changed || width_changed || height_changed {
                         if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
                             if width_changed && !height_changed {
@@ -1075,142 +1103,6 @@ impl ImageCanvas {
         }
 
         if transform_changed {
-            self.last_activity = Instant::now();
-        }
-
-        ui.separator();
-        self.gpasteapp.render_ui(ui);
-    }
-
-    fn old_top_section_ui(&mut self, ui: &mut egui::Ui, inner_width: f32) {
-        ui.spacing_mut().item_spacing.y = SIDEBAR_GAP;
-        ui.horizontal(|ui| {
-            if ui
-                .add(Button::new("Attach Image").trans().small())
-                .clicked()
-            {
-                self.attach_canvas(ui.ctx());
-            }
-        });
-
-        self.layer_list_ui(ui, inner_width);
-
-        let mut size_changed = false;
-        let selected = self.selected;
-        let keep_aspect_ratio = self.keep_aspect_ratio;
-        if let Some(sel) = selected {
-            let selected_indices = self.selection_indices();
-
-            if selected_indices.len() >= 2 {
-                ui.separator();
-                // Multi-selection: show the combined bounding-box dimensions.
-                let (min, max) = self.group_bbox(&selected_indices);
-                let mut width = max.x - min.x;
-                let mut height = max.y - min.y;
-                ui.horizontal(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("W");
-                        let width_changed = ui
-                            .add(
-                                egui::DragValue::new(&mut width)
-                                    .range(MIN_SIZE..=f32::MAX)
-                                    .speed(1.0),
-                            )
-                            .changed();
-
-                        ui.label("H");
-                        let height_changed = ui
-                            .add(
-                                egui::DragValue::new(&mut height)
-                                    .range(MIN_SIZE..=f32::MAX)
-                                    .speed(1.0),
-                            )
-                            .changed();
-                        ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
-                        if width_changed || height_changed {
-                            let sx = width / (max.x - min.x).max(1.0);
-                            let sy = height / (max.y - min.y).max(1.0);
-
-                            // Uniform scaling when aspect ratio is enabled.
-                            let (sx, sy) = if keep_aspect_ratio {
-                                let s = if width_changed { sx } else { sy };
-                                (s, s)
-                            } else {
-                                (sx, sy)
-                            };
-
-                            // Anchor at the center of the group for inspector resizing.
-                            let pivot = (min + max) * 0.5;
-                            let selected_ids: HashSet<NodeId> =
-                                selected_indices.iter().map(|&i| self.items[i].id).collect();
-                            for item in &mut self.items {
-                                if selected_ids.contains(&item.id) {
-                                    item.center = pivot
-                                        + vec2(
-                                            (item.center.x - pivot.x) * sx,
-                                            (item.center.y - pivot.y) * sy,
-                                        );
-                                    item.size = vec2(
-                                        (item.size.x * sx).max(MIN_SIZE),
-                                        (item.size.y * sy).max(MIN_SIZE),
-                                    );
-                                }
-                            }
-
-                            size_changed = true;
-                        }
-                    });
-                });
-            } else if let Some(node) = self
-                .items
-                .iter_mut()
-                .filter(|f| f.visible)
-                .find(|item| item.id == sel)
-            {
-                ui.separator();
-
-                // Single selection: edit the layer dimensions directly.
-                let aspect_ratio = node.size.x / node.size.y;
-                let mut width = node.size.x;
-                let mut height = node.size.y;
-
-                ui.horizontal(|ui| {
-                    ui.label("W");
-                    let width_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut width)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-
-                    ui.label("H");
-                    let height_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut height)
-                                .range(MIN_SIZE..=f32::MAX)
-                                .speed(1.0),
-                        )
-                        .changed();
-                    ui.checkbox(&mut self.keep_aspect_ratio, "aspect ratio");
-
-                    if width_changed || height_changed {
-                        if keep_aspect_ratio && aspect_ratio.is_finite() && aspect_ratio > 0.0 {
-                            if width_changed && !height_changed {
-                                height = width / aspect_ratio;
-                            } else if height_changed && !width_changed {
-                                width = height * aspect_ratio;
-                            }
-                        }
-
-                        node.size = vec2(width.max(MIN_SIZE), height.max(MIN_SIZE));
-
-                        size_changed = true;
-                    }
-                });
-            }
-        }
-        if size_changed {
             self.last_activity = Instant::now();
         }
 

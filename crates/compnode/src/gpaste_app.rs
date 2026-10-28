@@ -61,10 +61,6 @@ pub struct GPasTeApp {
     saved_prompts: Vec<String>,
 }
 
-fn tight_frame() -> egui::Frame {
-    egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 2))
-}
-
 /// Scale `size` down (never up) so it fits inside max_w x max_h, keeping aspect ratio.
 #[allow(dead_code)]
 fn fit_size(size: egui::Vec2, max_w: f32, max_h: f32) -> egui::Vec2 {
