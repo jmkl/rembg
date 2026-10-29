@@ -974,6 +974,7 @@ impl CompNodeApp {
                 Option<PathBuf>,
                 (egui::Vec2, egui::Vec2, f32),
                 bool,
+                Option<(u32, u32)>,
             )> = if let Some(gid) = selected_layers {
                 self.snarl[gid]
                     .layers()
@@ -988,6 +989,11 @@ impl CompNodeApp {
                                     l.source_path.clone(),
                                     (l.center, l.size, l.angle),
                                     layer_uses_preview(&self.snarl, l.source),
+                                    crate::graph::effective_dimensions(
+                                        &self.snarl,
+                                        l.source,
+                                        &self.editor.assets,
+                                    ),
                                 )
                             })
                             .collect()
@@ -1010,6 +1016,11 @@ impl CompNodeApp {
                             l.source_path.clone(),
                             (l.center, l.size, l.angle),
                             layer_uses_preview(&self.snarl, l.source),
+                            crate::graph::effective_dimensions(
+                                &self.snarl,
+                                l.source,
+                                &self.editor.assets,
+                            ),
                         )
                     })
                     .collect()

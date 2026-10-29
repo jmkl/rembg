@@ -90,7 +90,7 @@ fn slider_follows_the_pointer_and_snaps_to_step() {
     let ctx = ctx();
     let mut value = 0.0_f32;
     let mut rect = Rect::NOTHING;
-    let mut run = |events: Vec<Event>, value: &mut f32, rect: &mut Rect| {
+    let run = |events: Vec<Event>, value: &mut f32, rect: &mut Rect| {
         frame(&ctx, events, |ui| {
             ui.set_width(200.0);
             let r = ui.add(Slider::new(value, 0.0..=100.0).step(10.0));
@@ -120,7 +120,7 @@ fn slider_double_click_resets_to_default() {
     let ctx = ctx();
     let mut value = 0.0_f32;
     let mut rect = Rect::NOTHING;
-    let mut run = |events: Vec<Event>, value: &mut f32, rect: &mut Rect| {
+    let run = |events: Vec<Event>, value: &mut f32, rect: &mut Rect| {
         frame(&ctx, events, |ui| {
             ui.set_width(200.0);
             let r = ui.add(Slider::new(value, 0.0..=100.0).step(10.0).default(20.0));
@@ -183,7 +183,7 @@ fn menu_rows_fill_the_popup_width_without_blowing_it_up() {
     let ctx = ctx();
     let mut button = Rect::NOTHING;
     let mut rows: Vec<Rect> = Vec::new();
-    let mut run = |events: Vec<Event>, button: &mut Rect, rows: &mut Vec<Rect>| {
+    let run = |events: Vec<Event>, button: &mut Rect, rows: &mut Vec<Rect>| {
         frame(&ctx, events, |ui| {
             let r = ui.menu_button("File", |ui| {
                 rows.clear();

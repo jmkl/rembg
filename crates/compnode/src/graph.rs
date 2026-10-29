@@ -10,7 +10,7 @@ use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use crate::assets::AssetStore;
 use crate::catalog;
 use crate::memory::ImageMemory;
-use crate::model::{Kind, Node, Preview, ViewerLayer};
+use crate::model::{FilterKind, Kind, Node, Preview, ViewerLayer};
 
 /// Ensure the graph has exactly one Output node, creating one if missing and
 /// removing any extras (dropping their wires).
@@ -504,30 +504,93 @@ pub(crate) fn effective_dimensions(
     node: NodeId,
     assets: &AssetStore,
 ) -> Option<(u32, u32)> {
-    let node = resolve_route(snarl, node);
-    let mut current = node;
+    let mut current = resolve_route(snarl, node);
     let mut seen = std::collections::HashSet::new();
-    while let Some(image) = snarl.get_node(current).and_then(|n| n.image_node()) {
-        if !seen.insert(current) {
+    while seen.insert(current) {
+        let Some(n) = snarl.get_node(current) else {
             return None;
+        };
+        // 1. If the node has an existing on-disk output file that exists, use its dimensions.
+        if let Some(path) = n.output_path().or_else(|| n.reload_path()) {
+            if let Ok(dims) = image::image_dimensions(path) {
+                return Some(dims);
+            }
         }
-        if let Some(upstream) = upstream(snarl, current) {
-            current = upstream;
-        } else if let Some(cpu) = image.preview.cpu.as_ref() {
-            return Some(cpu.dimensions());
-        } else if let Some(asset_id) = image.asset_id.as_deref() {
-            return assets.dimensions(asset_id);
-        } else if !image.path.is_empty() {
-            return image::image_dimensions(&image.path).ok();
-        } else {
-            return None;
+        // 2. Node-specific resolution inspection.
+        match n {
+            Node::Image(image) => {
+                if let Some(up) = upstream(snarl, current) {
+                    current = resolve_route(snarl, up);
+                    continue;
+                }
+                if let Some(asset_id) = image.asset_id.as_deref() {
+                    if let Some(dims) = assets.dimensions(asset_id) {
+                        return Some(dims);
+                    }
+                }
+                if !image.path.is_empty() {
+                    if let Ok(dims) = image::image_dimensions(&image.path) {
+                        return Some(dims);
+                    }
+                }
+                if let Some(cpu) = image.preview.cpu.as_ref() {
+                    return Some(cpu.dimensions());
+                }
+                return None;
+            }
+            Node::Filter(filter) => {
+                if filter.kind == FilterKind::Gradient {
+                    let w = crate::params::u32(&filter.params, "width", 1280).clamp(100, 2000);
+                    let h = crate::params::u32(&filter.params, "height", 720).clamp(100, 2000);
+                    return Some((w, h));
+                }
+                if let Some(up) = upstream(snarl, current) {
+                    current = resolve_route(snarl, up);
+                    continue;
+                }
+                if let Some(cpu) = filter.preview.cpu.as_ref() {
+                    return Some(cpu.dimensions());
+                }
+                return None;
+            }
+            Node::RemoveBg(_) | Node::RemoveBgV2(_) | Node::FaceRestore(_) => {
+                if let Some(up) = upstream(snarl, current) {
+                    current = resolve_route(snarl, up);
+                    continue;
+                }
+                if let Some(cpu) = n.cpu() {
+                    return Some(cpu.dimensions());
+                }
+                return None;
+            }
+            Node::Group(group) | Node::Blend(group) => {
+                if group.canvas_size.x > 0.0 && group.canvas_size.y > 0.0 {
+                    return Some((
+                        group.canvas_size.x.round() as u32,
+                        group.canvas_size.y.round() as u32,
+                    ));
+                }
+                if let Some(up) = upstream(snarl, current) {
+                    current = resolve_route(snarl, up);
+                    continue;
+                }
+                return None;
+            }
+            Node::Texts(texts) => {
+                if let Some(cpu) = texts.preview.cpu.as_ref() {
+                    return Some(cpu.dimensions());
+                }
+                return None;
+            }
+            Node::Route => {
+                if let Some(up) = upstream(snarl, current) {
+                    current = resolve_route(snarl, up);
+                    continue;
+                }
+                return None;
+            }
+            Node::Output(_) => return None,
         }
-    }
-    if let Some(cpu) = snarl.get_node(current).and_then(|n| n.cpu()) {
-        return Some(cpu.dimensions());
-    }
-    if let Some(path) = snarl.get_node(current).and_then(|n| n.reload_path()) {
-        return image::image_dimensions(path).ok();
     }
     None
 }

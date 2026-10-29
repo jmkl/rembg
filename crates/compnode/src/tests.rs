@@ -340,6 +340,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         Some(output_path.clone()),
         (egui::vec2(9.0, 9.0), egui::vec2(50.0, 50.0), 0.5),
         false,
+        None,
     )];
     loaded.image_canvas.sync_layers(&ctx, &stale_layers);
     assert_eq!(loaded.image_canvas.layers().count(), 1);
@@ -382,6 +383,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         Some(output_path.clone()),
         (egui::vec2(40.0, 60.0), egui::vec2(640.0, 480.0), 0.0),
         false,
+        None,
     )];
     again.image_canvas.sync_layers(&ctx, &moved_layers);
     again.save_session(&resaved).unwrap();
@@ -432,6 +434,7 @@ fn filter_rerender_keeps_user_canvas_transform() {
                 None,
                 (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
                 true,
+                None,
             )],
         );
     };
@@ -467,6 +470,115 @@ fn filter_rerender_keeps_user_canvas_transform() {
     sync(&mut app, &wide);
     let refitted = app.image_canvas.layers().next().unwrap().size;
     assert_ne!(fitted, refitted);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
+    let ctx = egui::Context::default();
+    let root = std::env::temp_dir().join("compnode-filter-scale-test");
+    let _ = fs::remove_dir_all(&root);
+    let mut app = app_with_cache(OutputCache::new(root.join("cache")));
+
+    // 1. Create Image node and connect to Filter node (HSV)
+    let img_node = app
+        .snarl
+        .insert_node(egui::pos2(0.0, 0.0), Node::image("test.png"));
+    if let Some(img) = app.snarl[img_node].image_node_mut() {
+        img.preview.cpu = Some(image::RgbaImage::new(1024, 1024));
+    }
+
+    let filter_node = app
+        .snarl
+        .insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
+
+    app.snarl.connect(
+        egui_snarl::OutPinId {
+            node: img_node,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter_node,
+            input: 0,
+        },
+    );
+
+    // Verify effective_dimensions walks upstream and finds 1024x1024
+    let dims = crate::graph::effective_dimensions(&app.snarl, filter_node, &app.editor.assets);
+    assert_eq!(dims, Some((1024, 1024)));
+
+    // 2. Texture helpers: capped preview (256x256) vs full render (1024x1024)
+    let make_tex = |name: &str, w: u32, h: u32| {
+        let rgba = vec![255u8; (w * h * 4) as usize];
+        ctx.load_texture(
+            name,
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
+            egui::TextureOptions::LINEAR,
+        )
+    };
+    let preview_tex = make_tex("prev_256", 256, 256);
+    let full_tex = make_tex("full_1024", 1024, 1024);
+
+    // Initial connection: only 256px preview is available, but effective_dims is 1024x1024
+    app.image_canvas.sync_layers(
+        &ctx,
+        &[(
+            filter_node,
+            Kind::Filter(FilterKind::Hsv),
+            String::from("HSV"),
+            Some(preview_tex.clone()),
+            None,
+            (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
+            true,
+            Some((1024, 1024)),
+        )],
+    );
+
+    let initial_size = app.image_canvas.layers().next().unwrap().size;
+    // With 1024x1024 canvas and fit_inside (0.8 scale), initial_size should be ~819.2, NOT 256!
+    assert!(
+        initial_size.x > 500.0,
+        "Initial fit should be based on 1024, got {:?}",
+        initial_size
+    );
+
+    // 3. Full-resolution render completes
+    app.image_canvas.sync_layers(
+        &ctx,
+        &[(
+            filter_node,
+            Kind::Filter(FilterKind::Hsv),
+            String::from("HSV"),
+            Some(full_tex.clone()),
+            None,
+            (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
+            false,
+            Some((1024, 1024)),
+        )],
+    );
+    let full_size = app.image_canvas.layers().next().unwrap().size;
+    assert_eq!(initial_size, full_size, "Full-res arrival must not change scale");
+
+    // 4. User cranks slider on filter: invalidates output, falling back to 256px preview texture
+    app.image_canvas.sync_layers(
+        &ctx,
+        &[(
+            filter_node,
+            Kind::Filter(FilterKind::Hsv),
+            String::from("HSV"),
+            Some(preview_tex.clone()),
+            None,
+            (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
+            true,
+            Some((1024, 1024)),
+        )],
+    );
+    let scrubbing_size = app.image_canvas.layers().next().unwrap().size;
+    assert_eq!(
+        full_size, scrubbing_size,
+        "Scrubbing slider (preview proxy) must not shrink layer to 256"
+    );
 
     let _ = fs::remove_dir_all(&root);
 }

@@ -652,11 +652,12 @@ impl ImageCanvas {
             Option<PathBuf>,
             (egui::Vec2, egui::Vec2, f32),
             bool,
+            Option<(u32, u32)>,
         )],
     ) {
         let in_use: HashSet<PathBuf> = layers
             .iter()
-            .filter_map(|(_, _, _, _, p, _, _)| p.clone())
+            .filter_map(|(_, _, _, _, p, _, _, _)| p.clone())
             .collect();
 
         self.cache.forget_unused_failures(&in_use);
@@ -697,8 +698,9 @@ impl ImageCanvas {
         }
 
         let canvas_size = self.canvas_size;
-        for (source_id, source_kind, source_name, preview, path, saved, use_preview) in layers {
+        for (source_id, source_kind, source_name, preview, path, saved, use_preview, effective_dims) in layers {
             let use_preview = *use_preview;
+            let effective_dims = *effective_dims;
             let is_text = *source_kind == Kind::Texts;
             // Ask the cache first: hit = already a CPU image + texture.
             let cached = path
@@ -711,18 +713,22 @@ impl ImageCanvas {
             // plain filter without its own output the preview texture is the
             // only correct content, so it wins even though it is low-res.
             // The CPU image is only available when the cached file is used.
-            let (display_tex, display_dims, cached_cpu) = if use_preview {
+            let (display_tex, display_dims, cached_cpu, is_preview_tex) = if use_preview {
                 if let Some(p) = preview.clone() {
-                    (p.clone(), (p.size()[0] as u32, p.size()[1] as u32), None)
+                    let dims = effective_dims.unwrap_or((p.size()[0] as u32, p.size()[1] as u32));
+                    (p.clone(), dims, None, true)
                 } else if let Some((tex, dims, cpu)) = cached.clone() {
-                    (tex, dims, Some(cpu))
+                    let dims = effective_dims.unwrap_or(dims);
+                    (tex, dims, Some(cpu), false)
                 } else {
                     continue;
                 }
             } else if let Some((tex, dims, cpu)) = cached.clone() {
-                (tex, dims, Some(cpu))
+                let dims = effective_dims.unwrap_or(dims);
+                (tex, dims, Some(cpu), false)
             } else if let Some(p) = preview.clone() {
-                (p.clone(), (p.size()[0] as u32, p.size()[1] as u32), None)
+                let dims = effective_dims.unwrap_or((p.size()[0] as u32, p.size()[1] as u32));
+                (p.clone(), dims, None, true)
             } else {
                 continue;
             };
@@ -815,7 +821,7 @@ impl ImageCanvas {
             } else {
                 it.content_uv = None;
             }
-            it.tex_is_full = true;
+            it.tex_is_full = !is_preview_tex;
         }
 
         if self.selected.is_none()
