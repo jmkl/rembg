@@ -38,6 +38,8 @@ pub(crate) struct SessionNode {
     pub id: usize,
     pub pos: [f32; 2],
     pub collapsed: bool,
+    #[serde(default)]
+    pub bypassed: bool,
     pub data: SessionNodeData,
 }
 
@@ -263,6 +265,7 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
             id: id.0,
             pos: [info.pos.x, info.pos.y],
             collapsed: !info.open,
+            bypassed: node.bypassed(),
             data,
         });
     }
@@ -325,8 +328,11 @@ pub(crate) fn load(
     assets: &mut AssetStore,
 ) -> Result<Snarl<Node>, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let file: SessionFile =
+    let json: Value =
         serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let json = migrate_session_json(json)?;
+    let file: SessionFile =
+        serde_json::from_value(json).map_err(|e| format!("parse {}: {e}", path.display()))?;
     if file.version != SESSION_VERSION {
         return Err(format!(
             "unsupported session version {} (expected {SESSION_VERSION})",
@@ -448,6 +454,8 @@ pub(crate) fn load(
             },
         };
 
+        let mut node = node;
+        node.set_bypassed(stored.bypassed);
         let pos = egui::pos2(stored.pos[0], stored.pos[1]);
         let id = if stored.collapsed {
             next.insert_node_collapsed(pos, node)
@@ -511,6 +519,92 @@ pub(crate) fn load(
 
     ensure_output_node(&mut next);
     Ok(next)
+}
+
+/// Upgrade unversioned legacy documents into the current versioned shape.
+/// Each version transition is isolated so later schema changes can be added
+/// without scattering aliases through session loading.
+fn migrate_session_json(mut json: Value) -> Result<Value, String> {
+    let version = json.get("version").and_then(Value::as_u64).unwrap_or(0) as u32;
+    match version {
+        0 => migrate_v0_to_v1(&mut json)?,
+        SESSION_VERSION => {}
+        other => {
+            return Err(format!(
+                "unsupported session version {other} (expected {SESSION_VERSION})"
+            ));
+        }
+    }
+    Ok(json)
+}
+
+fn migrate_v0_to_v1(json: &mut Value) -> Result<(), String> {
+    let root = json
+        .as_object_mut()
+        .ok_or_else(|| "session root must be a JSON object".to_owned())?;
+    root.insert("version".to_owned(), Value::from(SESSION_VERSION));
+    if let Some(nodes) = root.get_mut("nodes").and_then(Value::as_array_mut) {
+        for node in nodes {
+            if let Some(node_object) = node.as_object_mut() {
+                node_object.entry("collapsed").or_insert(Value::Bool(false));
+            }
+            let Some(data) = node.get_mut("data").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let Some(kind) = data.get("kind").and_then(Value::as_str).map(str::to_owned) else {
+                continue;
+            };
+            let filter_kind = match kind.as_str() {
+                "route" | "mix" | "group" | "blend" | "texts" | "text" => Some(kind),
+                _ => None,
+            };
+            if let Some(filter_kind) = filter_kind {
+                data.insert("kind".to_owned(), Value::String("filter".to_owned()));
+                data.insert("filter_kind".to_owned(), Value::String(filter_kind));
+                data.entry("params")
+                    .or_insert_with(|| Value::Object(Default::default()));
+                data.entry("layers")
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                data.entry("transforms")
+                    .or_insert_with(|| Value::Array(Vec::new()));
+            }
+        }
+    }
+    root.entry("links")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    root.entry("assets")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    Ok(())
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::{SESSION_VERSION, SessionFile, migrate_session_json};
+
+    #[test]
+    fn unversioned_legacy_node_tags_migrate_before_deserialization() {
+        let legacy = serde_json::json!({
+            "nodes": [{
+                "id": 4,
+                "pos": [12.0, 24.0],
+                "data": { "kind": "mix" }
+            }]
+        });
+
+        let migrated = migrate_session_json(legacy).unwrap();
+        assert_eq!(migrated["version"], SESSION_VERSION);
+        assert_eq!(migrated["nodes"][0]["collapsed"], false);
+        assert_eq!(migrated["nodes"][0]["data"]["kind"], "filter");
+        assert_eq!(migrated["nodes"][0]["data"]["filter_kind"], "mix");
+        let file: SessionFile = serde_json::from_value(migrated).unwrap();
+        assert_eq!(file.nodes.len(), 1);
+    }
+
+    #[test]
+    fn future_session_versions_are_rejected() {
+        let error = migrate_session_json(serde_json::json!({ "version": 99 })).unwrap_err();
+        assert!(error.contains("unsupported session version 99"));
+    }
 }
 
 fn restore_process(

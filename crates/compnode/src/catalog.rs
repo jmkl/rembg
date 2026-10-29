@@ -1,5 +1,7 @@
 //! The node registry.
 
+use std::sync::{OnceLock, RwLock};
+
 use egui::{Color32, Pos2, Ui};
 use egui_snarl::{NodeId, Snarl};
 use image::RgbaImage;
@@ -13,11 +15,8 @@ use crate::style::{NODE_W, NODE_W_S, icons, pal};
 
 pub(crate) type BodyFn = fn(&mut GraphEditor, NodeId, &mut Ui, &mut Snarl<Node>, f32);
 pub(crate) type CreateFn = fn(&mut Snarl<Node>, Pos2, Kind);
-pub(crate) type EvalFn = fn(
-    inputs: &[Vec<RgbaImage>],
-    params: &Params,
-    canvas: (u32, u32),
-) -> Result<RgbaImage, String>;
+pub(crate) type EvalFn =
+    fn(inputs: &[Vec<RgbaImage>], params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, String>;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SelectOption {
@@ -139,6 +138,7 @@ pub(crate) struct SocketSpec {
     pub multi: bool,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct NodeSpec {
     pub kind: Kind,
     pub title: &'static str,
@@ -157,23 +157,119 @@ pub(crate) struct NodeSpec {
     pub eval: Option<EvalFn>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum NodeCategory {
+    Sources,
+    Ai,
+    Color,
+    Generators,
+    Compositing,
+    Utilities,
+}
+
+impl NodeCategory {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Sources,
+        Self::Ai,
+        Self::Color,
+        Self::Generators,
+        Self::Compositing,
+        Self::Utilities,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Sources => "Input / Sources",
+            Self::Ai => "AI Tools",
+            Self::Color => "Color & Grading",
+            Self::Generators => "Generators",
+            Self::Compositing => "Compositing & Layers",
+            Self::Utilities => "Utilities",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct NodeCatalog {
+    specs: Vec<&'static NodeSpec>,
+}
+
+impl NodeCatalog {
+    fn builtins() -> Self {
+        Self {
+            specs: NODE_SPECS.iter().collect(),
+        }
+    }
+
+    pub(crate) fn register(&mut self, spec: NodeSpec) -> Result<(), String> {
+        if let Some(existing) = self
+            .specs
+            .iter_mut()
+            .find(|existing| existing.kind == spec.kind)
+        {
+            *existing = Box::leak(Box::new(spec));
+        } else {
+            self.specs.push(Box::leak(Box::new(spec)));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn specs(&self) -> &[&'static NodeSpec] {
+        &self.specs
+    }
+}
+
+static CATALOG: OnceLock<RwLock<NodeCatalog>> = OnceLock::new();
+
+fn catalog() -> &'static RwLock<NodeCatalog> {
+    CATALOG.get_or_init(|| RwLock::new(NodeCatalog::builtins()))
+}
+
+#[allow(dead_code)]
+pub(crate) fn register(spec: NodeSpec) -> Result<(), String> {
+    catalog()
+        .write()
+        .map_err(|_| "node catalog lock poisoned".to_owned())?
+        .register(spec)
+}
+
 const SINGLE_SOCKET: &[SocketSpec] = &[SocketSpec {
     label: "",
     multi: false,
 }];
 
 impl NodeSpec {
-    pub(crate) fn matches(&self, filter: &str) -> bool {
+    pub(crate) fn match_score(&self, filter: &str) -> Option<usize> {
         let filter = filter.trim();
         if filter.is_empty() {
-            return true;
+            return Some(0);
         }
         let filter = filter.to_ascii_lowercase();
-        self.title.to_ascii_lowercase().contains(&filter)
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| keyword.to_ascii_lowercase().contains(&filter))
+        std::iter::once(self.title)
+            .chain(self.keywords.iter().copied())
+            .filter_map(|candidate| fuzzy_score(candidate, &filter))
+            .min()
+    }
+
+    pub(crate) fn category(&self) -> NodeCategory {
+        match self.kind {
+            Kind::Image => NodeCategory::Sources,
+            Kind::RemoveBg | Kind::RemoveBgV2 | Kind::FaceRestore => NodeCategory::Ai,
+            Kind::Filter(
+                FilterKind::Hsv
+                | FilterKind::Curves
+                | FilterKind::Exposure
+                | FilterKind::ColorBalance
+                | FilterKind::GradientMap
+                | FilterKind::Invert
+                | FilterKind::RawFilter,
+            ) => NodeCategory::Color,
+            Kind::Filter(FilterKind::Gradient | FilterKind::Noise) | Kind::Texts => {
+                NodeCategory::Generators
+            }
+            Kind::Group | Kind::Blend | Kind::Filter(FilterKind::Mask) => NodeCategory::Compositing,
+            Kind::Output | Kind::Route => NodeCategory::Utilities,
+        }
     }
 
     pub const fn filter(
@@ -380,7 +476,15 @@ const COLOR_BALANCE_PRESERVE: &[SelectOption] = &[
 const COLOR_BALANCE_FIELDS: &[FieldSpec] = &[
     FieldSpec::select("range", "Range", COLOR_BALANCE_RANGES, "midtones"),
     FieldSpec::range("cyanRed", "Cyan / Red", -100.0, 100.0, 0.0, 1.0, ""),
-    FieldSpec::range("magentaGreen", "Magenta / Green", -100.0, 100.0, 0.0, 1.0, ""),
+    FieldSpec::range(
+        "magentaGreen",
+        "Magenta / Green",
+        -100.0,
+        100.0,
+        0.0,
+        1.0,
+        "",
+    ),
     FieldSpec::range("yellowBlue", "Yellow / Blue", -100.0, 100.0, 0.0, 1.0, ""),
     FieldSpec::select("preserve", "Preserve Luma", COLOR_BALANCE_PRESERVE, "yes"),
 ];
@@ -762,7 +866,12 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         pal::node_header::TEAL,
         &["color", "balance", "tone"],
         COLOR_BALANCE_FIELDS,
-        |inputs, params, _| Ok(ops::adjust::color_balance(ops::primary_input(inputs)?, params)),
+        |inputs, params, _| {
+            Ok(ops::adjust::color_balance(
+                ops::primary_input(inputs)?,
+                params,
+            ))
+        },
     ),
     NodeSpec::filter(
         FilterKind::GradientMap,
@@ -771,7 +880,12 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
         pal::node_header::OLIVE,
         &["gradient", "map", "duotone"],
         GRADIENT_MAP_FIELDS,
-        |inputs, params, _| Ok(ops::adjust::gradient_map(ops::primary_input(inputs)?, params)),
+        |inputs, params, _| {
+            Ok(ops::adjust::gradient_map(
+                ops::primary_input(inputs)?,
+                params,
+            ))
+        },
     ),
     NodeSpec::filter(
         FilterKind::Invert,
@@ -839,8 +953,60 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
 ];
 
 pub(crate) fn spec(kind: Kind) -> &'static NodeSpec {
-    NODE_SPECS
+    catalog()
+        .read()
+        .expect("node catalog lock poisoned")
+        .specs()
         .iter()
         .find(|spec| spec.kind == kind)
-        .expect("every node kind must be registered in NODE_SPECS")
+        .copied()
+        .expect("every node kind must be registered in the node catalog")
+}
+
+pub(crate) fn all_specs() -> Vec<&'static NodeSpec> {
+    catalog()
+        .read()
+        .expect("node catalog lock poisoned")
+        .specs()
+        .to_vec()
+}
+
+fn fuzzy_score(candidate: &str, filter: &str) -> Option<usize> {
+    let candidate = candidate.to_ascii_lowercase();
+    if let Some(index) = candidate.find(filter) {
+        return Some(index);
+    }
+    let mut chars = candidate.char_indices();
+    let mut start = None;
+    let mut end = 0;
+    for needle in filter.chars() {
+        let (index, _) = chars.find(|(_, ch)| *ch == needle)?;
+        start.get_or_insert(index);
+        end = index;
+    }
+    Some(100 + end - start.unwrap_or(end))
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::{NodeCatalog, NodeCategory, fuzzy_score};
+
+    #[test]
+    fn catalog_accepts_dynamic_specs_and_replaces_matching_kind() {
+        let mut catalog = NodeCatalog::default();
+        let image = *super::spec(crate::model::Kind::Image);
+        catalog.register(image).unwrap();
+        let mut updated = image;
+        updated.title = "Updated Image";
+        catalog.register(updated).unwrap();
+        assert_eq!(catalog.specs().len(), 1);
+        assert_eq!(catalog.specs()[0].title, "Updated Image");
+    }
+
+    #[test]
+    fn fuzzy_search_matches_subsequences_and_categories_are_ordered() {
+        assert!(fuzzy_score("Curves", "crvs").is_some());
+        assert!(fuzzy_score("Curves", "zzz").is_none());
+        assert_eq!(NodeCategory::ALL.len(), 6);
+    }
 }

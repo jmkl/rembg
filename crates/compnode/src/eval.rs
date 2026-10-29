@@ -127,11 +127,20 @@ fn ensure_filter(
         }
     };
 
-    let signature = filter_signature(snarl, node, kind, &params, stack, quality);
+    let bypassed = snarl.node(node).is_some_and(Node::bypassed);
+    let signature = filter_signature(snarl, node, kind, &params, stack, quality)
+        ^ if bypassed { 0x9e37_79b9_7f4a_7c15 } else { 0 };
 
     let result = if has_output && cached_signature == Some(signature) {
         stack.remove(&node);
         return false;
+    } else if bypassed {
+        let inputs = resolve_inputs(snarl, node, kind, ctx, stack, quality);
+        inputs
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| "Bypassed node has no input image".to_owned())
     } else if kind.is_layer_kind()
         && snarl
             .node(node)

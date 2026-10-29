@@ -27,6 +27,8 @@ pub(crate) struct Actions {
     pub paste_clipboard: bool,
     pub duplicate_selected: bool,
     pub delete_selected: bool,
+    pub undo: bool,
+    pub redo: bool,
     pub settings: bool,
     pub toggle_fullscreen: bool,
     pub about: bool,
@@ -191,6 +193,13 @@ fn menus(ui: &mut egui::Ui, actions: &mut Actions, selected: usize, fullscreen: 
     });
 
     ui.menu_button("Edit", |ui| {
+        if item(ui, MenuItem::new("Undo").shortcut("Ctrl+Z").enabled(true)) {
+            actions.undo = true;
+        }
+        if item(ui, MenuItem::new("Redo").shortcut("Ctrl+Y").enabled(true)) {
+            actions.redo = true;
+        }
+        ui.separator();
         if item(
             ui,
             MenuItem::new("Duplicate selected")

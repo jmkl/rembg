@@ -43,6 +43,7 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         last_autosave_asset_revision: 0,
         autosave_due: None,
         node_filter: String::new(),
+        recent_node_kinds: Vec::new(),
         settings_draft: settings.clone(),
         settings_open: false,
         settings,
@@ -224,6 +225,10 @@ fn session_roundtrip_restores_graph_and_cached_output() {
     let bg_node = app
         .snarl
         .insert_node(egui::pos2(250.0, 80.0), Node::remove_bg());
+    let bypass_node = app
+        .snarl
+        .insert_node(egui::pos2(360.0, 180.0), Node::new_filter(FilterKind::Hsv));
+    app.snarl[bypass_node].set_bypassed(true);
     if let Some(process) = app.snarl[bg_node].process_mut() {
         process.preview.texture = Some(tex.clone());
         process.preview.set_cpu(img.clone());
@@ -286,7 +291,13 @@ fn session_roundtrip_restores_graph_and_cached_output() {
 
     let mut loaded = app_with_cache(cache);
     loaded.load_session(&session, &ctx).unwrap();
-    assert_eq!(loaded.snarl.node_ids().count(), 3);
+    assert_eq!(loaded.snarl.node_ids().count(), 4);
+    assert!(
+        loaded
+            .snarl
+            .node_ids()
+            .any(|(_, node)| matches!(node, Node::Filter(filter) if filter.bypassed))
+    );
 
     let bg = loaded
         .snarl
@@ -698,7 +709,7 @@ fn every_node_kind_has_a_unique_catalog_entry() {
     for spec in crate::catalog::NODE_SPECS {
         assert_eq!(crate::catalog::spec(spec.kind).title, spec.title);
         assert!(titles.insert(spec.title), "duplicate title: {}", spec.title);
-        assert!(spec.matches(spec.title));
+        assert!(spec.match_score(spec.title).is_some());
     }
 }
 
@@ -1058,6 +1069,31 @@ fn diamond_graph_evaluates_both_branches() {
     assert!(snarl[left].cpu().is_some());
     assert!(snarl[right].cpu().is_some());
     assert_eq!(snarl[blend].cpu().unwrap().dimensions(), (8, 8));
+}
+
+#[test]
+fn bypassed_filter_passes_its_input_through_unchanged() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(egui::Pos2::ZERO, Node::image("bypass.png"));
+    let input = image::RgbaImage::from_pixel(2, 2, image::Rgba([25, 80, 140, 210]));
+    snarl[source].set_cpu(input.clone());
+    let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
+    snarl[filter].set_bypassed(true);
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        },
+    );
+
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    assert_eq!(snarl[filter].cpu(), Some(&input));
 }
 
 #[test]

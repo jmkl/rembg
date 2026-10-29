@@ -10,7 +10,7 @@ use crate::model::{Kind, Node};
 use crate::nodes::IMAGE_EXTENSIONS;
 use crate::style::controls::{Button, muted};
 use crate::style::font;
-use crate::widgets::{error_line, preview};
+use crate::widgets::{error_line, node_body, node_preview};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::image(""));
@@ -23,9 +23,10 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     width: f32,
 ) {
+    node_body(ui);
     let texture = effective_texture(snarl, node);
     if snarl[node].preview_enabled() {
-        preview(ui, texture.as_ref(), egui::vec2(width, 140.0));
+        node_preview(ui, texture.as_ref(), egui::vec2(width, 140.0));
     }
 
     let upstream_connected = upstream(snarl, node).is_some();

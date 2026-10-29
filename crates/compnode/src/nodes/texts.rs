@@ -12,7 +12,7 @@ use crate::ops::texts::{self, LineStyle};
 use crate::params;
 use crate::style::controls::{Checkbox, Select, Slider};
 use crate::style::{font, pal};
-use crate::widgets::{error_line, preview};
+use crate::widgets::{error_line, node_body, node_preview};
 
 use crate::params::Params; // use whatever path your `Params` type actually lives at
 
@@ -133,6 +133,7 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     width: f32,
 ) {
+    node_body(ui);
     let (texture, preview_enabled, error) = {
         let Some(texts) = snarl[node].texts_node() else {
             return;
@@ -145,7 +146,7 @@ pub(crate) fn show_body(
     };
 
     if preview_enabled {
-        preview(ui, texture.as_ref(), Vec2::new(width, 140.0));
+        node_preview(ui, texture.as_ref(), Vec2::new(width, 140.0));
     }
     error_line(ui, error.as_deref());
 

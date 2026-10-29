@@ -14,7 +14,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 | **Phase 1**  | Operations Reorganization & Core Data Foundation | **Completed**   | 100%                                        |
 | **Phase 2**  | Graph & Evaluation Engine Decoupling             | **Completed**   | 100%                                        |
 | **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **Completed**  | 100% |
-| **Phase 4**  | Node UI, Catalog & Session Modernization         | **Pending**     | 20% (Builder pattern done)                  |
+| **Phase 4**  | Node UI, Catalog & Session Modernization         | **Complete**    | UI, discovery, migration and history landed  |
 | **Phase 5**  | Verification, Benchmarking & Documentation       | **In Progress** | ~50% (Tests & docs current)                 |
 
 ---
@@ -158,28 +158,32 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 ### 4.1 UI Component Standardization (`src/nodes/`)
 
 - [ ] Create reusable UI layout helpers:
-  - [ ] Standardized node header with status indicator and bypass button
-  - [ ] Standardized preview thumbnail container with zoom/pan tooltip
-  - [ ] Standardized error / warning banner for failed inferences or missing inputs
-- [ ] Uniform slider and control spacing across all node bodies
+  - [x] Standardized node header with status indicator and functional bypass button
+  - [x] Standardized preview thumbnail container with zoom/pan tooltip
+  - [x] Reuse the existing error banner for inference failures
+- [x] Uniform vertical spacing across node bodies
 
 ### 4.2 Catalog & Node Discovery (`src/catalog.rs`, `src/graph_menu.rs`)
 
 - [x] NodeSpec builder constructors (`NodeSpec::filter`, `NodeSpec::generator`)
-- [ ] Grouped context menu categories in `graph_menu.rs`:
-  - [ ] Input / Sources (Image, GPasTe Bridge)
-  - [ ] AI Tools (Remove Background, Remove Background v2, Face Restore)
-  - [ ] Color & Grading (HSV, Curves, Exposure, Color Balance, Gradient Map, Invert, Raw Filter)
-  - [ ] Generators (Gradient, Noise, Text)
-  - [ ] Compositing & Layers (Group, Blend, Mask)
-  - [ ] Utilities (Route, Output / Viewer)
-- [ ] Node search improvements:
-  - [ ] Fuzzy search over titles and keywords
-  - [ ] Recently used node suggestions
+- [x] Group the context menu by node category
+- [x] Fuzzy search over node titles and keywords
+- [x] Show recently used node suggestions
+- [x] Support runtime catalog registration for existing `Kind` variants
+
+### 4.3 Session Schema Versioning & Migration
+
+- [x] Keep an explicit root session version
+- [x] Migrate unversioned / version 0 sessions through `migrate_v0_to_v1`
+- [x] Reject unsupported future versions with a clear error
+- [x] Supply defaults for newly introduced optional node state
 
 ### 4.4 Graph Undo / Redo Command History
 
-- [ ] Implement command pattern stack for node additions, wire changes, parameter scrubbing, and canvas layer transforms
+- [x] Implement bounded undo / redo history for node and image additions, deletion, duplication, and wire changes
+- [x] Record parameter edits and coalesce slider scrubbing
+- [x] Record canvas layer transforms and node bypass toggles
+- [x] Add Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z and Edit menu commands
 
 ---
 

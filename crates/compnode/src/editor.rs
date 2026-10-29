@@ -14,6 +14,7 @@ use crate::assets::AssetStore;
 use crate::cancellation::CancellationToken;
 use crate::catalog;
 use crate::graph::{connect_input, full_res_source_path, invalidate_downstream, invalidate_node};
+use crate::history::{GraphHistory, GraphSnapshot};
 use crate::memory::ImageMemory;
 use crate::model::{Kind, Node, ViewerLayer};
 use crate::style::controls::{MenuItem, muted};
@@ -54,6 +55,7 @@ pub(crate) struct GraphEditor {
     node_pressed: bool,
     /// Tracks recent full-resolution image use and caps CPU memory.
     image_memory: ImageMemory,
+    history: GraphHistory,
 }
 
 /// Path of a Ctrl+drag wire cut, in screen coordinates.
@@ -82,6 +84,7 @@ impl GraphEditor {
             snarl_selection: Vec::new(),
             node_pressed: false,
             image_memory: ImageMemory::default(),
+            history: GraphHistory::default(),
         }
     }
 
@@ -207,10 +210,15 @@ impl GraphEditor {
             })
             .collect();
 
+        if wires.is_empty() {
+            return;
+        }
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         for (out, input) in wires {
             snarl.disconnect(out, input);
             invalidate_node(snarl, input.node);
         }
+        self.record_graph_change(before, snarl);
     }
 
     pub(crate) fn touch_image(&mut self, node: NodeId) {
@@ -228,8 +236,44 @@ impl GraphEditor {
         self.image_memory.trim(snarl, &self.assets);
     }
 
+    pub(crate) fn undo(&mut self, snarl: &mut Snarl<Node>) -> bool {
+        let changed = self.history.undo(snarl, &mut self.assets);
+        if changed {
+            self.reset_view();
+        }
+        changed
+    }
+
+    pub(crate) fn redo(&mut self, snarl: &mut Snarl<Node>) -> bool {
+        let changed = self.history.redo(snarl, &mut self.assets);
+        if changed {
+            self.reset_view();
+        }
+        changed
+    }
+
+    pub(crate) fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    pub(crate) fn record_graph_change(&mut self, before: GraphSnapshot, snarl: &Snarl<Node>) {
+        self.history
+            .record_graph(before, GraphSnapshot::capture(snarl, &self.assets));
+    }
+
+    pub(crate) fn graph_snapshot(&self, snarl: &Snarl<Node>) -> GraphSnapshot {
+        GraphSnapshot::capture(snarl, &self.assets)
+    }
+
+    pub(crate) fn record_node_change(&mut self, id: NodeId, before: Node, snarl: &Snarl<Node>) {
+        if let Some(after) = snarl.get_node(id) {
+            self.history.record_node(id, before, after.clone());
+        }
+    }
+
     /// Remove specific nodes from the graph and invalidate affected downstream nodes.
     pub(crate) fn delete_nodes(&mut self, snarl: &mut Snarl<Node>, nodes: &[NodeId]) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         let mut downstream = Vec::new();
 
         for node in nodes {
@@ -267,6 +311,9 @@ impl GraphEditor {
             }
         }
         self.assets.retain_used(snarl);
+        if snarl.node_ids().count() != before.snarl.node_ids().count() {
+            self.record_graph_change(before, snarl);
+        }
     }
 
     /// Remove the app-level selection from the graph. Both Delete shortcuts and
@@ -281,6 +328,7 @@ impl GraphEditor {
     /// remapped to duplicated sources, and the duplicates become the new
     /// selection.
     pub(crate) fn duplicate_selected(&mut self, snarl: &mut Snarl<Node>) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         use std::collections::HashMap;
 
         const OFFSET: f32 = 24.0;
@@ -336,6 +384,9 @@ impl GraphEditor {
 
         self.selected = map.values().copied().collect();
         self.selected.sort_by_key(|node| node.0);
+        if !map.is_empty() {
+            self.record_graph_change(before, snarl);
+        }
     }
 
     /// Finish bookkeeping after the Snarl widget has been rendered.
@@ -854,8 +905,12 @@ impl SnarlViewer<Node> for GraphEditor {
             egui::pos2(rect.left() + PAD, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
-        let right = egui::Rect::from_min_size(
+        let bypass_rect = egui::Rect::from_min_size(
             egui::pos2(rect.right() - PAD - HIT, rect.center().y - HIT / 2.0),
+            vec2(HIT, HIT),
+        );
+        let right = egui::Rect::from_min_size(
+            egui::pos2(bypass_rect.left() - 2.0 - HIT, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
         let title = egui::Rect::from_min_max(
@@ -884,6 +939,30 @@ impl SnarlViewer<Node> for GraphEditor {
             snarl.open_node(node, !open);
         }
 
+        let node_ref = &snarl[node];
+        let status_color = if node_ref
+            .preview()
+            .and_then(|preview| preview.error.as_ref())
+            .is_some()
+        {
+            pal::DANGER
+        } else if node_ref.job().is_some() {
+            pal::SOCKET
+        } else if node_ref
+            .preview()
+            .and_then(|preview| preview.cpu.as_ref())
+            .is_some()
+        {
+            pal::SUCCESS
+        } else {
+            pal::MUTED
+        };
+        ui.painter().circle_filled(
+            egui::pos2(title.left() + 7.0, title.center().y),
+            3.0,
+            status_color,
+        );
+
         // Title (centre). Match the sidebar layer list naming so the node a
         // layer comes from is identifiable at a glance: `{type} #{node id}`.
         ui.painter().text(
@@ -907,6 +986,41 @@ impl SnarlViewer<Node> for GraphEditor {
         );
         if response.clicked() {
             snarl[node].set_preview_enabled(!enabled);
+        }
+
+        // Bypass keeps the node and its settings in the graph while passing
+        // its first input image directly to downstream consumers.
+        let can_bypass = snarl[node].can_bypass();
+        let bypassed = snarl[node].bypassed();
+        let bypass_response = ui.interact(
+            bypass_rect,
+            ui.id().with(("bypass", node)),
+            egui::Sense::click(),
+        );
+        ui.painter().text(
+            bypass_rect.center(),
+            Align2::CENTER_CENTER,
+            "⦸",
+            icons::font(14.0),
+            if bypassed {
+                pal::SOCKET
+            } else {
+                pal::HEADER_TEXT
+            },
+        );
+        if bypass_response
+            .on_hover_text(if bypassed {
+                "Enable node"
+            } else {
+                "Bypass node"
+            })
+            .clicked()
+            && can_bypass
+        {
+            let before = snarl[node].clone();
+            snarl[node].set_bypassed(!bypassed);
+            invalidate_node(snarl, node);
+            self.record_node_change(node, before, snarl);
         }
     }
 
@@ -948,6 +1062,7 @@ impl SnarlViewer<Node> for GraphEditor {
         ui: &mut egui::Ui,
         snarl: &mut Snarl<Node>,
     ) {
+        let before = snarl[node].clone();
         let spec = catalog::spec(snarl[node].kind());
         Frame::new().inner_margin(BODY_MARGIN).show(ui, |ui| {
             ui.vertical(|ui| {
@@ -955,6 +1070,11 @@ impl SnarlViewer<Node> for GraphEditor {
                 (spec.body)(self, node, ui, snarl, spec.body_width);
             });
         });
+        // Compare persisted node data rather than previews/jobs, which change
+        // during normal evaluation and should not create undo entries.
+        if before.history_state() != snarl[node].history_state() {
+            self.record_node_change(node, before, snarl);
+        }
     }
 
     fn final_node_rect(
@@ -1002,6 +1122,7 @@ impl SnarlViewer<Node> for GraphEditor {
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Node>) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         connect_input(snarl, from.id, to.id);
 
         // Keep Viewer layers in connection order. `refresh_viewer` fills in
@@ -1033,26 +1154,33 @@ impl SnarlViewer<Node> for GraphEditor {
         }
 
         invalidate_node(snarl, to.id.node);
+        self.record_graph_change(before, snarl);
     }
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Node>) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         snarl.disconnect(from.id, to.id);
         // The input changed; drop the processed result and show the new input
         // (or no preview when nothing remains connected).
         invalidate_node(snarl, to.id.node);
+        self.record_graph_change(before, snarl);
     }
 
     fn drop_inputs(&mut self, pin: &InPin, snarl: &mut Snarl<Node>) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         snarl.drop_inputs(pin.id);
         invalidate_node(snarl, pin.id.node);
+        self.record_graph_change(before, snarl);
     }
 
     fn drop_outputs(&mut self, pin: &OutPin, snarl: &mut Snarl<Node>) {
+        let before = GraphSnapshot::capture(snarl, &self.assets);
         let remotes = pin.remotes.clone();
         snarl.drop_outputs(pin.id);
         for remote in remotes {
             invalidate_node(snarl, remote.node);
         }
+        self.record_graph_change(before, snarl);
     }
 
     fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<Node>) -> bool {

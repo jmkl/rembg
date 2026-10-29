@@ -24,6 +24,7 @@ mod eval;
 mod gpaste_app;
 mod graph;
 mod graph_menu;
+mod history;
 mod image_canvas;
 mod layer_cache;
 mod memory;

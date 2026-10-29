@@ -94,7 +94,7 @@ The application is structured around strict separation between the UI event loop
 ### 3. Persistence, Cache & Memory
 - **Output Cache (`src/cache.rs`)**: Processed results are saved as PNGs under `%LOCALAPPDATA%\rembg\studio-cache\` keyed by SHA-256 hashes of inputs and parameters.
 - **CPU Memory Management (`src/memory.rs`)**: Full-resolution source images held in RAM are budgeted (512 MB cap) and dynamically evicted/reloaded from disk or asset store on demand.
-- **Session Serialization (`src/session.rs`)**: Saved graphs (`.rembg.json`) store node coordinates, connection links, embedded base64 assets, parameter dictionaries, and absolute output paths. Backward compatibility with older session files is maintained (e.g., mapping `"mix"` to `Kind::Group`, `"route"` to `Kind::Route`, `"texts"` to `Kind::Texts`).
+- **Session Serialization (`src/session.rs`)**: Saved graphs (`.rembg.json`) store a root version, node coordinates, connection links, embedded base64 assets, parameter dictionaries, bypass state, and output paths. Unversioned/version 0 files migrate through `migrate_v0_to_v1`; unsupported future versions fail clearly. Optional bypass state defaults to false for older files.
 - **Parameter restore**: Generic parameter maps merge saved values into constructor defaults and preserve unknown keys. Validation is explicit; session loading does not silently alter saved values.
 - **Worker jobs**: Render and inference work use separate request/response types. Invalidated queued jobs carry shared cancellation flags and are skipped before execution; stale completion tokens remain guarded by the UI.
 
@@ -105,7 +105,7 @@ The application is structured around strict separation between the UI event loop
 | Module | Purpose | Key Types / Functions |
 | :--- | :--- | :--- |
 | `src/model.rs` | Core domain model, shared node contract, and preview state | `Kind`, `FilterKind`, `Node`, `NodeTrait`, `FilterNode`, `GroupNode`, `TextsNode`, `Preview`, `Process` |
-| `src/catalog.rs` | Node registry and static metadata | `NODE_SPECS`, `NodeSpec`, `FieldSpec`, `FieldKind`, `EvalFn`, `spec()` |
+| `src/catalog.rs` | Node registry, metadata and categories | `NODE_SPECS`, `NodeCatalog`, `NodeCategory`, `NodeSpec`, `FieldSpec`, `FieldKind`, `EvalFn`, `spec()` |
 | `src/editor.rs` | Snarl node graph viewer implementation | `GraphEditor`, `SnarlViewer` impl, wire cutting (`Ctrl`+drag), pin layout |
 | `src/graph.rs` | Graph topological algorithms | `resolve_route()`, `refresh_viewer()`, `upstream()`, `preview_dimensions()` |
 | `src/eval.rs` | Preview pipeline evaluation | `ensure_all()`, `ensure_filter()`, `filter_signature()`, `resolve_image()` |
@@ -140,9 +140,15 @@ The application is structured around strict separation between the UI event loop
 - **Builder Pattern (`NodeSpec::filter`, `NodeSpec::generator`)**: Standard filter specifications are declared cleanly with boilerplate-free constructors.
 
 ### NodeTrait and Session Parameters
-- `NodeTrait` adapts the static `Node` enum with dynamic metadata, port, and parameter access. It does not replace enum storage or provide runtime plugin registration.
+- `NodeTrait` adapts the static `Node` enum with dynamic metadata, port, and parameter access. The catalog supports runtime registration or replacement for `Kind` values; adding a wholly new node kind still requires an enum variant and Rust implementation.
 - Its field validator clamps numeric fields to their catalog range and replaces invalid colors/selections with field defaults. Validation is explicit and is not applied automatically during session restore.
 - Parameter serialization hooks are used by session snapshots and restoration. Typed node state, including inference settings and layer transforms, remains handled by the session codec.
+
+### Phase 4 Editor Behavior
+- Shared body spacing, preview slots, error banners and status markers live in `src/widgets.rs`. The graph header shows node status and a functional bypass control for evaluable nodes.
+- Bypass passes the first connected input image through and persists in session files.
+- The graph menu groups nodes by category, searches titles and keywords with fuzzy subsequence matching, and shows five recently used node kinds.
+- Undo/redo has a bounded 100-step history for graph structure, image changes, parameters, bypass and canvas transforms. Rapid edits to the same node coalesce for slider scrubbing.
 
 ### Pixel Semantics
 - `image::RgbaImage` is the RGBA8 interchange format. Current operations treat RGB as encoded sRGB-like values and do not apply ICC profiles or linearize RGB.
@@ -157,6 +163,5 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 
 ## 6. Codebase Health & Future Work
 
-- **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
-- **Test Suite**: 70 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, UI responsiveness under simulated worker load, mock inference backends, disk and in-memory caching, GPU color/composite passes, and sampler/noise edge cases.
+- **Compilation and tests**: `cargo check -p compnode` and `cargo check -p compnode --no-default-features` pass without warnings. The latest full runs passed 77 tests (1 ignored) with default features and 76 tests (1 ignored) without default features.
 - **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).

@@ -249,6 +249,15 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
                 None => return None,
             }
         }
+        if node_ref.bypassed() {
+            match upstream(snarl, current) {
+                Some(next) => {
+                    current = next;
+                    continue;
+                }
+                None => return node_ref.output_path().map(|path| path.to_path_buf()),
+            }
+        }
         match node_ref {
             Node::Filter(_) => {
                 return node_ref.output_path().map(|path| path.to_path_buf());

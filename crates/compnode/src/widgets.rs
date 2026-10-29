@@ -117,8 +117,28 @@ pub(crate) fn preview(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, 
     );
 }
 
+/// Apply the standard vertical rhythm used by node bodies.
+pub(crate) fn node_body(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.y = 6.0;
+}
+
+/// Standard preview slot used by image-producing node bodies.
+pub(crate) fn node_preview(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, size: Vec2) {
+    preview(ui, texture, size);
+}
+
+/// Compact state marker shared by processing nodes.
+pub(crate) fn node_status(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
+    ui.horizontal(|ui| {
+        let (dot, _) = ui.allocate_exact_size(vec2(7.0, 7.0), egui::Sense::hover());
+        ui.painter().circle_filled(dot.center(), 3.5, color);
+        ui.add(egui::Label::new(muted(label, font::TINY)).selectable(false));
+    });
+}
+
 pub(crate) fn preview_background(ui: &mut egui::Ui, size: Vec2) -> (egui::Rect, egui::Painter) {
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    response.on_hover_text("Preview thumbnail · use the output canvas to zoom and pan");
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::same(4), pal::BG);
 

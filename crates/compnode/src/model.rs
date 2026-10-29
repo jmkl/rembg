@@ -128,6 +128,7 @@ pub(crate) struct FilterNode {
     /// Eval signature whose full-resolution render has been claimed (in flight
     /// or completed). Prevents re-submitting identical renders every frame.
     pub rendered: Option<u64>,
+    pub bypassed: bool,
 }
 
 /// Layer compositing container node (Group and Blend).
@@ -145,6 +146,7 @@ pub(crate) struct GroupNode {
     pub output_path: Option<PathBuf>,
     pub render_state: Option<RenderState>,
     pub rendered: Option<u64>,
+    pub bypassed: bool,
 }
 
 impl GroupNode {
@@ -167,6 +169,7 @@ impl GroupNode {
             output_path: None,
             render_state: None,
             rendered: None,
+            bypassed: false,
         }
     }
 }
@@ -183,6 +186,7 @@ pub(crate) struct TextsNode {
     pub output_path: Option<PathBuf>,
     pub render_state: Option<RenderState>,
     pub rendered: Option<u64>,
+    pub bypassed: bool,
 }
 
 impl TextsNode {
@@ -222,6 +226,7 @@ impl TextsNode {
             output_path: None,
             render_state: None,
             rendered: None,
+            bypassed: false,
         }
     }
 }
@@ -247,6 +252,7 @@ impl FilterNode {
             output_path: None,
             render_state: None,
             rendered: None,
+            bypassed: false,
         }
     }
 }
@@ -676,6 +682,45 @@ mod node_trait_tests {
 }
 
 impl Node {
+    pub(crate) fn history_state(&self) -> Value {
+        match self {
+            Self::Image(node) => {
+                serde_json::json!({"asset_id": node.asset_id, "name": node.name, "path": node.path})
+            }
+            Self::FaceRestore(node) => {
+                serde_json::json!({"strength": node.strength, "only_center": node.only_center})
+            }
+            Self::Filter(_) | Self::Group(_) | Self::Blend(_) | Self::Texts(_) => {
+                self.serialize_parameters().unwrap_or(Value::Null)
+            }
+            _ => Value::Null,
+        }
+    }
+
+    pub(crate) fn bypassed(&self) -> bool {
+        match self {
+            Self::Filter(node) => node.bypassed,
+            Self::Group(node) | Self::Blend(node) => node.bypassed,
+            Self::Texts(node) => node.bypassed,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn set_bypassed(&mut self, bypassed: bool) {
+        match self {
+            Self::Filter(node) => node.bypassed = bypassed,
+            Self::Group(node) | Self::Blend(node) => node.bypassed = bypassed,
+            Self::Texts(node) => node.bypassed = bypassed,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn can_bypass(&self) -> bool {
+        matches!(
+            self,
+            Self::Filter(_) | Self::Group(_) | Self::Blend(_) | Self::Texts(_)
+        )
+    }
     pub(crate) fn image(path: impl Into<String>) -> Self {
         Self::Image(ImageNode::new(path))
     }
@@ -988,7 +1033,7 @@ impl Node {
         self.reload_path().is_some_and(|path| path.is_file())
     }
 
-    fn preview(&self) -> Option<&Preview> {
+    pub(crate) fn preview(&self) -> Option<&Preview> {
         match self {
             Self::Image(node) => Some(&node.preview),
             Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&process.preview),

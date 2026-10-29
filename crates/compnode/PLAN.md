@@ -58,7 +58,7 @@ This plan outlines a comprehensive refactoring of the CompNode crate to improve 
 - **GPU Compute Pipeline**: Standardize WGPU compute passes for heavy operations (Raw Filter, Blends, Color Grading)
 - **Cache interface**: Abstract content-addressed cache for testability
 - **Worker job interface**: Cleaner job submission and result handling
-- **Session Versioning & Migration**: Explicit schema versioning (`schema_version: u32`) and migration pipeline for `.rembg.json` files
+- **Session Versioning & Migration**: Explicit root version (`version: u32`) and migration pipeline for `.rembg.json` files
 - **Undo/Redo History**: Command pattern for graph topology modifications and parameter adjustments
 
 ### 3. Operations Organization
@@ -205,17 +205,18 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
 
 ### Phase 4: Node UI, Catalog & Session Modernization
 
-- [ ] **UI Body Standardization (`src/nodes/`)**:
-  - [ ] Create standardized component builders for node bodies (consistent headers, preview boxes, sliders).
-  - [ ] Standardize error/status badge displays across AI inference nodes (`RemoveBg`, `FaceRestore`).
-- [ ] **Catalog & Extensibility (`src/catalog.rs`)**:
-  - [ ] Refactor `NodeSpec` to support dynamic registration and auto-discovery.
-  - [ ] Ensure category tags / grouping in the right-click node spawn menu (`graph_menu.rs`).
-- [ ] **Session Schema Versioning & Forward Migration (`src/session.rs`)**:
-  - [ ] Introduce explicit `schema_version` to `.rembg.json` root.
-  - [ ] Create structured migration handlers (`migrate_v0_to_v1`, etc.) replacing scattered ad-hoc string aliases.
-- [ ] **Graph Undo / Redo Command History**:
-  - [ ] Implement command pattern stack for node additions, wire changes, parameter scrubbing, and canvas layer transforms.
+- [x] **UI Body Standardization (`src/nodes/`)**:
+  - [x] Shared node spacing, preview, error banner, and status helpers.
+  - [x] Header status indicator and persisted functional bypass for evaluable nodes.
+- [x] **Catalog & Discovery (`src/catalog.rs`)**:
+  - [x] Runtime registration over the existing `Kind` enum and category-based menu grouping.
+  - [x] Fuzzy title/keyword search and recently used suggestions.
+- [x] **Session Versioning & Migration (`src/session.rs`)**:
+  - [x] Explicit root `version` field and structured v0-to-v1 migration.
+  - [x] Reject unsupported future versions; default new optional fields for older files.
+- [x] **Graph Undo / Redo History**:
+  - [x] Bounded history for node/image changes, wires, parameters, bypass, and canvas transforms.
+  - [x] Coalesce rapid edits to the same node to keep slider scrubbing practical.
 
 ### Phase 5: Verification, Benchmarking & Documentation
 
@@ -234,7 +235,7 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
 
 ## Risk Mitigation
 
-- **Backward compatibility**: Session format remains unchanged (JSON with same keys)
+- **Backward compatibility**: Existing JSON sessions migrate to version 1; new optional state defaults when absent.
 - **Settings persistence**: Versionless JSON, new fields added without breaking old files
 - **Incremental migration**: Each phase is independently verifiable
 - **Feature flags**: Can gate new abstractions behind feature flags if needed

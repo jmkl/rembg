@@ -48,6 +48,7 @@ pub struct CompNodeApp {
     pub(crate) last_autosave_asset_revision: u64,
     pub(crate) autosave_due: Option<Instant>,
     pub(crate) node_filter: String,
+    pub(crate) recent_node_kinds: Vec<Kind>,
     pub(crate) settings: Settings,
     pub(crate) settings_draft: Settings,
     pub(crate) settings_open: bool,
@@ -104,6 +105,7 @@ impl CompNodeApp {
             last_autosave_asset_revision: 0,
             autosave_due: None,
             node_filter: String::new(),
+            recent_node_kinds: Vec::new(),
             settings_draft: settings.clone(),
             settings_open: false,
             settings,
@@ -467,6 +469,7 @@ impl CompNodeApp {
         let mut assets = AssetStore::default();
         let snarl = session::load(path, &self.cache, ctx, &mut assets)?;
         self.editor.assets = assets;
+        self.editor.clear_history();
         self.images_need_load = true;
         self.snarl = snarl;
         // Drop canvas items left over from the previous document so they can't
@@ -493,6 +496,7 @@ impl CompNodeApp {
         asset_id: &str,
         graph_pos: egui::Pos2,
     ) {
+        let before = self.editor.graph_snapshot(&self.snarl);
         let name = self
             .editor
             .assets
@@ -514,6 +518,7 @@ impl CompNodeApp {
             )),
         );
         ensure_image_loaded(&mut self.snarl, id, ctx, &mut self.editor.assets);
+        self.editor.record_graph_change(before, &self.snarl);
         self.images_need_load = true;
         self.set_notice("Image added", false);
     }
@@ -522,6 +527,7 @@ impl CompNodeApp {
         if self.snarl.get_node_info(node).is_none() {
             return;
         }
+        let before = self.editor.graph_snapshot(&self.snarl);
         // Replacing the source disconnects any upstream pass-through so the
         // new asset is what the node outputs.
         self.snarl
@@ -544,6 +550,7 @@ impl CompNodeApp {
         }
         crate::graph::invalidate_node(&mut self.snarl, node);
         self.editor.assets.retain_used(&self.snarl);
+        self.editor.record_graph_change(before, &self.snarl);
         self.set_notice("Image replaced", false);
     }
 
@@ -767,6 +774,7 @@ impl CompNodeApp {
     /// Start a fresh, unsaved graph.
     fn clear(&mut self) {
         self.snarl = Snarl::default();
+        self.editor.clear_history();
         crate::graph::ensure_output_node(&mut self.snarl);
         self.image_canvas.reset_graph();
         self.editor.reset_view();
@@ -890,6 +898,12 @@ impl CompNodeApp {
         }
         if actions.delete_selected {
             self.editor.delete_selected(&mut self.snarl);
+        }
+        if actions.undo {
+            self.editor.undo(&mut self.snarl);
+        }
+        if actions.redo {
+            self.editor.redo(&mut self.snarl);
         }
         if actions.settings {
             self.settings_draft = self.settings.clone();
@@ -1098,6 +1112,13 @@ impl CompNodeApp {
         });
 
         if let Some(tid) = target_id {
+            let before = self.snarl[tid].clone();
+            let old_state = before.layers().map(|layers| {
+                layers
+                    .iter()
+                    .map(|l| (l.source, l.center, l.size, l.angle))
+                    .collect::<Vec<_>>()
+            });
             if let Some(layers) = self.snarl[tid].layers_mut() {
                 for layer in layers.iter_mut() {
                     if let Some((center, size, angle)) = canvas_transforms.get(&layer.source) {
@@ -1112,6 +1133,15 @@ impl CompNodeApp {
                         .position(|id| *id == l.source)
                         .unwrap_or(usize::MAX)
                 });
+            }
+            let new_state = self.snarl[tid].layers().map(|layers| {
+                layers
+                    .iter()
+                    .map(|l| (l.source, l.center, l.size, l.angle))
+                    .collect::<Vec<_>>()
+            });
+            if old_state != new_state {
+                self.editor.record_node_change(tid, before, &self.snarl);
             }
         }
     }
@@ -1223,6 +1253,16 @@ impl App for CompNodeApp {
                     } else {
                         actions.save = true;
                     }
+                }
+                if !text_edit_focused && input.key_pressed(egui::Key::Z) {
+                    if input.modifiers.shift {
+                        actions.redo = true;
+                    } else {
+                        actions.undo = true;
+                    }
+                }
+                if !text_edit_focused && input.key_pressed(egui::Key::Y) {
+                    actions.redo = true;
                 }
                 if input.key_pressed(egui::Key::Comma) {
                     actions.settings = true;
@@ -1360,7 +1400,18 @@ impl App for CompNodeApp {
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 let graph_pos = self.editor.to_global.inverse() * ui.cursor().min;
-                graph_menu::show(ui, &mut self.snarl, &mut self.node_filter, graph_pos);
+                let before = self.editor.graph_snapshot(&self.snarl);
+                let old_count = self.snarl.node_ids().count();
+                graph_menu::show(
+                    ui,
+                    &mut self.snarl,
+                    &mut self.node_filter,
+                    &mut self.recent_node_kinds,
+                    graph_pos,
+                );
+                if self.snarl.node_ids().count() != old_count {
+                    self.editor.record_graph_change(before, &self.snarl);
+                }
             });
         if menu.is_none() {
             self.node_filter.clear();

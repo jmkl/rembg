@@ -7,7 +7,7 @@ use crate::editor::GraphEditor;
 use crate::model::{Kind, Node};
 use crate::style::controls::muted;
 use crate::style::font;
-use crate::widgets::preview_layers;
+use crate::widgets::{node_body, preview_layers};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::viewer());
@@ -20,6 +20,7 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     _width: f32,
 ) {
+    node_body(ui);
     let Some(output) = snarl[node].viewer_node() else {
         return;
     };

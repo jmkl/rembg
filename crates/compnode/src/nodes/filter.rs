@@ -11,7 +11,7 @@ use crate::ops;
 use crate::params::{self, CurvePoint, Params};
 use crate::style::controls::{Button, ColorField, Select, Slider};
 use crate::style::pal;
-use crate::widgets::{error_line, preview};
+use crate::widgets::{error_line, node_body, node_preview};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, kind: Kind) {
     match kind {
@@ -35,6 +35,7 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     width: f32,
 ) {
+    node_body(ui);
     let (node_kind, texture, preview_enabled, error, fields, defaults) = match &snarl[node] {
         Node::Filter(f) => (
             Kind::Filter(f.kind),
@@ -72,7 +73,7 @@ pub(crate) fn show_body(
     };
 
     if preview_enabled {
-        preview(ui, texture.as_ref(), Vec2::new(width, 140.0));
+        node_preview(ui, texture.as_ref(), Vec2::new(width, 140.0));
     }
     error_line(ui, error.as_deref());
 
@@ -158,12 +159,7 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Pa
             }
         }
         FieldKind::Select { options, default } => {
-            let current = params::string(
-                params,
-                field.key,
-                default,
-            )
-            .to_owned();
+            let current = params::string(params, field.key, default).to_owned();
             let mut selected = current.clone();
             let response = ui.add(
                 Select::new((field.key, field.label), &mut selected)
