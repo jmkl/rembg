@@ -48,9 +48,18 @@ This plan outlines a comprehensive refactoring of the CompNode crate to improve 
 ### 2. New Abstractions
 
 - **Node trait**: Replace the `Node` enum with a trait-based system for better extensibility
+- **Node Lifecycle Contract**: Formalize the 4-stage lifecycle across all node types:
+  1. *Immediate UI Preview* (capped resolution, non-blocking on UI thread)
+  2. *Full-Resolution Worker Render* (background thread with disk cache persistence)
+  3. *Downstream Signature Invalidation* (deterministic input/parameter hashing)
+  4. *Canvas Bounding Box & Gizmo Hit-Testing* (tight alpha content crop vs full canvas rectangle)
+- **Resolution Negotiation & Scale Stability**: Upstream dimension propagation ensuring layers never collapse to preview dimensions during slider dragging or wire connections
 - **Evaluation strategy**: Abstract filter evaluation behind a trait for CPU/GPU dispatch
+- **GPU Compute Pipeline**: Standardize WGPU compute passes for heavy operations (Raw Filter, Blends, Color Grading)
 - **Cache interface**: Abstract content-addressed cache for testability
 - **Worker job interface**: Cleaner job submission and result handling
+- **Session Versioning & Migration**: Explicit schema versioning (`schema_version: u32`) and migration pipeline for `.rembg.json` files
+- **Undo/Redo History**: Command pattern for graph topology modifications and parameter adjustments
 
 ### 3. Operations Organization
 
@@ -129,13 +138,13 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
 
 ### Phase 1: Operations & Core Data Foundation
 
-- [ ] **Ops Reorganization (`src/ops/`)**:
-  - [ ] Split `src/ops/` into clear submodules:
-    - [ ] `ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
-    - [ ] `ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
-    - [ ] `ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
-    - [ ] `ops/rf/`: White balance, dehaze, texture, clarity, sharpen, noise reduction (CPU & WGSL)
-  - [ ] Consolidate common math & color utilities (luma, clamping, color space conversions).
+- [x] **Ops Reorganization (`src/ops/`)**:
+  - [x] Split `src/ops/` into clear submodules:
+    - [x] `ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
+    - [x] `ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
+    - [x] `ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
+    - [x] `ops/rf/`: White balance, dehaze, texture, clarity, sharpen, noise reduction (CPU & WGSL)
+  - [x] Consolidate common math & color utilities in `src/ops/math.rs` (luma, clamping, color space conversions).
 - [ ] **Core Node Abstraction (`src/model/`)**:
   - [ ] Define `NodeTrait` for node definitions (ports, metadata, parameter definitions).
   - [x] **Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `model::Kind`**:
@@ -143,6 +152,9 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
     - [x] Make `Group` a dedicated layer container node (`Kind::Group`, `Node::Group(GroupNode)`), removing `layers`, `canvas_size`, and debounce state from `FilterNode`.
     - [x] Make `Texts` a dedicated generator node (`Kind::Texts`, `Node::Texts(TextsNode)`) with its typographic model.
     - [x] Ensure backward compatibility with session parser (`SessionNodeData::Filter` mapping for legacy sessions).
+  - [x] **Node Lifecycle & Bounding Box Contract**:
+    - [x] Ensure all evaluable nodes (including unbundled generator nodes like `TextsNode`) support background full-resolution renders (`can_render_full_res`) with disk caching.
+    - [x] Ensure instant tight alpha bounding box calculation (`alpha_content_uv`) from both immediate UI preview CPU pixels and cached worker outputs.
   - [ ] Standardize `Preview` structure and caching bounds across all node types.
 
 ### Phase 2: Graph & Evaluation Engine
@@ -151,6 +163,9 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
   - [ ] Introduce an evaluation context trait to avoid `eval.rs` directly indexing `snarl[node]` during execution.
   - [ ] Encapsulate signature computation (`filter_signature`) to make cache invalidation independently testable.
   - [ ] Isolate evaluation downscaling (`ops::EVAL_MAX_EDGE`) into a configurable evaluation pipeline.
+- [ ] **Resolution Negotiation & Canvas Transform Stability**:
+  - [x] Propagate upstream effective dimensions (`effective_dimensions`) to prevent layers from collapsing to preview bounds on connect or slider tweak.
+  - [ ] Formalize document canvas coordinate space vs individual layer transform bounds.
 - [ ] **Graph Topology Improvements (`src/graph.rs`)**:
   - [ ] Abstract upstream traversal and `Route` resolution behind a clean graph query API.
   - [ ] Unit test multi-hop `Route` resolution and cycle detection.
@@ -162,8 +177,11 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
   - [ ] Formalize model lifecycle management (keep-alive vs unload-on-demand) behind an `InferenceBackend` trait.
   - [ ] Abstract disk cache interaction via `OutputCacheInterface` to enable in-memory mock testing.
   - [ ] Add integration tests verifying token invalidation on rapid parameter changes.
+- [ ] **GPU Compute Acceleration Pipeline**:
+  - [ ] Integrate WGPU compute device/queue sharing for heavy compute shaders.
+  - [ ] Port expensive color grading (Curves LUT, Color Balance) and multi-layer composites to compute shader passes.
 
-### Phase 4: Node UI & Catalog Modernization
+### Phase 4: Node UI, Catalog & Session Modernization
 
 - [ ] **UI Body Standardization (`src/nodes/`)**:
   - [ ] Create standardized component builders for node bodies (consistent headers, preview boxes, sliders).
@@ -171,12 +189,20 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
 - [ ] **Catalog & Extensibility (`src/catalog.rs`)**:
   - [ ] Refactor `NodeSpec` to support dynamic registration and auto-discovery.
   - [ ] Ensure category tags / grouping in the right-click node spawn menu (`graph_menu.rs`).
+- [ ] **Session Schema Versioning & Forward Migration (`src/session.rs`)**:
+  - [ ] Introduce explicit `schema_version` to `.rembg.json` root.
+  - [ ] Create structured migration handlers (`migrate_v0_to_v1`, etc.) replacing scattered ad-hoc string aliases.
+- [ ] **Graph Undo / Redo Command History**:
+  - [ ] Implement command pattern stack for node additions, wire changes, parameter scrubbing, and canvas layer transforms.
 
 ### Phase 5: Verification, Benchmarking & Documentation
 
 - [x] **Regression & Compatibility Testing**:
   - [x] Run full test suite (`cargo test -p compnode`) with 100% pass rate.
   - [x] Verify backward compatibility by loading older `.rembg.json` session files without errors.
+- [ ] **Automated Fuzzing & Stress Testing**:
+  - [ ] Add random graph topology fuzz testing (connecting/disconnecting arbitrary pins to ensure no panics).
+  - [ ] Golden image regression test suite comparing CPU and GPU outputs.
 - [ ] **Performance Benchmarks**:
   - [ ] Re-run release benchmarks for all filter nodes on 4K/12MP images.
   - [ ] Profile memory usage of `ImageMemory` under multi-image workloads.

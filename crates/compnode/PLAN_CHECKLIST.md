@@ -11,10 +11,10 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 | Phase | Description | Status | Progress |
 | :--- | :--- | :--- | :--- |
 | **Baseline** | Quick Fixes & Compiler Health | **Completed** | 100% |
-| **Phase 1** | Operations Reorganization & Core Data Foundation | **In Progress** | ~60% (Node unbundling complete) |
-| **Phase 2** | Graph & Evaluation Engine Decoupling | **Pending** | 0% |
+| **Phase 1** | Operations Reorganization & Core Data Foundation | **In Progress** | ~75% (Ops reorganized, unbundling complete) |
+| **Phase 2** | Graph & Evaluation Engine Decoupling | **Pending** | 15% (Scale stability complete) |
 | **Phase 3** | Worker & ML Inference Pipeline Abstraction | **Pending** | 0% |
-| **Phase 4** | Node UI & Catalog Modernization | **Pending** | 25% (Builder pattern done) |
+| **Phase 4** | Node UI, Catalog & Session Modernization | **Pending** | 20% (Builder pattern done) |
 | **Phase 5** | Verification, Benchmarking & Documentation | **In Progress** | ~50% (Tests & docs current) |
 
 ---
@@ -53,11 +53,15 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Share normalized color clamping and byte/float conversion helpers
   - [x] Share bilinear and bicubic RGBA sampling helpers
 
-### 1.3 Core Node Trait Abstraction (Optional / Next Milestone)
+### 1.3 Core Node Trait & Lifecycle Abstraction
 - [ ] Define `NodeTrait` for dynamic node dispatch:
   - [ ] Sockets / port definitions
   - [ ] Parameter schema and validation
   - [ ] Serialization hooks
+- [x] **Node Lifecycle & Content Bounding Box Contract**:
+  - [x] Register all evaluable nodes (e.g. `TextsNode`) in `can_render_full_res` for disk cache persistence
+  - [x] Compute instant alpha bounds crop (`content_uv`) from preview CPU pixels on frame 1
+  - [x] Maintain full-res on-disk output path for downstream consumers and export nodes
 - [ ] Standardize `Preview` structure and caching bounds across all node types
 
 ---
@@ -75,7 +79,12 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Move `ops::EVAL_MAX_EDGE` preview clamping into a configurable resolution strategy
   - [ ] Support custom preview quality tiers (e.g., draft 128px, normal 256px, high-res 512px)
 
-### 2.2 Graph Topology Improvements (`src/graph.rs`)
+### 2.2 Resolution Negotiation & Transform Stability
+- [x] Walk upstream to compute `effective_dimensions` across filter chains
+- [x] Prevent temporary preview dimension collapses (e.g. 1024 -> 256) during slider scrubbing or pin wiring
+- [ ] Formalize document canvas coordinate space vs individual layer transform bounds
+
+### 2.3 Graph Topology Improvements (`src/graph.rs`)
 - [ ] Create formal graph query API:
   - [ ] `upstream_sources(node)`
   - [ ] `downstream_dependents(node)`
@@ -112,9 +121,13 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] `put(key: &CacheKey, image: &RgbaImage) -> Result<PathBuf, CacheError>`
 - [ ] Enable in-memory cache backend for automated headless tests without disk writes
 
+### 3.4 GPU Accelerated Compute Pipeline
+- [ ] Integrate WGPU compute device/queue sharing for compute shaders
+- [ ] Port expensive color grading (Curves LUT, Color Balance) and multi-layer composites to WGSL compute passes
+
 ---
 
-## Phase 4: Node UI & Catalog Modernization
+## Phase 4: Node UI, Catalog & Session Modernization
 
 ### 4.1 UI Component Standardization (`src/nodes/`)
 - [ ] Create reusable UI layout helpers:
@@ -136,6 +149,13 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Fuzzy search over titles and keywords
   - [ ] Recently used node suggestions
 
+### 4.3 Session Schema Versioning & Forward Migration (`src/session.rs`)
+- [ ] Introduce explicit `schema_version` to `.rembg.json` root
+- [ ] Create structured migration handlers (`migrate_v0_to_v1`, etc.) replacing scattered ad-hoc string aliases
+
+### 4.4 Graph Undo / Redo Command History
+- [ ] Implement command pattern stack for node additions, wire changes, parameter scrubbing, and canvas layer transforms
+
 ---
 
 ## Phase 5: Polish, Benchmarking & Documentation
@@ -149,7 +169,11 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Verify `ImageMemory` budget enforcement (512 MB cap) under 20+ open source images
   - [ ] Check for texture memory leaks across repeated node creations/deletions
 
-### 5.2 Documentation & Verification
+### 5.2 Automated Fuzzing & Stress Testing
+- [ ] Add random graph topology fuzz testing (connecting/disconnecting arbitrary pins to ensure no panics)
+- [ ] Golden image regression test suite comparing CPU and GPU outputs
+
+### 5.3 Documentation & Verification
 - [x] Maintain up-to-date [README_AG.md](./README_AG.md)
 - [x] Maintain up-to-date [NODE.md](./NODE.md) guide for creating nodes
 - [x] Maintain [CHECKLIST.md](./CHECKLIST.md) for node system redesign
