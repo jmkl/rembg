@@ -131,6 +131,72 @@ fn try_gpu(_: &RgbaImage, _: &Settings) -> Option<RgbaImage> {
     None
 }
 
+pub(crate) fn curves_gpu(src: &RgbaImage, luts: &[[u8; 256]; 4]) -> Option<RgbaImage> {
+    #[cfg(feature = "gpu")]
+    {
+        gpu::apply_curves(src, luts)
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (src, luts);
+        None
+    }
+}
+
+pub(crate) fn color_balance_gpu(
+    src: &RgbaImage,
+    cyan_red: f32,
+    magenta_green: f32,
+    yellow_blue: f32,
+    range: f32,
+    preserve_luminosity: bool,
+) -> Option<RgbaImage> {
+    #[cfg(feature = "gpu")]
+    {
+        gpu::apply_color_balance(
+            src,
+            cyan_red,
+            magenta_green,
+            yellow_blue,
+            range,
+            preserve_luminosity,
+        )
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (
+            src,
+            cyan_red,
+            magenta_green,
+            yellow_blue,
+            range,
+            preserve_luminosity,
+        );
+        None
+    }
+}
+
+pub(crate) fn composite_gpu(
+    layers: &[(crate::model::ViewerLayer, RgbaImage)],
+    canvas: (u32, u32),
+    output: (u32, u32),
+    scale: f32,
+    opacity: f32,
+) -> Option<RgbaImage> {
+    #[cfg(feature = "gpu")]
+    {
+        if layers.is_empty() {
+            return None;
+        }
+        gpu::apply_composite(layers, canvas, output, scale, opacity)
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = (layers, canvas, output, scale, opacity);
+        None
+    }
+}
+
 pub(crate) fn raw_filter(src: &RgbaImage, params: &Params) -> RgbaImage {
     let settings = Settings::from_params(params);
     if settings.is_identity() || src.width() == 0 || src.height() == 0 {

@@ -427,6 +427,17 @@ pub(crate) fn composite_layers_with(
     mode: &str,
     opacity: f32,
 ) -> Result<RgbaImage, String> {
+    composite_layers_impl(layers, canvas, max_edge, mode, opacity, true)
+}
+
+fn composite_layers_impl(
+    layers: &[(ViewerLayer, image::RgbaImage)],
+    canvas: (u32, u32),
+    max_edge: Option<u64>,
+    mode: &str,
+    opacity: f32,
+    allow_gpu: bool,
+) -> Result<RgbaImage, String> {
     if layers.is_empty() {
         return Err("No layers connected".to_owned());
     }
@@ -438,6 +449,13 @@ pub(crate) fn composite_layers_with(
     };
     let out_w = ((cw as f32 * scale).round() as u32).max(1);
     let out_h = ((ch as f32 * scale).round() as u32).max(1);
+    if allow_gpu
+        && mode == "source-over"
+        && let Some(output) =
+            crate::ops::rf::composite_gpu(layers, canvas, (out_w, out_h), scale, opacity)
+    {
+        return Ok(output);
+    }
     let mut out = RgbaImage::new(out_w, out_h);
 
     let op = BlendOp::from_str(mode);
@@ -553,4 +571,63 @@ fn fit_size(src_w: f64, src_h: f64, canvas_w: f64, canvas_h: f64) -> (f64, f64) 
     }
     let factor = (canvas_w / src_w).min(canvas_h / src_h);
     ((src_w * factor).max(1.0), (src_h * factor).max(1.0))
+}
+
+#[cfg(test)]
+mod gpu_parity_tests {
+    use super::{composite_layers_impl, composite_layers_with};
+    use crate::model::{Kind, ViewerLayer};
+
+    #[test]
+    fn gpu_source_over_matches_cpu_for_transformed_layers() {
+        let bottom = image::RgbaImage::from_fn(512, 512, |x, y| {
+            image::Rgba([(x % 256) as u8, (y % 256) as u8, 80, 255])
+        });
+        let top = image::RgbaImage::from_fn(120, 90, |x, y| {
+            image::Rgba([(x * 2) as u8, (y * 2) as u8, 180, ((x + y) % 256) as u8])
+        });
+        let layer = |id, image_size, center, size, angle, source_name: &str| {
+            (
+                ViewerLayer {
+                    source: egui_snarl::NodeId(id),
+                    kind: Kind::Image,
+                    texture: None,
+                    source_name: source_name.to_owned(),
+                    source_path: None,
+                    center,
+                    size,
+                    angle,
+                },
+                image_size,
+            )
+        };
+        let layers = [
+            layer(
+                0,
+                bottom,
+                egui::vec2(256.0, 256.0),
+                egui::vec2(512.0, 512.0),
+                0.0,
+                "bottom",
+            ),
+            layer(
+                1,
+                top,
+                egui::vec2(270.0, 230.0),
+                egui::vec2(230.0, 170.0),
+                0.23,
+                "top",
+            ),
+        ];
+
+        let gpu = composite_layers_with(&layers, (512, 512), None, "source-over", 0.65).unwrap();
+        let cpu =
+            composite_layers_impl(&layers, (512, 512), None, "source-over", 0.65, false).unwrap();
+
+        for (gpu_pixel, cpu_pixel) in gpu.pixels().zip(cpu.pixels()) {
+            for channel in 0..4 {
+                assert!(gpu_pixel[channel].abs_diff(cpu_pixel[channel]) <= 1);
+            }
+        }
+    }
 }

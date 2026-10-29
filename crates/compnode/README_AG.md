@@ -88,6 +88,8 @@ The application is structured around strict separation between the UI event loop
   - `Filter` (full-resolution offline filter evaluation)
 - Decodes large images on the worker thread (`FilterInput::Path`, `Encoded`, `Pixels`).
 - Emits results with a monotonically increasing `token: u64`. The UI matches tokens to discard stale results if a user modified parameters while a job was in flight.
+- Background-removal models use a mockable prediction trait. Cached model instances unload after ten idle minutes, when caching is disabled, or when the model directory changes.
+- Worker cache writes use `OutputCacheInterface`; tests can use its in-memory implementation without disk output.
 
 ### 3. Persistence, Cache & Memory
 - **Output Cache (`src/cache.rs`)**: Processed results are saved as PNGs under `%LOCALAPPDATA%\rembg\studio-cache\` keyed by SHA-256 hashes of inputs and parameters.
@@ -148,7 +150,7 @@ The application is structured around strict separation between the UI event loop
 
 ### Dual-Backend Raw Filter (`src/ops/rf/`)
 The Raw Filter provides photographer-style adjustments: White Balance (temperature/tint), Texture, Clarity, Dehaze, Unsharp Mask Sharpening, and Noise Reduction.
-- **GPU Path (`rf/gpu.rs`)**: Uses WGSL compute shaders (`raw_filter.wgsl`) via `wgpu`. Selected at or above `GPU_MIN_PIXELS` (512 × 512 = 262,144 total pixels); smaller images use CPU.
+- **GPU Path (`rf/gpu.rs`)**: Uses a shared WGPU device/queue for Raw Filter, WGSL Curves LUT and Color Balance, and source-over multi-layer transformed composites. Compute passes run at 512 × 512 and above; smaller images and unavailable/oversized GPU paths fall back to CPU. Other composite blend modes remain on CPU for parity.
 - **CPU Path (`rf/cpu.rs`)**: Rayon-parallelized fallback using float buffers and separable Gaussian blur passes.
 
 ---
@@ -156,5 +158,5 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 ## 6. Codebase Health & Future Work
 
 - **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
-- **Test Suite**: 63 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, mock inference backends, and sampler/noise edge cases.
+- **Test Suite**: 70 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, UI responsiveness under simulated worker load, mock inference backends, disk and in-memory caching, GPU color/composite passes, and sampler/noise edge cases.
 - **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).

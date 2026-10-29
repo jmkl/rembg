@@ -15,7 +15,12 @@ use rembg_core::{
     MODEL_SCRFD_FILE, RemoveBg,
 };
 
-use crate::cache::{OutputCache, cache_key, cache_key_layers, cache_key_refs};
+#[cfg(test)]
+use crate::cache::MemoryOutputCache;
+use crate::cache::{
+    CacheError, CacheKey, OutputCache, OutputCacheInterface, cache_key, cache_key_layers,
+    cache_key_refs,
+};
 use crate::cancellation::CancellationToken;
 use crate::model::{FilterKind, JobOutput, Kind, RunTiming, ViewerLayer};
 use crate::params::Params;
@@ -27,6 +32,7 @@ trait InferenceBackend {
 }
 
 type InferenceError = String;
+const MODEL_KEEP_ALIVE: Duration = Duration::from_secs(10 * 60);
 
 impl InferenceBackend for BirefNet {
     fn predict(&self, input: &image::RgbaImage) -> Result<image::RgbaImage, InferenceError> {
@@ -156,6 +162,11 @@ pub(crate) enum WorkerRequest {
     Inference(InferenceRequest),
     Render(RenderRequest),
     Configure(InferenceConfig),
+    #[cfg(test)]
+    SimulateLoad {
+        started: Sender<()>,
+        release: Receiver<()>,
+    },
 }
 
 pub(crate) struct JobDone {
@@ -190,7 +201,7 @@ impl WorkerResponse {
 /// persist the result in the output cache. Repeated renders with identical
 /// inputs hit the disk cache instead of recompositing.
 fn composite_full(
-    cache: &OutputCache,
+    cache: &dyn OutputCacheInterface,
     layers: &[CompositeLayer],
     canvas: (u32, u32),
     mode: &str,
@@ -231,19 +242,17 @@ fn composite_full(
 
     // Cache hit: reuse the stored composite.
     let cached_path = cache.path_for(&key);
-    if cached_path.is_file() {
-        if let Ok(img) = image::open(&cached_path).map(|img| img.to_rgba8()) {
-            return Ok(JobOutput {
-                image: img,
-                path: Some(cached_path),
-                timing: RunTiming {
-                    total: started.elapsed(),
-                    load: Duration::ZERO,
-                    infer: Duration::ZERO,
-                    cache_models: false,
-                },
-            });
-        }
+    if let Some(image) = cache.get(&CacheKey(key.clone())) {
+        return Ok(JobOutput {
+            image,
+            path: Some(cached_path),
+            timing: RunTiming {
+                total: started.elapsed(),
+                load: Duration::ZERO,
+                infer: Duration::ZERO,
+                cache_models: false,
+            },
+        });
     }
 
     let pairs: Vec<(ViewerLayer, image::RgbaImage)> = layers
@@ -291,7 +300,7 @@ fn composite_full(
 /// the output cache. The cache key hashes the resolved inputs, parameters and
 /// canvas size, so an unchanged filter reuses its previous full-resolution file.
 fn filter_full(
-    cache: &OutputCache,
+    cache: &dyn OutputCacheInterface,
     kind: FilterKind,
     params: &Params,
     inputs: Vec<Vec<FilterInput>>,
@@ -316,9 +325,7 @@ fn filter_full(
 
     // Cache hit: reuse the stored full-resolution render.
     let cached_path = cache.path_for(&key);
-    if cached_path.is_file()
-        && let Ok(image) = image::open(&cached_path).map(|image| image.to_rgba8())
-    {
+    if let Some(image) = cache.get(&CacheKey(key.clone())) {
         return Ok(JobOutput {
             image,
             path: Some(cached_path),
@@ -353,7 +360,7 @@ fn filter_full(
 }
 
 fn texts_full(
-    cache: &OutputCache,
+    cache: &dyn OutputCacheInterface,
     params: &Params,
     canvas: (u32, u32),
     source_name: &str,
@@ -370,9 +377,7 @@ fn texts_full(
     );
 
     let cached_path = cache.path_for(&key);
-    if cached_path.is_file()
-        && let Ok(image) = image::open(&cached_path).map(|image| image.to_rgba8())
-    {
+    if let Some(image) = cache.get(&CacheKey(key.clone())) {
         return Ok(JobOutput {
             image,
             path: Some(cached_path),
@@ -405,9 +410,67 @@ fn texts_full(
     })
 }
 
+enum WorkerCache {
+    Disk(OutputCache),
+    #[cfg(test)]
+    Memory(MemoryOutputCache),
+}
+
+impl OutputCacheInterface for WorkerCache {
+    fn get(&self, key: &CacheKey) -> Option<image::RgbaImage> {
+        match self {
+            Self::Disk(cache) => cache.get(key),
+            #[cfg(test)]
+            Self::Memory(cache) => cache.get(key),
+        }
+    }
+
+    fn put(&self, key: &CacheKey, image: &image::RgbaImage) -> Result<PathBuf, CacheError> {
+        match self {
+            Self::Disk(cache) => cache.put(key, image),
+            #[cfg(test)]
+            Self::Memory(cache) => cache.put(key, image),
+        }
+    }
+
+    fn path_for(&self, key: &str) -> PathBuf {
+        match self {
+            Self::Disk(cache) => cache.path_for(key),
+            #[cfg(test)]
+            Self::Memory(cache) => cache.path_for(key),
+        }
+    }
+
+    fn store_named(
+        &self,
+        key: &str,
+        source_name: &str,
+        suffix: &str,
+        image: &image::RgbaImage,
+    ) -> Result<PathBuf, CacheError> {
+        match self {
+            Self::Disk(cache) => {
+                OutputCacheInterface::store_named(cache, key, source_name, suffix, image)
+            }
+            #[cfg(test)]
+            Self::Memory(cache) => {
+                OutputCacheInterface::store_named(cache, key, source_name, suffix, image)
+            }
+        }
+    }
+}
+
 pub(crate) fn spawn_worker(
     ctx: egui::Context,
-    mut cache: OutputCache,
+    cache: OutputCache,
+    config: InferenceConfig,
+) -> (Sender<WorkerRequest>, Receiver<WorkerResponse>) {
+    spawn_worker_with_cache(ctx, WorkerCache::Disk(cache), config)
+}
+
+fn spawn_worker_with_cache(
+    ctx: egui::Context,
+    mut cache: WorkerCache,
     config: InferenceConfig,
 ) -> (Sender<WorkerRequest>, Receiver<WorkerResponse>) {
     let (request_tx, request_rx) = mpsc::channel::<WorkerRequest>();
@@ -418,11 +481,34 @@ pub(crate) fn spawn_worker(
         .spawn(move || {
             let mut models = Models::new(config.clone());
 
-            while let Ok(request) = request_rx.recv() {
+            loop {
+                let request = match models.keep_alive_remaining() {
+                    Some(remaining) => match request_rx.recv_timeout(remaining) {
+                        Ok(request) => request,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            models.unload();
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    },
+                    None => match request_rx.recv() {
+                        Ok(request) => request,
+                        Err(_) => break,
+                    },
+                };
+                #[cfg(test)]
+                let request = match request {
+                    WorkerRequest::SimulateLoad { started, release } => {
+                        let _ = started.send(());
+                        let _ = release.recv();
+                        continue;
+                    }
+                    request => request,
+                };
                 let (job, cancellation, inference) = match request {
                     WorkerRequest::Configure(config) => {
                         if config.cache_dir != models.config.cache_dir {
-                            cache = OutputCache::new(config.cache_dir.clone());
+                            cache = WorkerCache::Disk(OutputCache::new(config.cache_dir.clone()));
                         }
                         models.configure(config);
                         continue;
@@ -433,6 +519,8 @@ pub(crate) fn spawn_worker(
                     WorkerRequest::Render(request) => {
                         (Job::Render(request.job), request.cancellation, false)
                     }
+                    #[cfg(test)]
+                    WorkerRequest::SimulateLoad { .. } => unreachable!("handled above"),
                 };
                 if cancellation.is_cancelled() {
                     continue;
@@ -449,7 +537,8 @@ pub(crate) fn spawn_worker(
                         let started = Instant::now();
                         let result = models.remove_bg(&input).map(|run| {
                             let key = cache_key(&domain, &input, &[]);
-                            let path = match cache.store_named(
+                            let path = match OutputCacheInterface::store_named(
+                                &cache,
                                 &key,
                                 &source_name,
                                 "remove-bg",
@@ -488,7 +577,8 @@ pub(crate) fn spawn_worker(
                         let started = Instant::now();
                         let result = remove_bg_v2(&mut models, &input).map(|run| {
                             let key = cache_key(&domain, &input, &[]);
-                            let path = match cache.store_named(
+                            let path = match OutputCacheInterface::store_named(
+                                &cache,
                                 &key,
                                 &source_name,
                                 "remove-bg-v2",
@@ -532,7 +622,8 @@ pub(crate) fn spawn_worker(
                                 .restore_faces(&input, strength, only_center)
                                 .map(|run| {
                                     let key = cache_key(&domain, &input, &params);
-                                    let path = match cache.store_named(
+                                    let path = match OutputCacheInterface::store_named(
+                                        &cache,
                                         &key,
                                         &source_name,
                                         "face-restore",
@@ -600,6 +691,9 @@ pub(crate) fn spawn_worker(
                     node,
                     result,
                 };
+                if inference {
+                    models.touch();
+                }
                 let response = if inference {
                     WorkerResponse::Inference(InferenceResponse { done })
                 } else {
@@ -619,6 +713,7 @@ pub(crate) fn spawn_worker(
 
 struct Models {
     config: InferenceConfig,
+    last_used: Option<Instant>,
     birefnet: Option<Box<dyn InferenceBackend>>,
     remove_bg_v2: Option<Box<dyn InferenceBackend>>,
     gfpgan: Option<Gfpgan>,
@@ -638,6 +733,7 @@ impl Models {
     fn new(config: InferenceConfig) -> Self {
         Self {
             config,
+            last_used: None,
             birefnet: None,
             remove_bg_v2: None,
             gfpgan: None,
@@ -655,10 +751,33 @@ impl Models {
     }
 
     fn unload(&mut self) {
+        self.last_used = None;
         self.birefnet = None;
         self.remove_bg_v2 = None;
         self.gfpgan = None;
         self.detector = None;
+    }
+
+    fn touch(&mut self) {
+        if self.config.cache_models
+            && (self.birefnet.is_some()
+                || self.remove_bg_v2.is_some()
+                || self.gfpgan.is_some()
+                || self.detector.is_some())
+        {
+            self.last_used = Some(Instant::now());
+        }
+    }
+
+    fn keep_alive_remaining(&self) -> Option<Duration> {
+        let has_models = self.birefnet.is_some()
+            || self.remove_bg_v2.is_some()
+            || self.gfpgan.is_some()
+            || self.detector.is_some();
+        if !self.config.cache_models || !has_models {
+            return None;
+        }
+        Some(MODEL_KEEP_ALIVE.saturating_sub(self.last_used.unwrap_or_else(Instant::now).elapsed()))
     }
 
     fn birefnet_path(&self) -> PathBuf {
@@ -867,7 +986,14 @@ fn restore_faces(
 
 #[cfg(test)]
 mod inference_backend_tests {
-    use super::{InferenceBackend, InferenceError};
+    use super::{
+        InferenceBackend, InferenceConfig, InferenceError, RenderJob, RenderRequest, WorkerCache,
+        WorkerRequest, spawn_worker_with_cache,
+    };
+    use crate::cache::MemoryOutputCache;
+    use crate::cancellation::CancellationToken;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     struct MockBackend;
 
@@ -887,5 +1013,106 @@ mod inference_backend_tests {
         let output = MockBackend.predict(&input).unwrap();
 
         assert_eq!(output.get_pixel(0, 0), &image::Rgba([11, 20, 30, 40]));
+    }
+
+    #[test]
+    fn worker_drops_pre_cancelled_render_jobs_without_a_completion() {
+        let root = std::env::temp_dir().join(format!(
+            "compnode-cancel-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = InferenceConfig {
+            cache_models: false,
+            model_dir: root.join("models"),
+            cache_dir: root.join("cache"),
+        };
+        let (request_tx, done_rx) = spawn_worker_with_cache(
+            egui::Context::default(),
+            WorkerCache::Memory(MemoryOutputCache::default()),
+            config,
+        );
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        request_tx
+            .send(WorkerRequest::Render(RenderRequest {
+                job: RenderJob::Texts {
+                    token: 1,
+                    node: egui_snarl::NodeId(0),
+                    params: Default::default(),
+                    canvas: (1, 1),
+                    source_name: "cancelled".to_owned(),
+                },
+                cancellation,
+            }))
+            .unwrap();
+        drop(request_tx);
+
+        assert!(matches!(
+            done_rx.recv_timeout(std::time::Duration::from_secs(2)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn ui_frame_runs_while_worker_is_under_simulated_load() {
+        let config = InferenceConfig {
+            cache_models: false,
+            model_dir: "models".into(),
+            cache_dir: "cache".into(),
+        };
+        let ctx = egui::Context::default();
+        let (request_tx, done_rx) = spawn_worker_with_cache(
+            ctx.clone(),
+            WorkerCache::Memory(MemoryOutputCache::default()),
+            config,
+        );
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        request_tx
+            .send(WorkerRequest::SimulateLoad {
+                started: started_tx,
+                release: release_rx,
+            })
+            .unwrap();
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("worker did not enter simulated load");
+
+        ctx.begin_pass(egui::RawInput::default());
+        let mut output = ctx.end_pass();
+        output.textures_delta.clear();
+        assert!(matches!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        release_tx.send(()).unwrap();
+        drop(request_tx);
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_secs(2)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn cached_models_expire_after_the_keep_alive_window() {
+        let mut config = InferenceConfig {
+            cache_models: true,
+            model_dir: "models".into(),
+            cache_dir: "cache".into(),
+        };
+        let mut models = super::Models::new(config.clone());
+        models.birefnet = Some(Box::new(MockBackend));
+        models.last_used = Some(std::time::Instant::now() - super::MODEL_KEEP_ALIVE);
+
+        assert_eq!(
+            models.keep_alive_remaining(),
+            Some(std::time::Duration::ZERO)
+        );
+
+        config.cache_models = false;
+        models.configure(config);
+        assert!(models.keep_alive_remaining().is_none());
     }
 }

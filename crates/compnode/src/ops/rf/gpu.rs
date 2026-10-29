@@ -15,6 +15,8 @@ use std::sync::OnceLock;
 use image::RgbaImage;
 use wgpu::util::DeviceExt;
 
+use crate::model::ViewerLayer;
+
 use super::Settings;
 
 const WG: u32 = 8; // must match @workgroup_size in the shader
@@ -25,6 +27,50 @@ static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
 /// readback fails. Device creation happens once, on first use.
 pub(super) fn apply(src: &RgbaImage, s: &Settings) -> Option<RgbaImage> {
     GPU.get_or_init(Gpu::new).as_ref()?.run(src, s)
+}
+
+pub(super) fn apply_curves(src: &RgbaImage, luts: &[[u8; 256]; 4]) -> Option<RgbaImage> {
+    if u64::from(src.width()) * u64::from(src.height()) < 512 * 512 {
+        return None;
+    }
+    GPU.get_or_init(Gpu::new)
+        .as_ref()?
+        .run_color(src, "curves", luts, [0.0; 4], [0.0; 4])
+}
+
+pub(super) fn apply_color_balance(
+    src: &RgbaImage,
+    cyan_red: f32,
+    magenta_green: f32,
+    yellow_blue: f32,
+    range: f32,
+    preserve_luminosity: bool,
+) -> Option<RgbaImage> {
+    if u64::from(src.width()) * u64::from(src.height()) < 512 * 512 {
+        return None;
+    }
+    GPU.get_or_init(Gpu::new).as_ref()?.run_color(
+        src,
+        "color_balance",
+        &[[0; 256]; 4],
+        [cyan_red, magenta_green, yellow_blue, range],
+        [if preserve_luminosity { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+    )
+}
+
+pub(super) fn apply_composite(
+    layers: &[(ViewerLayer, RgbaImage)],
+    canvas: (u32, u32),
+    output: (u32, u32),
+    scale: f32,
+    opacity: f32,
+) -> Option<RgbaImage> {
+    if u64::from(output.0) * u64::from(output.1) < 512 * 512 {
+        return None;
+    }
+    GPU.get_or_init(Gpu::new)
+        .as_ref()?
+        .run_composite(layers, canvas, output, scale, opacity)
 }
 
 #[repr(C)]
@@ -44,6 +90,9 @@ struct Pipelines {
     color: wgpu::ComputePipeline,
     local_contrast: wgpu::ComputePipeline,
     sharpen_apply: wgpu::ComputePipeline,
+    curves: wgpu::ComputePipeline,
+    color_balance: wgpu::ComputePipeline,
+    composite_source_over: wgpu::ComputePipeline,
 }
 
 struct Gpu {
@@ -92,6 +141,10 @@ impl Gpu {
             label: Some("raw_filter"),
             source: wgpu::ShaderSource::Wgsl(include_str!("raw_filter.wgsl").into()),
         });
+        let color_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("color_compute"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("color.wgsl").into()),
+        });
 
         // Auto layouts: each entry point only exposes the bindings it uses.
         let make = |entry: &str| {
@@ -99,6 +152,16 @@ impl Gpu {
                 label: Some(entry),
                 layout: None,
                 module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let make_color = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: None,
+                module: &color_module,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,
@@ -114,6 +177,9 @@ impl Gpu {
             color: make("color"),
             local_contrast: make("local_contrast"),
             sharpen_apply: make("sharpen_apply"),
+            curves: make_color("curves"),
+            color_balance: make_color("color_balance"),
+            composite_source_over: make_color("composite_source_over"),
         };
 
         Some(Self {
@@ -122,6 +188,262 @@ impl Gpu {
             pipelines,
             max_bytes,
         })
+    }
+
+    fn run_color(
+        &self,
+        src: &RgbaImage,
+        operation: &str,
+        luts: &[[u8; 256]; 4],
+        f0: [f32; 4],
+        f1: [f32; 4],
+    ) -> Option<RgbaImage> {
+        let (w, h) = src.dimensions();
+        let pixels = u64::from(w) * u64::from(h);
+        let io_bytes = pixels * 4;
+        if pixels == 0
+            || io_bytes > self.max_bytes
+            || w.div_ceil(8) > 65_535
+            || h.div_ceil(8) > 65_535
+        {
+            return None;
+        }
+
+        let io = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("color_io"),
+                contents: src.as_raw(),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("color_readback"),
+            size: io_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniforms = Uniforms {
+            size: [w, h, 0, 0],
+            f0,
+            f1,
+        };
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("color_uniforms"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: io.as_entire_binding(),
+            },
+        ];
+        let lut_buffer = if operation == "curves" {
+            let packed: Vec<u32> = luts
+                .iter()
+                .flat_map(|lut| lut.iter().map(|&value| u32::from(value)))
+                .collect();
+            Some(
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("curves_lut"),
+                        contents: bytemuck::cast_slice(&packed),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    }),
+            )
+        } else {
+            None
+        };
+        if let Some(buffer) = lut_buffer.as_ref() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffer.as_entire_binding(),
+            });
+        }
+        let pipeline = match operation {
+            "curves" => &self.pipelines.curves,
+            "color_balance" => &self.pipelines.color_balance,
+            _ => return None,
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("color_bind_group"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &entries,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("color_compute"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(operation),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+        }
+        encoder.copy_buffer_to_buffer(&io, 0, &readback, 0, io_bytes);
+        self.queue.submit([encoder.finish()]);
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        ok(
+            self.device.poll(wgpu::PollType::wait_indefinitely()),
+            "poll",
+        )?;
+        ok(rx.recv(), "map recv")?
+            .map_err(|error| eprintln!("[color gpu] map failed: {error:?}"))
+            .ok()?;
+        let bytes = slice.get_mapped_range().to_vec();
+        readback.unmap();
+        drop(lut_buffer);
+        RgbaImage::from_raw(w, h, bytes)
+    }
+
+    fn run_composite(
+        &self,
+        layers: &[(ViewerLayer, RgbaImage)],
+        canvas: (u32, u32),
+        output: (u32, u32),
+        scale: f32,
+        opacity: f32,
+    ) -> Option<RgbaImage> {
+        let (out_w, out_h) = output;
+        let pixel_count = u64::from(out_w) * u64::from(out_h);
+        let output_bytes = pixel_count * 4;
+        if pixel_count == 0
+            || output_bytes > self.max_bytes
+            || out_w.div_ceil(8) > 65_535
+            || out_h.div_ceil(8) > 65_535
+        {
+            return None;
+        }
+        let initial = vec![0u32; pixel_count as usize];
+        let target = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("composite_target"),
+                contents: bytemuck::cast_slice(&initial),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("composite_readback"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pipeline = &self.pipelines.composite_source_over;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("composite_compute"),
+            });
+        let mut retained_sources = Vec::with_capacity(layers.len());
+        let mut retained_uniforms = Vec::with_capacity(layers.len());
+        let mut retained_groups = Vec::with_capacity(layers.len());
+
+        for (index, (layer, source)) in layers.iter().enumerate() {
+            let (src_w, src_h) = source.dimensions();
+            if src_w == 0 || src_h == 0 || u64::from(src_w) * u64::from(src_h) * 4 > self.max_bytes
+            {
+                return None;
+            }
+            let (center_x, center_y, width, height) = if layer.size.x > 0.0 && layer.size.y > 0.0 {
+                (
+                    layer.center.x * scale,
+                    layer.center.y * scale,
+                    (layer.size.x * scale).max(1.0),
+                    (layer.size.y * scale).max(1.0),
+                )
+            } else {
+                let fit = (canvas.0 as f32 / src_w as f32).min(canvas.1 as f32 / src_h as f32);
+                (
+                    output.0 as f32 * 0.5,
+                    output.1 as f32 * 0.5,
+                    (src_w as f32 * fit * scale).max(1.0),
+                    (src_h as f32 * fit * scale).max(1.0),
+                )
+            };
+            let (sin, cos) = layer.angle.sin_cos();
+            let uniforms = Uniforms {
+                size: [out_w, out_h, src_w, src_h],
+                f0: [center_x, center_y, width, height],
+                f1: [cos, sin, if index == 0 { 1.0 } else { opacity }, 0.0],
+            };
+            let uniform_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("composite_uniforms"),
+                        contents: bytemuck::bytes_of(&uniforms),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+            let source_buffer = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("composite_source"),
+                    contents: source.as_raw(),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("composite_bind_group"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: target.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: source_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("composite_layer"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.dispatch_workgroups(out_w.div_ceil(8), out_h.div_ceil(8), 1);
+            }
+            retained_sources.push(source_buffer);
+            retained_uniforms.push(uniform_buffer);
+            retained_groups.push(bind_group);
+        }
+        encoder.copy_buffer_to_buffer(&target, 0, &readback, 0, output_bytes);
+        self.queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        ok(
+            self.device.poll(wgpu::PollType::wait_indefinitely()),
+            "poll",
+        )?;
+        ok(rx.recv(), "map recv")?
+            .map_err(|error| eprintln!("[composite gpu] map failed: {error:?}"))
+            .ok()?;
+        let bytes = slice.get_mapped_range().to_vec();
+        readback.unmap();
+        drop((retained_sources, retained_uniforms, retained_groups));
+        RgbaImage::from_raw(out_w, out_h, bytes)
     }
 
     fn run(&self, src: &RgbaImage, s: &Settings) -> Option<RgbaImage> {
@@ -337,4 +659,70 @@ impl<'a> Job<'a> {
 fn ok<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> Option<T> {
     r.map_err(|e| eprintln!("[raw_filter gpu] {what} failed: {e:?}"))
         .ok()
+}
+
+#[cfg(test)]
+mod color_compute_tests {
+    use super::{RgbaImage, ViewerLayer, apply_color_balance, apply_curves};
+
+    #[test]
+    fn color_compute_keeps_alpha_and_applies_curve_luts_when_gpu_exists() {
+        let input = RgbaImage::from_pixel(512, 512, image::Rgba([10, 20, 30, 40]));
+        let identity = std::array::from_fn(|index| index as u8);
+        let mut invert_red = identity;
+        for (index, value) in invert_red.iter_mut().enumerate() {
+            *value = 255 - index as u8;
+        }
+        let luts = [identity, invert_red, identity, identity];
+        let Some(curved) = apply_curves(&input, &luts) else {
+            return;
+        };
+        assert_eq!(curved.get_pixel(0, 0), &image::Rgba([245, 20, 30, 40]));
+
+        if let Some(balanced) = apply_color_balance(&input, 0.0, 0.0, 0.0, 0.0, true) {
+            assert_eq!(balanced, input);
+        }
+        if let Some(balanced) = apply_color_balance(&input, 0.2, -0.1, 0.15, -1.0, true) {
+            let params: crate::params::Params = serde_json::from_value(serde_json::json!({
+                "cyanRed": 20.0,
+                "magentaGreen": -10.0,
+                "yellowBlue": 15.0,
+                "range": "shadows",
+                "preserve": "yes"
+            }))
+            .unwrap();
+            let cpu = crate::ops::color::adjust::color_balance(&input, &params);
+            for (gpu, cpu) in balanced.pixels().zip(cpu.pixels()) {
+                for channel in 0..4 {
+                    assert!(gpu[channel].abs_diff(cpu[channel]) <= 1);
+                }
+            }
+        }
+
+        let layer = |index, color| {
+            (
+                ViewerLayer {
+                    source: egui_snarl::NodeId(index),
+                    kind: crate::model::Kind::Image,
+                    texture: None,
+                    source_name: format!("layer-{index}"),
+                    source_path: None,
+                    center: egui::vec2(256.0, 256.0),
+                    size: egui::vec2(512.0, 512.0),
+                    angle: 0.0,
+                },
+                RgbaImage::from_pixel(512, 512, color),
+            )
+        };
+        let layers = [
+            layer(0, image::Rgba([10, 20, 30, 255])),
+            layer(1, image::Rgba([110, 120, 130, 128])),
+        ];
+        let composited =
+            crate::ops::rf::composite_gpu(&layers, (512, 512), (512, 512), 1.0, 1.0).unwrap();
+        assert_eq!(
+            composited.get_pixel(256, 256),
+            &image::Rgba([60, 70, 80, 255])
+        );
+    }
 }

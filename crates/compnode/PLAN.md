@@ -188,17 +188,20 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
 
 ### Phase 3: Worker & ML Inference Pipeline
 
-- [ ] **Job Queue & Dispatcher (`src/worker.rs`)**:
+- [x] **Job Queue & Dispatcher (`src/worker.rs`)**:
   - [x] Split worker transport into typed Render/Inference requests and responses.
   - [x] Cancel invalidated queued jobs before execution; preserve stale-result token matching.
   - [x] Show the active node type and job count in the title bar.
   - [x] Add a mockable `InferenceBackend::predict` boundary for background removal.
-  - [ ] Formalize model lifecycle management (keep-alive vs unload-on-demand) behind an `InferenceBackend` trait.
-  - [ ] Abstract disk cache interaction via `OutputCacheInterface` to enable in-memory mock testing.
-  - [ ] Add integration tests verifying token invalidation on rapid parameter changes.
-- [ ] **GPU Compute Acceleration Pipeline**:
-  - [ ] Integrate WGPU compute device/queue sharing for heavy compute shaders.
-  - [ ] Port expensive color grading (Curves LUT, Color Balance) and multi-layer composites to compute shader passes.
+  - [x] Keep cached models resident while active and unload them after ten idle minutes or when caching is disabled.
+  - [x] Add `OutputCacheInterface` with disk and in-memory implementations.
+  - [x] Test mock backend substitution and worker cancellation of queued requests.
+  - [x] Add an integration test verifying UI responsiveness under simulated worker load.
+- [x] **GPU Compute Acceleration Pipeline**:
+  - [x] Reuse the existing WGPU device and queue for color compute passes.
+  - [x] Port Curves LUT and Color Balance to WGSL with CPU fallbacks.
+  - [x] Port source-over transformed multi-layer composites to WGSL with CPU fallback.
+  - Other blend modes continue on CPU to preserve their current output.
 
 ### Phase 4: Node UI, Catalog & Session Modernization
 

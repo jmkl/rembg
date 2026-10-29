@@ -13,7 +13,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 | **Baseline** | Quick Fixes & Compiler Health                    | **Completed**   | 100%                                        |
 | **Phase 1**  | Operations Reorganization & Core Data Foundation | **Completed**   | 100%                                        |
 | **Phase 2**  | Graph & Evaluation Engine Decoupling             | **Completed**   | 100%                                        |
-| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **In Progress** | ~25% (Typed worker transport, cancellation, and prediction backend boundary) |
+| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **Completed**  | 100% |
 | **Phase 4**  | Node UI, Catalog & Session Modernization         | **Pending**     | 20% (Builder pattern done)                  |
 | **Phase 5**  | Verification, Benchmarking & Documentation       | **In Progress** | ~50% (Tests & docs current)                 |
 
@@ -29,7 +29,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (63 passed, 1 ignored benchmark)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (70 passed, 1 ignored benchmark)
 
 ---
 
@@ -125,25 +125,31 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 
 ### 3.2 Inference Backend Abstraction
 
-- [ ] Define `InferenceBackend` trait for AI models:
-  - [ ] Lifecycle management (e.g. keep-alive timeout, unload on low memory)
+- [x] Define a mockable `InferenceBackend` trait for background-removal models:
+  - [x] Lifecycle management with configurable model cache policy and a 10-minute idle unload timeout
   - [x] Standardized execution signature: `predict(&self, input: &RgbaImage) -> Result<RgbaImage, InferenceError>`
   - [x] Decouple background-removal `rembg-core` bindings to allow mock backends in tests
 - [ ] Mock worker test suite:
-  - [ ] Add integration test verifying UI non-blocking behavior under simulated worker load
-  - [x] Test backend substitution through a mock implementation; rapid parameter scrubbing and token invalidation remain to be covered at worker integration level
+  - [x] Add integration test verifying UI non-blocking behavior under simulated worker load
+  - [x] Test backend substitution through a mock implementation
+  - [x] Test worker cancellation of queued requests
+  - [x] Verify an egui frame can run while the worker is held behind simulated load
 
 ### 3.3 Cache Interface Abstraction (`src/cache.rs`)
 
-- [ ] Define `OutputCacheInterface` trait:
-  - [ ] `get(key: &CacheKey) -> Option<RgbaImage>`
-  - [ ] `put(key: &CacheKey, image: &RgbaImage) -> Result<PathBuf, CacheError>`
-- [ ] Enable in-memory cache backend for automated headless tests without disk writes
+- [x] Define `OutputCacheInterface` trait:
+  - [x] `get(key: &CacheKey) -> Option<RgbaImage>`
+  - [x] `put(key: &CacheKey, image: &RgbaImage) -> Result<PathBuf, CacheError>`
+- [x] Enable in-memory cache backend for automated headless tests without disk writes
 
 ### 3.4 GPU Accelerated Compute Pipeline
 
-- [ ] Integrate WGPU compute device/queue sharing for compute shaders
-- [ ] Port expensive color grading (Curves LUT, Color Balance) and multi-layer composites to WGSL compute passes
+- [x] Share the existing WGPU device and queue with color compute passes
+- [x] Port expensive color grading and multi-layer composites to WGSL compute passes:
+  - [x] Curves LUT
+  - [x] Color Balance
+  - [x] Source-over multi-layer transformed composites
+  - Other blend modes retain the CPU path for parity.
 
 ---
 

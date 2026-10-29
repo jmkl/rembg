@@ -147,12 +147,16 @@ pub(crate) fn curves(src: &RgbaImage, params: &Params) -> RgbaImage {
     let red = curve_lut(&params::curve(params, "red"));
     let green = curve_lut(&params::curve(params, "green"));
     let blue = curve_lut(&params::curve(params, "blue"));
+    let luts = [master, red, green, blue];
+    if let Some(output) = crate::ops::rf::curves_gpu(src, &luts) {
+        return output;
+    }
 
     let mut out = src.clone();
     for pixel in out.pixels_mut() {
-        pixel[0] = red[master[pixel[0] as usize] as usize];
-        pixel[1] = green[master[pixel[1] as usize] as usize];
-        pixel[2] = blue[master[pixel[2] as usize] as usize];
+        pixel[0] = luts[1][luts[0][pixel[0] as usize] as usize];
+        pixel[1] = luts[2][luts[0][pixel[1] as usize] as usize];
+        pixel[2] = luts[3][luts[0][pixel[2] as usize] as usize];
     }
     out
 }
@@ -270,6 +274,14 @@ pub(crate) fn color_balance(src: &RgbaImage, params: &Params) -> RgbaImage {
     let mg = params::f32(params, "magentaGreen", 0.0).clamp(-100.0, 100.0) / 100.0;
     let yb = params::f32(params, "yellowBlue", 0.0).clamp(-100.0, 100.0) / 100.0;
     let preserve = params::string(params, "preserve", "yes") != "no";
+    let range_mode = match range {
+        "shadows" => -1.0,
+        "highlights" => 1.0,
+        _ => 0.0,
+    };
+    if let Some(output) = crate::ops::rf::color_balance_gpu(src, cr, mg, yb, range_mode, preserve) {
+        return output;
+    }
 
     let mut out = src.clone();
     for pixel in out.pixels_mut() {
