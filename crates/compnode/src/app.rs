@@ -157,9 +157,7 @@ impl CompNodeApp {
             if !self.snarl.node_ids().any(|(id, _)| id == done.node) {
                 continue;
             }
-            let is_blend = self.snarl[done.node]
-                .filter_node()
-                .is_some_and(|f| f.kind == crate::model::FilterKind::Blend);
+            let is_blend = self.snarl[done.node].is_blend();
             let node = &mut self.snarl[done.node];
             match done.result {
                 Ok(output) => {
@@ -189,25 +187,24 @@ impl CompNodeApp {
         let filter_ids: Vec<NodeId> = self
             .snarl
             .node_ids()
-            .filter(|(id, node)| {
-                node.filter_node()
-                    .is_some_and(|filter| filter.kind != crate::model::FilterKind::Route)
-                    && needed.contains(id)
-            })
+            .filter(|(id, node)| node.can_render_full_res() && needed.contains(id))
             .map(|(id, _)| id)
             .collect();
 
         for id in filter_ids {
             let (job, render_state, signature, rendered, ready) = {
-                let Some(filter) = self.snarl[id].filter_node() else {
-                    continue;
+                let node = &self.snarl[id];
+                let sig = match node {
+                    crate::model::Node::Filter(f) => f.signature,
+                    crate::model::Node::Group(g) | crate::model::Node::Blend(g) => g.signature,
+                    _ => None,
                 };
                 (
-                    filter.job,
-                    filter.render_state,
-                    filter.signature,
-                    filter.rendered,
-                    filter.preview.cpu.is_some() && filter.preview.error.is_none(),
+                    node.job(),
+                    node.render_state(),
+                    sig,
+                    node.rendered(),
+                    node.cpu().is_some() && node.error().is_none(),
                 )
             };
             if job.is_some() || !ready {
@@ -215,9 +212,7 @@ impl CompNodeApp {
             }
             let Some(signature) = signature else {
                 // No eval output yet (missing inputs or error): reset debounce.
-                if let Some(filter) = self.snarl[id].filter_node_mut() {
-                    filter.render_state = None;
-                }
+                self.snarl[id].set_render_state(None);
                 continue;
             };
             if rendered == Some(signature) {
@@ -233,19 +228,15 @@ impl CompNodeApp {
                             .editor
                             .start_filter_render(&mut self.snarl, id, signature, ctx)
                         {
-                            if let Some(filter) = self.snarl[id].filter_node_mut() {
-                                filter.render_state = None;
-                            }
+                            self.snarl[id].set_render_state(None);
                         }
                     }
                 }
                 _ => {
-                    if let Some(filter) = self.snarl[id].filter_node_mut() {
-                        filter.render_state = Some(crate::model::RenderState {
-                            signature,
-                            since: Instant::now(),
-                        });
-                    }
+                    self.snarl[id].set_render_state(Some(crate::model::RenderState {
+                        signature,
+                        since: Instant::now(),
+                    }));
                 }
             }
         }
@@ -928,7 +919,7 @@ impl CompNodeApp {
                     viewer.canvas_size = size;
                 }
             }
-            if node.filter_node().is_some_and(|f| f.kind.is_layer_kind()) {
+            if node.kind().is_layer_kind() {
                 let size = self.image_canvas.canvas_size();
                 if node.canvas_size() != size {
                     node.set_canvas_size(size);
@@ -939,10 +930,7 @@ impl CompNodeApp {
         // Only rebuild/sync layers when they changed (or a
         // decode finished). Signature is allocation-free.
         let selected_layers = self.editor.selected_nodes().first().copied().filter(|id| {
-            self.snarl.get_node_info(*id).is_some()
-                && self.snarl[*id]
-                    .filter_node()
-                    .is_some_and(|f| f.kind.is_layer_kind())
+            self.snarl.get_node_info(*id).is_some() && self.snarl[*id].kind().is_layer_kind()
         });
         let layer_iter_sig = if let Some(gid) = selected_layers {
             // only this node's layers
@@ -1050,13 +1038,8 @@ impl CompNodeApp {
         }
 
         let blend_preview = if let Some(gid) = selected_layers {
-            if self.snarl[gid]
-                .filter_node()
-                .is_some_and(|f| f.kind == crate::model::FilterKind::Blend)
-            {
-                self.snarl[gid]
-                    .filter_node()
-                    .and_then(|f| f.preview.texture.clone())
+            if self.snarl[gid].is_blend() {
+                self.snarl[gid].texture().cloned()
             } else {
                 None
             }
@@ -1085,10 +1068,7 @@ impl CompNodeApp {
             self.image_canvas.layers().map(|l| l.id).collect();
 
         let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
-            self.snarl.get_node_info(*id).is_some()
-                && self.snarl[*id]
-                    .filter_node()
-                    .is_some_and(|f| f.kind.is_layer_kind())
+            self.snarl.get_node_info(*id).is_some() && self.snarl[*id].kind().is_layer_kind()
         });
         // fallback: single output node
         let target_id = edited_id.or_else(|| {
@@ -1292,7 +1272,7 @@ impl App for CompNodeApp {
                     viewer.canvas_size = canvas_size;
                 }
             }
-            if node.filter_node().is_some_and(|f| f.kind.is_layer_kind()) {
+            if node.kind().is_layer_kind() {
                 if node.canvas_size() != canvas_size {
                     node.set_canvas_size(canvas_size);
                 }
@@ -1307,10 +1287,7 @@ impl App for CompNodeApp {
         let viewers: Vec<NodeId> = self
             .snarl
             .node_ids()
-            .filter(|(_, node)| {
-                node.viewer_node().is_some()
-                    || node.filter_node().is_some_and(|f| f.kind.is_layer_kind())
-            })
+            .filter(|(_, node)| node.viewer_node().is_some() || node.kind().is_layer_kind())
             .map(|(id, _)| id)
             .collect();
         if should_refresh_images
@@ -1439,10 +1416,7 @@ fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<
         .map(|(id, _)| id)
         .collect();
     stack.extend(selected.iter().copied().filter(|id| {
-        snarl.get_node_info(*id).is_some()
-            && snarl[*id]
-                .filter_node()
-                .is_some_and(|filter| filter.kind.is_layer_kind())
+        snarl.get_node_info(*id).is_some() && snarl[*id].kind().is_layer_kind()
     }));
     while let Some(id) = stack.pop() {
         if !needed.insert(id) {

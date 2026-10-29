@@ -496,18 +496,15 @@ impl GraphEditor {
         signature: u64,
         ctx: &egui::Context,
     ) -> bool {
-        let Some(filter) = snarl[node].filter_node() else {
+        let Some(group) = snarl[node].group_node() else {
             return false;
         };
-        if !filter.kind.is_layer_kind() {
-            return false;
-        }
-        let is_blend = filter.kind == crate::model::FilterKind::Blend;
-        let canvas_vec = if filter.canvas_size.x < 1.0 || filter.canvas_size.y < 1.0 {
+        let is_blend = group.is_blend;
+        let canvas_vec = if group.canvas_size.x < 1.0 || group.canvas_size.y < 1.0 {
             let (w, h) = crate::eval::canvas_size(snarl);
             egui::vec2(w as f32, h as f32)
         } else {
-            filter.canvas_size
+            group.canvas_size
         };
         if canvas_vec.x < 1.0 || canvas_vec.y < 1.0 {
             return false;
@@ -518,15 +515,15 @@ impl GraphEditor {
         // base, layers above it use the node's mode and opacity.
         let (mode, opacity) = if is_blend {
             (
-                crate::params::string(&filter.params, "mode", "source-over").to_owned(),
-                crate::params::f32(&filter.params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0,
+                crate::params::string(&group.params, "mode", "source-over").to_owned(),
+                crate::params::f32(&group.params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0,
             )
         } else {
             ("source-over".to_owned(), 1.0)
         };
 
         let mut layers = Vec::new();
-        for layer in &filter.layers {
+        for layer in &group.layers {
             // Full-resolution render needs every layer backed by a file. A
             // filter layer must have rendered its own output first; otherwise
             // walking upstream would use the unfiltered image.
@@ -559,11 +556,11 @@ impl GraphEditor {
             source_name,
         };
         if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
-            if let Some(filter) = snarl[node].filter_node_mut() {
-                filter.job = Some(token);
-                filter.render_state = None;
-                filter.rendered = Some(signature);
-                filter.preview.error = None;
+            if let Some(group) = snarl[node].group_node_mut() {
+                group.job = Some(token);
+                group.render_state = None;
+                group.rendered = Some(signature);
+                group.preview.error = None;
             }
             ctx.request_repaint();
             true
@@ -586,18 +583,13 @@ impl GraphEditor {
         signature: u64,
         ctx: &egui::Context,
     ) -> bool {
+        if snarl[node].kind().is_layer_kind() {
+            return self.start_group_render(snarl, node, signature, ctx);
+        }
         let Some(filter) = snarl[node].filter_node() else {
             return false;
         };
         let kind = filter.kind;
-        if kind == crate::model::FilterKind::Route {
-            // Route is transparent: downstream nodes read its input directly,
-            // so it never needs a render of its own.
-            return false;
-        }
-        if kind.is_layer_kind() {
-            return self.start_group_render(snarl, node, signature, ctx);
-        }
         let params = filter.params.clone();
         let sockets = catalog::spec(snarl[node].kind()).sockets.len();
         let canvas = crate::eval::canvas_size(snarl);

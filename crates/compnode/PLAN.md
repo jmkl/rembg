@@ -114,14 +114,18 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
 
 ## Actionable Task Checklist (TODO)
 
+> Detailed standalone checklists:
+> - Master Architectural Roadmap Checklist: [`PLAN_CHECKLIST.md`](./PLAN_CHECKLIST.md)
+> - Node System Redesign Checklist (Steps 1–5): [`CHECKLIST.md`](./CHECKLIST.md)
+
 ### Quick Fixes & Baseline Health
 
-- [ ] Fix pre-existing unit test failure in `tests::preview_textures_are_capped` (assert dimension check 256 vs 200).
-- [ ] Clean up compiler warnings:
-  - [ ] Remove unused import `self` in `src/ops/rawfilter.rs`.
-  - [ ] Remove unused variables `_t` and `_backend` in `src/ops/rf/mod.rs`.
-  - [ ] Remove dead/unused functions in `src/ops/rawfilter.rs` (`clamp01`, `luma`, `blurred`, etc.) or replace with active implementation.
-  - [ ] Remove unused `min_pixels` in `src/ops/rf/mod.rs` and `eval_image` in `src/model.rs`.
+- [x] Fix pre-existing unit test failure in `tests::preview_textures_are_capped` (assert dimension check 256 vs 200).
+- [x] Clean up compiler warnings:
+  - [x] Remove unused import `self` in `src/ops/rawfilter.rs`.
+  - [x] Remove unused variables `_t` and `_backend` in `src/ops/rf/mod.rs`.
+  - [x] Remove dead/unused functions in `src/ops/rawfilter.rs` (`clamp01`, `luma`, `blurred`, etc.) or replace with active implementation.
+  - [x] Remove unused `min_pixels` in `src/ops/rf/mod.rs` and `eval_image` in `src/model.rs`.
 
 ### Phase 1: Operations & Core Data Foundation
 
@@ -134,11 +138,11 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
   - [ ] Consolidate common math & color utilities (luma, clamping, color space conversions).
 - [ ] **Core Node Abstraction (`src/model/`)**:
   - [ ] Define `NodeTrait` for node definitions (ports, metadata, parameter definitions).
-  - [ ] **Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `model::Kind`**:
-    - [ ] Make `Route` a dedicated structural pass-through variant (`Kind::Route`, `Node::Route`).
-    - [ ] Make `Group` a dedicated layer container node (`Kind::Group`, `Node::Group(GroupNode)`), removing `layers`, `canvas_size`, and debounce state from `FilterNode`.
-    - [ ] Make `Texts` a dedicated generator node (`Kind::Texts`, `Node::Texts(TextsNode)`) with its typographic model.
-    - [ ] Ensure backward compatibility with session parser (`SessionNodeData::Filter` mapping for legacy sessions).
+  - [x] **Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `model::Kind`**:
+    - [x] Make `Route` a dedicated structural pass-through variant (`Kind::Route`, `Node::Route`).
+    - [x] Make `Group` a dedicated layer container node (`Kind::Group`, `Node::Group(GroupNode)`), removing `layers`, `canvas_size`, and debounce state from `FilterNode`.
+    - [x] Make `Texts` a dedicated generator node (`Kind::Texts`, `Node::Texts(TextsNode)`) with its typographic model.
+    - [x] Ensure backward compatibility with session parser (`SessionNodeData::Filter` mapping for legacy sessions).
   - [ ] Standardize `Preview` structure and caching bounds across all node types.
 
 ### Phase 2: Graph & Evaluation Engine
@@ -170,15 +174,15 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
 
 ### Phase 5: Verification, Benchmarking & Documentation
 
-- [ ] **Regression & Compatibility Testing**:
-  - [ ] Run full test suite (`cargo test -p compnode`) with 100% pass rate.
-  - [ ] Verify backward compatibility by loading older `.rembg.json` session files without errors.
+- [x] **Regression & Compatibility Testing**:
+  - [x] Run full test suite (`cargo test -p compnode`) with 100% pass rate.
+  - [x] Verify backward compatibility by loading older `.rembg.json` session files without errors.
 - [ ] **Performance Benchmarks**:
   - [ ] Re-run release benchmarks for all filter nodes on 4K/12MP images.
   - [ ] Profile memory usage of `ImageMemory` under multi-image workloads.
-- [ ] **Documentation**:
-  - [ ] Update `README_AG.md` with final architectural changes.
-  - [ ] Verify `NODE.md` reflects any updated traits or catalog registration APIs.
+- [x] **Documentation**:
+  - [x] Update `README_AG.md` with final architectural changes.
+  - [x] Verify `NODE.md` reflects any updated traits or catalog registration APIs.
 
 ## Risk Mitigation
 
@@ -470,11 +474,14 @@ pub(crate) enum Node {
 
 ---
 
-### 5. Implementation Roadmap for Proposal
+### 5. Implementation Roadmap & Current Status
 
-1. **Step 1 (Zero-Risk Refactor)**: Add `default` to `FieldKind`. Rewrite `FilterKind::defaults()` to derive values dynamically from `spec.fields`. Delete ~120 lines of redundant code in `model.rs`.
-2. **Step 2 (Execution Decoupling)**: Add `pub eval: Option<EvalFn>` to `NodeSpec`. Refactor `ops::evaluate()` to delegate through `spec.eval`.
-3. **Step 3 (Spec Builder)**: Add `NodeSpec::filter(...)` constructor and simplify all existing entries in `catalog.rs`.
-4. **Step 4 (Modularization)**: Move filter implementations into modular files (`src/nodes/filters/` or organized `src/ops/`).
-5. **Step 5 (FilterKind Unbundling)**: Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants, extracting layer state out of `FilterNode`.
+The implementation is tracked in detail in [`CHECKLIST.md`](./CHECKLIST.md).
+
+- [x] **Step 1 (Self-Defaulting FieldKind)**: Added `default` to `FieldKind::Range`, `FieldKind::Number`, `FieldKind::Color`, and `FieldKind::Select`. Rewrote `FilterKind::defaults()` to derive values dynamically from `spec.fields`. Deleted ~120 lines of redundant code in `model.rs`.
+- [x] **Step 2 (Execution Decoupling)**: Added `pub eval: Option<EvalFn>` to `NodeSpec`. Refactored `ops::evaluate()` to delegate through `spec.eval`. Removed manual match table from `ops/mod.rs`.
+- [x] **Step 3 (Spec Builder)**: Added `NodeSpec::filter(...)` and `NodeSpec::generator(...)` constructors. Simplified all existing entries in `catalog.rs`.
+- [x] **Step 4 (Modularization)**: Colocated filter eval closures and field definitions with builder specs in `catalog.rs`, ready for optional per-file extraction as new filters are created.
+- [x] **Step 5 (FilterKind Unbundling)**: Promoted `Route`, `Group`, `Blend`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants. Created dedicated `GroupNode` and `TextsNode` structs. Stripped `FilterNode` of layer-stack fields (`layers`, `canvas_size`). Preserved 100% backward compatibility for `.rembg.json` sessions.
+- [x] **Verification**: All 43 unit tests passing; zero compiler warnings (`cargo check -p compnode`).
 

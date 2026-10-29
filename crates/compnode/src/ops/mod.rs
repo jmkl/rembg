@@ -3,62 +3,40 @@
 //! Every function takes pixels in and returns pixels out, with no egui or graph
 //! dependencies. Evaluation and caching live in [`crate::eval`].
 
-mod adjust;
+pub(crate) mod adjust;
 pub(crate) mod composite;
-mod effects;
-mod generate;
-mod rawfilter;
-mod rf;
+pub(crate) mod effects;
+pub(crate) mod generate;
+pub(crate) mod rawfilter;
+pub(crate) mod rf;
 pub(crate) mod texts;
 use image::RgbaImage;
 
-use crate::model::FilterKind;
+use crate::catalog;
+use crate::model::{FilterKind, Kind};
 use crate::params::Params;
 
 pub(crate) use adjust::curve_lut;
 
 pub(crate) const EVAL_MAX_EDGE: u32 = 256;
 
-/// Evaluate one filter node.
-///
-/// `inputs` is indexed by socket; each socket holds the images connected to it
-/// in wire order (only multi-input sockets can have more than one).
+pub(crate) fn primary_input(inputs: &[Vec<RgbaImage>]) -> Result<&RgbaImage, String> {
+    inputs
+        .first()
+        .and_then(|list| list.first())
+        .ok_or_else(|| "No input connected".to_owned())
+}
+
+/// Evaluate one filter node via its specification's `eval` function.
 pub(crate) fn evaluate(
     kind: FilterKind,
     params: &Params,
     inputs: &[Vec<RgbaImage>],
     canvas: (u32, u32),
 ) -> Result<RgbaImage, String> {
-    let first = |socket: usize| -> Result<&RgbaImage, String> {
-        inputs
-            .get(socket)
-            .and_then(|list| list.first())
-            .ok_or_else(|| "No input connected".to_owned())
-    };
-
-    match kind {
-        FilterKind::Route => Ok(first(0)?.clone()),
-        FilterKind::Group => composite::stack(inputs.first().map(Vec::as_slice).unwrap_or(&[])),
-        FilterKind::Blend => composite::blend(
-            inputs.first().and_then(|list| list.first()),
-            inputs.get(1).and_then(|list| list.first()),
-            params,
-            canvas,
-        ),
-        FilterKind::Mask => Ok(composite::apply_mask(
-            first(0)?,
-            inputs.get(1).and_then(|list| list.first()),
-            params,
-        )),
-        FilterKind::Hsv => Ok(adjust::hsv(first(0)?, params)),
-        FilterKind::Curves => Ok(adjust::curves(first(0)?, params)),
-        FilterKind::Exposure => Ok(adjust::exposure(first(0)?, params)),
-        FilterKind::ColorBalance => Ok(adjust::color_balance(first(0)?, params)),
-        FilterKind::GradientMap => Ok(adjust::gradient_map(first(0)?, params)),
-        FilterKind::Invert => Ok(adjust::invert(first(0)?, params)),
-        FilterKind::Gradient => Ok(generate::gradient(params)),
-        FilterKind::Noise => Ok(generate::noise(params, canvas)),
-        FilterKind::RawFilter => Ok(rawfilter::raw_filter(first(0)?, params)),
-        FilterKind::Texts => texts::texts(params, canvas),
-    }
+    let spec = catalog::spec(Kind::Filter(kind));
+    let eval_fn = spec
+        .eval
+        .ok_or_else(|| format!("Filter {:?} has no eval function", kind))?;
+    eval_fn(inputs, params, canvas)
 }

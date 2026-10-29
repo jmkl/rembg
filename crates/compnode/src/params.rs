@@ -49,6 +49,7 @@ pub(crate) fn set_bool(params: &mut Params, key: &str, value: bool) {
     params.insert(key.to_owned(), json!(value));
 }
 
+#[allow(dead_code)]
 pub(crate) fn set_u32(params: &mut Params, key: &str, value: u32) {
     params.insert(key.to_owned(), json!(value));
 }

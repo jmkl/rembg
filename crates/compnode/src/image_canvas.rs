@@ -10,7 +10,7 @@
 
 use crate::gpaste_app::GPasTeApp;
 use crate::layer_cache::LayerCache;
-use crate::model::{FilterKind, Kind};
+use crate::model::Kind;
 use crate::style::controls::Button;
 use crate::style::{font, icons, metrics, pal};
 use eframe::egui::{
@@ -170,7 +170,7 @@ impl Item {
     }
 
     fn is_text(&self) -> bool {
-        self.kind == Kind::Filter(FilterKind::Texts)
+        self.kind == Kind::Texts
     }
 
     /// True when the layer still has the transform produced by the last
@@ -699,7 +699,7 @@ impl ImageCanvas {
         let canvas_size = self.canvas_size;
         for (source_id, source_kind, source_name, preview, path, saved, use_preview) in layers {
             let use_preview = *use_preview;
-            let is_text = *source_kind == Kind::Filter(FilterKind::Texts);
+            let is_text = *source_kind == Kind::Texts;
             // Ask the cache first: hit = already a CPU image + texture.
             let cached = path
                 .as_deref()
@@ -2124,13 +2124,13 @@ mod tests {
 
     #[test]
     fn text_content_rect_drives_hit_testing() {
-        use crate::model::{FilterKind, Kind};
+        use crate::model::Kind;
         use eframe::egui::vec2;
         use egui_snarl::NodeId;
 
         let item = super::Item {
             id: NodeId(0),
-            kind: Kind::Filter(FilterKind::Texts),
+            kind: Kind::Texts,
             name: String::new(),
             tex: None,
             tex_is_full: false,

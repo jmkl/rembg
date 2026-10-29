@@ -3,7 +3,7 @@
 use egui::{Color32, Ui, Vec2};
 use egui_snarl::{NodeId, Snarl};
 
-use crate::catalog::{FieldKind, FieldSpec, NodeSpec};
+use crate::catalog::{FieldKind, FieldSpec};
 use crate::editor::GraphEditor;
 use crate::graph::invalidate_node;
 use crate::model::{FilterKind, Kind, Node};
@@ -14,11 +14,18 @@ use crate::style::pal;
 use crate::widgets::{error_line, preview};
 
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, kind: Kind) {
-    let filter_kind = match kind {
-        Kind::Filter(value) => value,
-        _ => return,
-    };
-    snarl.insert_node(pos, Node::new_filter(filter_kind));
+    match kind {
+        Kind::Filter(filter_kind) => {
+            snarl.insert_node(pos, Node::new_filter(filter_kind));
+        }
+        Kind::Group => {
+            snarl.insert_node(pos, Node::group());
+        }
+        Kind::Blend => {
+            snarl.insert_node(pos, Node::blend());
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn show_body(
@@ -28,16 +35,40 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     width: f32,
 ) {
-    let (kind, texture, preview_enabled, error) = {
-        let Some(filter) = snarl[node].filter() else {
-            return;
-        };
-        (
-            filter.kind,
-            filter.preview.texture.clone(),
-            filter.preview_enabled,
-            filter.preview.error.clone(),
-        )
+    let (node_kind, texture, preview_enabled, error, fields, defaults) = match &snarl[node] {
+        Node::Filter(f) => (
+            Kind::Filter(f.kind),
+            f.preview.texture.clone(),
+            f.preview_enabled,
+            f.preview.error.clone(),
+            crate::catalog::spec(Kind::Filter(f.kind)).fields,
+            f.kind.defaults(),
+        ),
+        Node::Blend(g) => {
+            let spec = crate::catalog::spec(Kind::Blend);
+            let mut defs = Params::new();
+            spec.apply_defaults(&mut defs);
+            (
+                Kind::Blend,
+                g.preview.texture.clone(),
+                g.preview_enabled,
+                g.preview.error.clone(),
+                spec.fields,
+                defs,
+            )
+        }
+        Node::Group(g) => {
+            let spec = crate::catalog::spec(Kind::Group);
+            (
+                Kind::Group,
+                g.preview.texture.clone(),
+                g.preview_enabled,
+                g.preview.error.clone(),
+                spec.fields,
+                Params::new(),
+            )
+        }
+        _ => return,
     };
 
     if preview_enabled {
@@ -45,18 +76,18 @@ pub(crate) fn show_body(
     }
     error_line(ui, error.as_deref());
 
-    let fields = spec_for(kind).fields;
-    let defaults = kind.defaults();
     let mut changed = false;
     {
-        let Some(filter) = snarl[node].filter_mut() else {
-            return;
+        let params = match &mut snarl[node] {
+            Node::Filter(f) => &mut f.params,
+            Node::Blend(g) | Node::Group(g) => &mut g.params,
+            _ => return,
         };
         for field in fields {
-            changed |= show_field(ui, &mut filter.params, field, &defaults);
+            changed |= show_field(ui, params, field, &defaults);
         }
-        if kind == FilterKind::Curves {
-            changed |= curve_editor(ui, &mut filter.params);
+        if node_kind == Kind::Filter(FilterKind::Curves) {
+            changed |= curve_editor(ui, params);
         }
     }
     if changed {
@@ -64,26 +95,23 @@ pub(crate) fn show_body(
     }
 }
 
-fn spec_for(kind: FilterKind) -> &'static NodeSpec {
-    crate::catalog::spec(Kind::Filter(kind))
-}
-
 fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Params) -> bool {
     match &field.kind {
         FieldKind::Range {
             min,
             max,
+            default,
             step,
             suffix,
         } => {
-            let mut value = params::f32(params, field.key, *min);
+            let mut value = params::f32(params, field.key, *default);
             let response = ui.add(
                 Slider::new(&mut value, *min..=*max)
                     .label(field.label)
                     .suffix(*suffix)
                     .step(*step)
                     .decimals(decimals_for(*step))
-                    .default(params::f32(defaults, field.key, *min)),
+                    .default(params::f32(defaults, field.key, *default)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -92,14 +120,19 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Pa
                 false
             }
         }
-        FieldKind::Number { min, max, step } => {
-            let mut value = params::f32(params, field.key, *min);
+        FieldKind::Number {
+            min,
+            max,
+            default,
+            step,
+        } => {
+            let mut value = params::f32(params, field.key, *default);
             let response = ui.add(
                 Slider::new(&mut value, *min..=*max)
                     .label(field.label)
                     .step(*step)
                     .decimals(decimals_for(*step))
-                    .default(params::f32(defaults, field.key, *min)),
+                    .default(params::f32(defaults, field.key, *default)),
             );
             if response.changed() {
                 params::set_f32(params, field.key, value);
@@ -108,8 +141,8 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Pa
                 false
             }
         }
-        FieldKind::Color => {
-            let rgb = params::color(params, field.key, "#000000");
+        FieldKind::Color { default } => {
+            let rgb = params::color(params, field.key, default);
             let mut color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
             let response =
                 ui.add(ColorField::new((field.key, field.label), &mut color).label(field.label));
@@ -124,11 +157,11 @@ fn show_field(ui: &mut Ui, params: &mut Params, field: &FieldSpec, defaults: &Pa
                 false
             }
         }
-        FieldKind::Select(options) => {
+        FieldKind::Select { options, default } => {
             let current = params::string(
                 params,
                 field.key,
-                options.first().map(|o| o.value).unwrap_or(""),
+                default,
             )
             .to_owned();
             let mut selected = current.clone();

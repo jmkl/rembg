@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Raw-style development controls.
 //!
 //! The Raw Filter combines the adjustments usually found in a raw developer:
@@ -7,7 +9,7 @@
 
 use image::RgbaImage;
 
-use crate::params::{self, Params};
+use crate::params::Params;
 
 fn clamp01(value: f32) -> f32 {
     value.clamp(0.0, 1.0)

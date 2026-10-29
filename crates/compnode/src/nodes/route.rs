@@ -7,7 +7,7 @@ use crate::model::Node;
 
 #[allow(dead_code)]
 pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: crate::model::Kind) {
-    snarl.insert_node(pos, Node::new_filter(crate::model::FilterKind::Route));
+    snarl.insert_node(pos, Node::Route);
 }
 
 pub(crate) fn show_body(

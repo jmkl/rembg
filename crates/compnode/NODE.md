@@ -1,6 +1,6 @@
 # Guide: How to Add a New Node to CompNode
 
-This guide explains the complete architecture and workflow for adding new nodes to the `compnode` crate, covering both **Generic Filter Nodes** (the standard path for image adjustments, procedural generators, and effects) and **Dedicated Inference Nodes** (for background AI models).
+This guide explains the architecture and workflow for adding new nodes to the `compnode` crate following the **Node System Redesign**. It covers **Generic Filter / Generator Nodes** (the standard path for image adjustments, procedural generators, and effects), **Structural / Container Nodes**, and **Dedicated Inference Nodes** (for background AI models).
 
 ---
 
@@ -15,31 +15,35 @@ This guide explains the complete architecture and workflow for adding new nodes 
 
 ## 1. Node Archetypes Overview
 
-Nodes in CompNode fall into one of two categories:
+Nodes in CompNode fall into the following distinct categories:
 
-| Feature | Generic Filter Node (`FilterKind`) | Dedicated / Inference Node (`Kind`) |
-| :--- | :--- | :--- |
-| **Typical Use** | Color grading, blurs, procedural textures, layer masks, distortions. | ONNX neural networks (e.g. background removal, face restoration), source loaders. |
-| **UI Rendering** | Automatic via `nodes::filter::show_body` driven by `FieldSpec` metadata. | Custom UI module under `src/nodes/<name>.rs`. |
-| **Evaluation** | Evaluated on UI thread during preview (`<= 256px`), full-res automatically scheduled via worker `Job::Filter`. | Custom worker `Job` variant + ONNX runtime dispatch in `worker.rs`. |
-| **Persistence** | Automatically serialized as `SessionNodeData::Filter` with string `id()`. | Dedicated variant in `SessionNodeData` in `session.rs`. |
-| **Files to Edit** | 4 core files (`model.rs`, `ops/<op>.rs`, `ops/mod.rs`, `catalog.rs`). | 6+ files (`model.rs`, `catalog.rs`, `nodes/<name>.rs`, `worker.rs`, `session.rs`, `app.rs`). |
+| Feature | Generic Filter / Generator (`Kind::Filter(FilterKind)`) | Layer Container (`Kind::Group`, `Kind::Blend`) | Typography (`Kind::Texts`) | Pass-Through (`Kind::Route`) | Inference / IO (`Kind::Image`, `Kind::RemoveBg`, etc.) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Typical Use** | Color grading, blurs, procedural textures, layer masks. | Canvas-oriented layer blending, 16 blend modes, full 2D gizmo transforms. | Custom typography, fonts, drop shadows, multi-outlines. | Visual wire routing and graph organization. | Local image loading, BiRefNet, RMBG, GFPGAN, Viewers. |
+| **State Struct** | `FilterNode` (lightweight: `{ kind, params, preview, signature, preview_enabled }`). | `GroupNode` (owns `is_blend`, `layers`, `canvas_size`, `job`, `render_state`, etc.). | `TextsNode` (owns typography params, preview, signature). | Unit variant `Node::Route` (zero state). | Dedicated structs (`ImageNode`, `Process`, `FaceRestoreNode`, `ViewerNode`). |
+| **UI Rendering** | Automatic via `nodes::filter::show_body` driven by `FieldSpec` metadata. | Custom layer UI in `nodes::filter::show_body` or canvas. | Dedicated UI under `nodes::texts::show_body`. | Minimal pass-through UI in `nodes::route`. | Custom UI module under `src/nodes/<name>.rs`. |
+| **Evaluation** | Pure `EvalFn` closure on `NodeSpec`; preview on UI thread, full-res via `Job::Filter`. | Full-resolution multi-layer composite via `Job::Composite`. | Vector glyph layout + canvas rasterization. | Bypassed; wires resolved via `graph::resolve_route()`. | Custom worker `Job` + ONNX runtime dispatch in `worker.rs`. |
+| **Files to Edit** | 3 files (`model.rs`, `ops/<op>.rs`, `catalog.rs`). | Core graph / model / session files. | `nodes/texts.rs`, `ops/texts.rs`. | Graph topology in `graph.rs`. | 6+ files (`model.rs`, `catalog.rs`, `nodes/<name>.rs`, `worker.rs`, etc.). |
 
 ---
 
 ## 2. Step-by-Step: Adding a Generic Filter Node
 
-To add a standard image processing node (e.g. *Sepia*, *Vignette*, *Pixelate*, *Threshold*), modify these four files:
+Adding a standard image filter (e.g., *Sepia*, *Vignette*, *Pixelate*, *Threshold*) requires editing only **3 files**:
 
 ```
 crates/compnode/
 ├── src/
-│   ├── model.rs          ← 1. Register FilterKind variant, id, and parameter defaults
+│   ├── model.rs          ← 1. Register FilterKind variant, id, and from_id
 │   ├── ops/
-│   │   ├── adjust.rs     ← 2. Implement pure pixel manipulation function
-│   │   └── mod.rs        ← 3. Dispatch kind in `ops::evaluate()`
-│   └── catalog.rs        ← 4. Define UI fields, socket count, and register in `NODE_SPECS`
+│   │   └── adjust.rs     ← 2. Implement pure pixel manipulation function
+│   └── catalog.rs        ← 3. Define UI fields (with embedded defaults) and register via NodeSpec::filter()
 ```
+
+> [!NOTE]
+> Thanks to the Node System Redesign:
+> - Parameter default values are embedded directly into `FieldSpec` (`FieldKind::Range`, `FieldKind::Number`, `FieldKind::Color`, `FieldKind::Select`). You do **not** need to manually define default maps in `model.rs`.
+> - Evaluation functions are attached directly to `NodeSpec` as function pointers / closures. You do **not** need to touch `ops/mod.rs` to add a match arm to `ops::evaluate()`.
 
 ### File 1: `src/model.rs`
 1. Add a variant to the `FilterKind` enum:
@@ -68,63 +72,43 @@ crates/compnode/
        })
    }
    ```
-4. Define default values in `FilterKind::defaults()`:
-   ```rust
-   Self::Sepia => {
-       params::set_f32(&mut params, "amount", 100.0);
-   }
-   ```
 
 ### File 2: `src/ops/<module>.rs`
-Implement the image transformation. Keep this pure (no egui or graph imports):
+Implement the image transformation. Keep this pure (no `egui` or graph imports):
 ```rust
 pub(crate) fn sepia(src: &RgbaImage, params: &Params) -> RgbaImage {
-    let amount = params::f32(params, "amount", 100.0).clamp(0.0, 100.0) / 100.0;
+    let amount = (params::f32(params, "amount", 100.0) / 100.0).clamp(0.0, 1.0);
     // Pixel transformations...
 }
 ```
 
-### File 3: `src/ops/mod.rs`
-Wire the function into `ops::evaluate()`:
-```rust
-match kind {
-    // ...
-    FilterKind::Sepia => Ok(adjust::sepia(first(0)?, params)),
-}
-```
-
-### File 4: `src/catalog.rs`
-1. Define the UI controls using `FieldSpec`:
+### File 3: `src/catalog.rs`
+1. Define the UI controls using `FieldSpec` constructors (defaults are embedded directly):
    ```rust
-   const SEPIA_FIELDS: &[FieldSpec] = &[FieldSpec {
-       key: "amount",
-       label: "Amount",
-       kind: FieldKind::Range {
-           min: 0.0,
-           max: 100.0,
-           step: 1.0,
-           suffix: " %",
-       },
-   }];
+   const SEPIA_FIELDS: &[FieldSpec] = &[FieldSpec::range(
+       "amount",
+       "Amount",
+       0.0,
+       100.0,
+       100.0,   // ← Embedded default value
+       1.0,
+       " %",
+   )];
    ```
-2. Add an entry to the static `NODE_SPECS` slice:
+2. Add an entry to the static `NODE_SPECS` slice using the `NodeSpec::filter()` builder with an inline `eval` closure:
    ```rust
-   NodeSpec {
-       kind: Kind::Filter(FilterKind::Sepia),
-       title: "Sepia",
-       icon: icons::FILTER,
-       keywords: &["sepia", "vintage", "retro", "color", "tone"],
-       accent: pal::node_header::SAND,
-       inputs: 1,
-       outputs: 1,
-       body_width: NODE_W,
-       multi_input: false,
-       hidden: false,
-       fields: SEPIA_FIELDS,
-       sockets: &[SocketSpec { label: "", multi: false }],
-       create: nodes::filter::create,
-       body: nodes::filter::show_body,
-   },
+   NodeSpec::filter(
+       Kind::Filter(FilterKind::Sepia),
+       "Sepia",
+       icons::FILTER,
+       pal::node_header::SAND,
+       &["sepia", "vintage", "retro", "color", "tone"],
+       SEPIA_FIELDS,
+       |inputs, params, _| {
+           let src = ops::primary_input(inputs)?;
+           Ok(ops::adjust::sepia(src, params))
+       },
+   ),
    ```
 
 ---
@@ -146,11 +130,6 @@ Self::Sepia => "sepia",
 
 // 3. In `impl FilterKind::from_id`:
 "sepia" => Self::Sepia,
-
-// 4. In `impl FilterKind::defaults`:
-Self::Sepia => {
-    params::set_f32(&mut params, "amount", 100.0);
-}
 ```
 
 ### 2. Implement the pixel operation in `src/ops/adjust.rs`
@@ -181,58 +160,34 @@ pub(crate) fn sepia(src: &RgbaImage, params: &Params) -> RgbaImage {
 }
 ```
 
-### 3. Connect to dispatch in `src/ops/mod.rs`
+### 3. Register in `src/catalog.rs`
 ```rust
-pub(crate) fn evaluate(
-    kind: FilterKind,
-    params: &Params,
-    inputs: &[Vec<RgbaImage>],
-    canvas: (u32, u32),
-) -> Result<RgbaImage, String> {
-    // ...
-    match kind {
-        // ...
-        FilterKind::Sepia => Ok(adjust::sepia(first(0)?, params)),
-    }
-}
-```
+// 1. Declare field specs with embedded defaults:
+const SEPIA_FIELDS: &[FieldSpec] = &[FieldSpec::range(
+    "amount",
+    "Amount",
+    0.0,
+    100.0,
+    100.0,
+    1.0,
+    " %",
+)];
 
-### 4. Register in `src/catalog.rs`
-```rust
-// 1. Declare field specs:
-const SEPIA_FIELDS: &[FieldSpec] = &[FieldSpec {
-    key: "amount",
-    label: "Amount",
-    kind: FieldKind::Range {
-        min: 0.0,
-        max: 100.0,
-        step: 1.0,
-        suffix: " %",
-    },
-}];
-
-// 2. Add to `NODE_SPECS`:
+// 2. Add to `NODE_SPECS` with builder constructor:
 pub(crate) static NODE_SPECS: &[NodeSpec] = &[
     // ...
-    NodeSpec {
-        kind: Kind::Filter(FilterKind::Sepia),
-        title: "Sepia",
-        icon: icons::FILTER,
-        keywords: &["sepia", "tone", "vintage", "color"],
-        accent: pal::node_header::SAND,
-        inputs: 1,
-        outputs: 1,
-        body_width: NODE_W,
-        multi_input: false,
-        hidden: false,
-        fields: SEPIA_FIELDS,
-        sockets: &[SocketSpec {
-            label: "",
-            multi: false,
-        }],
-        create: nodes::filter::create,
-        body: nodes::filter::show_body,
-    },
+    NodeSpec::filter(
+        Kind::Filter(FilterKind::Sepia),
+        "Sepia",
+        icons::FILTER,
+        pal::node_header::SAND,
+        &["sepia", "tone", "vintage", "color"],
+        SEPIA_FIELDS,
+        |inputs, params, _| {
+            let src = ops::primary_input(inputs)?;
+            Ok(ops::adjust::sepia(src, params))
+        },
+    ),
 ];
 ```
 
@@ -307,13 +262,9 @@ pub(crate) fn show_body(
 
 ## 5. Key Invariants & Common Pitfalls
 
-### Invariant 1: Field Defaults Match
-Every field defined in `spec.fields` **must** have an entry in `kind.defaults()`:
-```rust
-// Verified by `tests::every_filter_field_has_a_default_value`
-assert!(defaults.contains_key(field.key));
-```
-If a `FieldSpec` key does not exist in `FilterKind::defaults()`, the test will fail and sliders will panic or fail to initialize on graph load.
+### Invariant 1: Self-Defaulting Fields
+Every field defined in `spec.fields` automatically provides its own default value via `FieldSpec::apply_default()`.
+The test `tests::every_filter_field_has_a_default_value` verifies that all fields have corresponding defaults populated in `FilterKind::defaults()`.
 
 ### Invariant 2: Unique Catalog Titles
 `spec.title` must be unique across all nodes registered in `NODE_SPECS`. This is enforced by `tests::every_node_kind_has_a_unique_catalog_entry`.

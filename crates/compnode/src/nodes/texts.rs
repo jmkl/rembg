@@ -122,6 +122,10 @@ fn param_color(ui: &mut Ui, params: &mut Params, key: &str, label: &str, default
     changed
 }
 
+pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: crate::model::Kind) {
+    snarl.insert_node(pos, Node::Texts(crate::model::TextsNode::new()));
+}
+
 pub(crate) fn show_body(
     _editor: &mut GraphEditor,
     node: NodeId,
@@ -130,13 +134,13 @@ pub(crate) fn show_body(
     width: f32,
 ) {
     let (texture, preview_enabled, error) = {
-        let Some(filter) = snarl[node].filter() else {
+        let Some(texts) = snarl[node].texts_node() else {
             return;
         };
         (
-            filter.preview.texture.clone(),
-            filter.preview_enabled,
-            filter.preview.error.clone(),
+            texts.preview.texture.clone(),
+            texts.preview_enabled,
+            texts.preview.error.clone(),
         )
     };
 
@@ -147,10 +151,10 @@ pub(crate) fn show_body(
 
     let mut changed = false;
     {
-        let Some(filter) = snarl[node].filter_mut() else {
+        let Some(texts) = snarl[node].texts_node_mut() else {
             return;
         };
-        let params = &mut filter.params;
+        let params = &mut texts.params;
 
         // Font family (hardcoded list until custom font loading lands).
         let mut font_id = params::string(params, "font", "unisans").to_owned();

@@ -21,6 +21,7 @@ use crate::params::{self, Params};
 const GPU_MIN_PIXELS: u64 = 512 * 512;
 
 #[cfg(feature = "gpu")]
+#[allow(dead_code)]
 fn min_pixels() -> u64 {
     std::env::var("RAW_FILTER_GPU_MIN_PIXELS")
         .ok()
@@ -135,8 +136,8 @@ pub(crate) fn raw_filter(src: &RgbaImage, params: &Params) -> RgbaImage {
         return src.clone();
     }
 
-    let t = std::time::Instant::now();
-    let (result, backend) = match try_gpu(src, &settings) {
+    let _t = std::time::Instant::now();
+    let (result, _backend) = match try_gpu(src, &settings) {
         Some(out) => (out, "gpu"),
         None => (cpu::apply(src, &settings), "cpu"),
     };

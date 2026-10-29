@@ -8,7 +8,7 @@ use egui_snarl::{InPinId, NodeId, Snarl};
 use image::RgbaImage;
 
 use crate::catalog;
-use crate::model::{FilterKind, Kind, Node};
+use crate::model::{Kind, Node};
 use crate::ops;
 use crate::params;
 use crate::params::Params;
@@ -16,10 +16,7 @@ use crate::params::Params;
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
     let ids: Vec<NodeId> = snarl
         .node_ids()
-        .filter(|(_, node)| {
-            node.filter()
-                .is_some_and(|filter| filter.kind != FilterKind::Route)
-        })
+        .filter(|(_, node)| node.is_evaluable())
         .map(|(id, _)| id)
         .collect();
     let mut changed = false;
@@ -41,19 +38,36 @@ fn ensure_filter(
         return false;
     }
 
-    let Some(filter) = snarl[node].filter() else {
-        stack.remove(&node);
-        return false;
+    let (kind, params, cached_signature, has_output) = match &snarl[node] {
+        Node::Filter(f) => (
+            Kind::Filter(f.kind),
+            f.params.clone(),
+            f.signature,
+            f.preview.cpu.is_some(),
+        ),
+        Node::Group(g) => (
+            Kind::Group,
+            g.params.clone(),
+            g.signature,
+            g.preview.cpu.is_some(),
+        ),
+        Node::Blend(g) => (
+            Kind::Blend,
+            g.params.clone(),
+            g.signature,
+            g.preview.cpu.is_some(),
+        ),
+        Node::Texts(t) => (
+            Kind::Texts,
+            t.params.clone(),
+            t.signature,
+            t.preview.cpu.is_some(),
+        ),
+        _ => {
+            stack.remove(&node);
+            return false;
+        }
     };
-    let kind = filter.kind;
-    if kind == FilterKind::Route {
-        // Route is transparent; downstream nodes consume its input directly.
-        stack.remove(&node);
-        return false;
-    }
-    let params = filter.params.clone();
-    let cached_signature = filter.signature;
-    let has_output = filter.preview.cpu.is_some();
 
     let signature = filter_signature(snarl, node, kind, &params, stack);
 
@@ -72,7 +86,7 @@ fn ensure_filter(
         };
         let layers = snarl[node].layers().map(|s| s.to_vec()).unwrap_or_default();
         let mut resolved: Vec<(crate::model::ViewerLayer, RgbaImage)> = Vec::new();
-        let full_res = kind == FilterKind::Blend;
+        let full_res = kind == Kind::Blend;
         for layer in &layers {
             let img = if full_res {
                 resolve_image_full(snarl, layer.source, ctx, stack)
@@ -85,7 +99,7 @@ fn ensure_filter(
         }
         // Group stacks source-over; Blend applies its mode/opacity to every
         // layer above the bottom one.
-        if kind == FilterKind::Blend {
+        if kind == Kind::Blend {
             let mode = params::string(&params, "mode", "source-over");
             let opacity = params::f32(&params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
             ops::composite::composite_layers_with(
@@ -101,25 +115,61 @@ fn ensure_filter(
     } else {
         let inputs = resolve_inputs(snarl, node, kind, ctx, stack);
         let canvas = canvas_size(snarl);
-        ops::evaluate(kind, &params, &inputs, canvas)
+        let spec = catalog::spec(kind);
+        let eval_fn = match spec.eval {
+            Some(f) => f,
+            None => {
+                stack.remove(&node);
+                return false;
+            }
+        };
+        eval_fn(&inputs, &params, canvas)
     };
 
     let changed = match result {
         Ok(image) => {
             let texture = upload(ctx, node, &image);
-            if let Some(filter) = snarl[node].filter_mut() {
-                filter.preview.texture = Some(texture);
-                filter.preview.cpu = Some(image);
-                filter.preview.error = None;
-                filter.signature = Some(signature);
+            match &mut snarl[node] {
+                Node::Filter(f) => {
+                    f.preview.texture = Some(texture);
+                    f.preview.cpu = Some(image);
+                    f.preview.error = None;
+                    f.signature = Some(signature);
+                }
+                Node::Group(g) | Node::Blend(g) => {
+                    g.preview.texture = Some(texture);
+                    g.preview.cpu = Some(image);
+                    g.preview.error = None;
+                    g.signature = Some(signature);
+                }
+                Node::Texts(t) => {
+                    t.preview.texture = Some(texture);
+                    t.preview.cpu = Some(image);
+                    t.preview.error = None;
+                    t.signature = Some(signature);
+                }
+                _ => {}
             }
             true
         }
         Err(message) => {
-            if let Some(filter) = snarl[node].filter_mut() {
-                filter.preview.clear();
-                filter.preview.error = Some(message);
-                filter.signature = Some(signature);
+            match &mut snarl[node] {
+                Node::Filter(f) => {
+                    f.preview.clear();
+                    f.preview.error = Some(message);
+                    f.signature = Some(signature);
+                }
+                Node::Group(g) | Node::Blend(g) => {
+                    g.preview.clear();
+                    g.preview.error = Some(message);
+                    g.signature = Some(signature);
+                }
+                Node::Texts(t) => {
+                    t.preview.clear();
+                    t.preview.error = Some(message);
+                    t.signature = Some(signature);
+                }
+                _ => {}
             }
             true
         }
@@ -132,7 +182,7 @@ fn ensure_filter(
 fn filter_signature(
     snarl: &Snarl<Node>,
     node: NodeId,
-    kind: FilterKind,
+    kind: Kind,
     params: &Params,
     stack: &mut HashSet<NodeId>,
 ) -> u64 {
@@ -156,7 +206,7 @@ fn filter_signature(
             }
         }
     }
-    let spec = catalog::spec(Kind::Filter(kind));
+    let spec = catalog::spec(kind);
     for input in 0..spec.sockets.len() {
         let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
         for remote in remotes {
@@ -176,7 +226,12 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
         return 0;
     };
     let signature = match node {
-        Node::Filter(filter) => filter_signature(snarl, id, filter.kind, &filter.params, stack),
+        Node::Filter(filter) => {
+            filter_signature(snarl, id, Kind::Filter(filter.kind), &filter.params, stack)
+        }
+        Node::Group(group) => filter_signature(snarl, id, Kind::Group, &group.params, stack),
+        Node::Blend(blend) => filter_signature(snarl, id, Kind::Blend, &blend.params, stack),
+        Node::Texts(texts) => filter_signature(snarl, id, Kind::Texts, &texts.params, stack),
         Node::Image(image) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             image.asset_id.hash(&mut hasher);
@@ -214,7 +269,7 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
             }
             hasher.finish()
         }
-        Node::Output(_) => 0,
+        Node::Output(_) | Node::Route => 0,
     };
     stack.remove(&id);
     signature
@@ -223,11 +278,11 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
 fn resolve_inputs(
     snarl: &mut Snarl<Node>,
     node: NodeId,
-    kind: FilterKind,
+    kind: Kind,
     ctx: &egui::Context,
     stack: &mut HashSet<NodeId>,
 ) -> Vec<Vec<RgbaImage>> {
-    let spec = catalog::spec(Kind::Filter(kind));
+    let spec = catalog::spec(kind);
     let mut out = Vec::with_capacity(spec.sockets.len());
     for index in 0..spec.sockets.len() {
         let remotes = snarl.in_pin(InPinId { node, input: index }).remotes.clone();
@@ -253,7 +308,7 @@ fn resolve_image(
     let Some(node) = snarl.get_node(id) else {
         return None;
     };
-    if node.filter().is_some() {
+    if node.is_evaluable() {
         ensure_filter(snarl, id, ctx, stack);
         return snarl.get_node(id).and_then(|n| n.cpu()).map(limit_image);
     }
@@ -284,7 +339,7 @@ fn resolve_image_full(
     let Some(node) = snarl.get_node(id) else {
         return None;
     };
-    if node.filter().is_some() {
+    if node.is_evaluable() {
         ensure_filter(snarl, id, ctx, stack);
         return snarl.get_node(id).and_then(|n| n.cpu()).cloned();
     }
@@ -303,7 +358,6 @@ fn resolve_image_full(
     }
     None
 }
-
 
 fn limit_image(image: &RgbaImage) -> RgbaImage {
     let (width, height) = image.dimensions();
@@ -342,13 +396,12 @@ pub(crate) fn canvas_size(snarl: &Snarl<Node>) -> (u32, u32) {
                 return (width, height);
             }
         }
-        if let Some(filter) = node.filter_node() {
-            if filter.kind.is_layer_kind() {
-                let width = filter.canvas_size.x as u32;
-                let height = filter.canvas_size.y as u32;
-                if width > 0 && height > 0 {
-                    return (width, height);
-                }
+        if node.kind().is_layer_kind() {
+            let cs = node.canvas_size();
+            let width = cs.x as u32;
+            let height = cs.y as u32;
+            if width > 0 && height > 0 {
+                return (width, height);
             }
         }
     }

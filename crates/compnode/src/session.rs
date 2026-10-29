@@ -18,7 +18,8 @@ use crate::cache::{OutputCache, load_cached};
 use crate::catalog;
 use crate::graph::{connect_input, ensure_output_node, rgba_to_texture};
 use crate::model::{
-    FaceRestoreNode, FilterKind, FilterNode, ImageNode, Node, Preview, Process, ViewerNode,
+    FaceRestoreNode, FilterKind, FilterNode, GroupNode, ImageNode, Node, Preview, Process,
+    TextsNode, ViewerNode,
 };
 
 pub(crate) const SESSION_VERSION: u32 = 1;
@@ -216,11 +217,35 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
                 layers: viewer.layers.iter().map(|layer| layer.source.0).collect(),
                 transforms: layer_transforms(&viewer.layers),
             },
+            Node::Route => SessionNodeData::Filter {
+                filter_kind: "route".to_owned(),
+                params: Value::Object(Default::default()),
+                layers: Vec::new(),
+                transforms: Vec::new(),
+            },
+            Node::Group(group) => SessionNodeData::Filter {
+                filter_kind: "mix".to_owned(),
+                params: Value::Object(group.params.clone()),
+                layers: group.layers.iter().map(|l| l.source.0).collect(),
+                transforms: layer_transforms(&group.layers),
+            },
+            Node::Blend(blend) => SessionNodeData::Filter {
+                filter_kind: "blend".to_owned(),
+                params: Value::Object(blend.params.clone()),
+                layers: blend.layers.iter().map(|l| l.source.0).collect(),
+                transforms: layer_transforms(&blend.layers),
+            },
+            Node::Texts(texts) => SessionNodeData::Filter {
+                filter_kind: "texts".to_owned(),
+                params: Value::Object(texts.params.clone()),
+                layers: Vec::new(),
+                transforms: Vec::new(),
+            },
             Node::Filter(filter) => SessionNodeData::Filter {
                 filter_kind: filter.kind.id().to_owned(),
                 params: Value::Object(filter.params.clone()),
-                layers: filter.layers.iter().map(|l| l.source.0).collect(),
-                transforms: layer_transforms(&filter.layers),
+                layers: Vec::new(),
+                transforms: Vec::new(),
             },
         };
         nodes.push(SessionNode {
@@ -378,18 +403,43 @@ pub(crate) fn load(
                 params,
                 layers,
                 transforms,
-            } => {
-                let Some(filter_kind) = FilterKind::from_id(&filter_kind) else {
-                    continue;
-                };
-                if filter_kind.is_layer_kind() {
+            } => match filter_kind.as_str() {
+                "route" => Node::Route,
+                "mix" | "group" => {
                     pending_layers = Some((layers, transforms));
+                    let mut group = GroupNode::new(false);
+                    if let Some(params_obj) = params.as_object() {
+                        group.params = params_obj.clone();
+                    }
+                    Node::Group(group)
                 }
-                Node::Filter(FilterNode::restore(
-                    filter_kind,
-                    params.as_object().cloned(),
-                ))
-            }
+                "blend" => {
+                    pending_layers = Some((layers, transforms));
+                    let mut blend = GroupNode::new(true);
+                    if let Some(params_obj) = params.as_object() {
+                        blend.params = params_obj.clone();
+                    }
+                    Node::Blend(blend)
+                }
+                "texts" | "text" => {
+                    let mut texts = TextsNode::new();
+                    if let Some(params_obj) = params.as_object() {
+                        for (k, v) in params_obj {
+                            texts.params.insert(k.clone(), v.clone());
+                        }
+                    }
+                    Node::Texts(texts)
+                }
+                other => {
+                    let Some(filter_kind) = FilterKind::from_id(other) else {
+                        continue;
+                    };
+                    Node::Filter(FilterNode::restore(
+                        filter_kind,
+                        params.as_object().cloned(),
+                    ))
+                }
+            },
         };
 
         let pos = egui::pos2(stored.pos[0], stored.pos[1]);

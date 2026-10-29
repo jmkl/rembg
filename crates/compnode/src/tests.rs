@@ -799,14 +799,13 @@ fn route_is_transparent_to_downstream_nodes() {
     let ctx = egui::Context::default();
     let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let source_tex = rgba_to_texture(&ctx, &image);
-    let route_tex = rgba_to_texture(&ctx, &image);
 
     let mut snarl = Snarl::new();
     let source = snarl.insert_node(
         egui::pos2(0.0, 0.0),
         image_node("C:/tmp/source.png", source_tex),
     );
-    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
     for (from, to) in [(source, route), (route, curve)] {
         snarl.connect(
@@ -844,7 +843,7 @@ fn route_is_transparent_to_downstream_nodes() {
         },
     );
     let route_after =
-        snarl.insert_node(egui::pos2(800.0, 0.0), Node::new_filter(FilterKind::Route));
+        snarl.insert_node(egui::pos2(800.0, 0.0), Node::route());
     snarl.connect(
         egui_snarl::OutPinId {
             node: filter,
@@ -862,9 +861,7 @@ fn route_is_transparent_to_downstream_nodes() {
         Some(PathBuf::from("C:/tmp/filter.png")),
     );
 
-    // A stale Route texture (from an older session/render) must not win over
-    // the real upstream preview.
-    snarl[route].filter_node_mut().unwrap().preview.texture = Some(route_tex);
+    // Route has no texture of its own, so the upstream preview is preserved.
     assert_eq!(
         upstream_texture(&snarl, curve).map(|tex| tex.id()),
         snarl[source].texture().map(|tex| tex.id()),
@@ -888,7 +885,7 @@ fn route_matches_a_direct_connection_during_eval() {
         let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
         if with_route {
             let route =
-                snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+                snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
             snarl.connect(
                 egui_snarl::OutPinId {
                     node: source,
@@ -939,7 +936,7 @@ fn route_is_never_rendered() {
     let mut editor = test_editor();
     let mut snarl = Snarl::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/source.png"));
-    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     snarl.connect(
         egui_snarl::OutPinId {
             node: source,
@@ -953,9 +950,8 @@ fn route_is_never_rendered() {
 
     let ctx = egui::Context::default();
     assert!(!editor.start_filter_render(&mut snarl, route, 1, &ctx));
-    let filter = snarl[route].filter_node().unwrap();
-    assert!(filter.job.is_none());
-    assert!(filter.output_path.is_none());
+    assert!(snarl[route].job().is_none());
+    assert!(snarl[route].output_path().is_none());
 }
 
 #[test]
@@ -991,7 +987,7 @@ fn viewer_layers_follow_routes_and_keep_transforms() {
     }
 
     // Insert a Route between the image and the viewer.
-    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     snarl.disconnect(
         egui_snarl::OutPinId {
             node: source,
@@ -1105,7 +1101,7 @@ fn blend_collects_layers_from_both_sockets() {
 
     let base = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("base", tex.clone()));
     let overlay = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("overlay", tex));
-    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     // Socket order: Socket 0 is Top Layer (overlay), Socket 1 is Bottom Layer (base).
     for (source, input) in [(overlay, 0usize), (base, 1usize)] {
@@ -1149,7 +1145,7 @@ fn blend_composites_layers_on_the_document_canvas() {
         8,
         image::Rgba([255, 255, 255, 255]),
     ));
-    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
         egui_snarl::OutPinId {
@@ -1173,15 +1169,13 @@ fn blend_composites_layers_on_the_document_canvas() {
     );
 
     // Document canvas, synced by the app like the Group node's.
-    if let Some(filter) = snarl[blend].filter_mut() {
-        filter.canvas_size = egui::vec2(16.0, 12.0);
-    }
+    snarl[blend].set_canvas_size(egui::vec2(16.0, 12.0));
     blend_layers_for(&mut snarl, blend, &[base, overlay]);
 
     crate::eval::ensure_all(&mut snarl, &ctx);
 
     // Unplaced layers fill the canvas preserving their aspect ratio.
-    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    let out = snarl[blend].cpu().cloned().unwrap();
     assert_eq!(out.dimensions(), (16, 12));
     assert_eq!(out.get_pixel(8, 6), &image::Rgba([255, 255, 255, 255]));
 
@@ -1194,7 +1188,7 @@ fn blend_composites_layers_on_the_document_canvas() {
         layers[1].size = egui::vec2(8.0, 8.0);
     }
     crate::eval::ensure_all(&mut snarl, &ctx);
-    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    let out = snarl[blend].cpu().cloned().unwrap();
     assert_eq!(out.get_pixel(2, 2), &image::Rgba([128, 128, 128, 255]));
 }
 
@@ -1221,7 +1215,7 @@ fn blend_mode_applies_to_layers_above_the_base() {
         8,
         image::Rgba([255, 255, 255, 255]),
     ));
-    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
         egui_snarl::OutPinId {
@@ -1244,16 +1238,16 @@ fn blend_mode_applies_to_layers_above_the_base() {
         },
     );
 
-    if let Some(filter) = snarl[blend].filter_mut() {
-        filter.canvas_size = egui::vec2(8.0, 8.0);
-        crate::params::set_string(&mut filter.params, "mode", "multiply");
+    snarl[blend].set_canvas_size(egui::vec2(8.0, 8.0));
+    if let Some(group) = snarl[blend].group_node_mut() {
+        crate::params::set_string(&mut group.params, "mode", "multiply");
     }
     blend_layers_for(&mut snarl, blend, &[base, overlay]);
 
     crate::eval::ensure_all(&mut snarl, &ctx);
 
     // White multiplied over mid-grey stays mid-grey (source-over would be white).
-    let out = snarl[blend].filter().unwrap().preview.cpu.clone().unwrap();
+    let out = snarl[blend].cpu().cloned().unwrap();
     assert_eq!(out.get_pixel(4, 4), &image::Rgba([128, 128, 128, 255]));
 }
 
@@ -1322,7 +1316,7 @@ fn delete_connected_route_node_does_not_panic() {
     let tex = rgba_to_texture(&ctx, &image_data);
     let mut snarl: Snarl<Node> = Snarl::new();
     let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
-    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
 
     snarl.connect(
@@ -1364,7 +1358,7 @@ fn delete_connected_node_does_not_panic_in_eval() {
     let mut snarl: Snarl<Node> = Snarl::new();
     let base = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("base", tex.clone()));
     let overlay = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("overlay", tex));
-    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
         snarl.out_pin(egui_snarl::OutPinId {

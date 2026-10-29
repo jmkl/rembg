@@ -374,9 +374,7 @@ pub(crate) fn refresh_viewer(
         return;
     };
     let sockets = catalog::spec(viewer_ref.kind()).sockets.len();
-    let is_blend = viewer_ref
-        .filter_node()
-        .is_some_and(|f| f.kind == crate::model::FilterKind::Blend);
+    let is_blend = viewer_ref.is_blend();
 
     // Build the set of source node IDs that should have layers.
     // For Blend: Socket 1 is Bottom Layer (layer 0/base), Socket 0 is Top Layer (layer 1/overlay).

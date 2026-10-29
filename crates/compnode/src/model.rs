@@ -24,15 +24,24 @@ pub(crate) enum Kind {
     RemoveBgV2,
     FaceRestore,
     Output,
-    Filter(FilterKind),
-}
-
-/// Every CPU-only filter/generator node type.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub(crate) enum FilterKind {
     Route,
     Group,
     Blend,
+    Texts,
+    Filter(FilterKind),
+}
+
+impl Kind {
+    /// Kinds that composite multiple upstream sources as transformable canvas layers.
+    pub(crate) fn is_layer_kind(self) -> bool {
+        matches!(self, Self::Group | Self::Blend)
+    }
+}
+
+/// Generic CPU filter/generator node types (excluding structural pass-throughs,
+/// layer containers, and specialized typography generators).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum FilterKind {
     Mask,
     Hsv,
     Curves,
@@ -43,22 +52,12 @@ pub(crate) enum FilterKind {
     Gradient,
     Noise,
     RawFilter,
-    Texts,
 }
 
 impl FilterKind {
-    /// Filter kinds that collect their upstreams as transformable canvas
-    /// layers, like the Output node does (Group, Blend).
-    pub(crate) fn is_layer_kind(self) -> bool {
-        matches!(self, Self::Group | Self::Blend)
-    }
-
     /// Stable string used in session files.
     pub(crate) fn id(self) -> &'static str {
         match self {
-            Self::Route => "route",
-            Self::Group => "mix",
-            Self::Blend => "blend",
             Self::Mask => "mask",
             Self::Hsv => "hsv",
             Self::Curves => "curves",
@@ -69,16 +68,11 @@ impl FilterKind {
             Self::Gradient => "gradient",
             Self::Noise => "noise",
             Self::RawFilter => "rawfilter",
-            Self::Texts => "texts",
         }
     }
 
     pub(crate) fn from_id(id: &str) -> Option<Self> {
         Some(match id {
-            "route" => Self::Route,
-            // "mix" is the stored name for Group, kept for saved-graph parity.
-            "mix" | "group" => Self::Group,
-            "blend" => Self::Blend,
             "mask" => Self::Mask,
             "hsv" => Self::Hsv,
             "curves" => Self::Curves,
@@ -89,114 +83,21 @@ impl FilterKind {
             "gradient" => Self::Gradient,
             "noise" => Self::Noise,
             "rawfilter" | "raw" => Self::RawFilter,
-            "texts" | "text" => Self::Texts,
             _ => return None,
         })
     }
 
-    /// Default parameters, mirroring `frontend/src/core/nodes.ts`.
+    /// Default parameters auto-derived from catalog specification.
     pub(crate) fn defaults(self) -> Params {
         let mut params = Params::new();
-        match self {
-            Self::Route | Self::Group => {}
-            Self::Blend => {
-                params::set_string(&mut params, "mode", "source-over");
-                params::set_f32(&mut params, "opacity", 100.0);
+        let spec = crate::catalog::spec(Kind::Filter(self));
+        spec.apply_defaults(&mut params);
+        if self == Self::Curves {
+            let mut curves = Params::new();
+            for channel in ["rgb", "red", "green", "blue"] {
+                curves.insert(channel.to_owned(), params::identity_curve_value());
             }
-            Self::Mask => {
-                params::set_string(&mut params, "invert", "dark");
-                params::set_f32(&mut params, "strength", 100.0);
-            }
-            Self::Hsv => {
-                params::set_f32(&mut params, "hue", 0.0);
-                params::set_f32(&mut params, "sat", 100.0);
-                params::set_f32(&mut params, "val", 100.0);
-            }
-            Self::Curves => {
-                params::set_string(&mut params, "channel", "rgb");
-                let mut curves = Params::new();
-                for channel in ["rgb", "red", "green", "blue"] {
-                    curves.insert(channel.to_owned(), params::identity_curve_value());
-                }
-                params.insert("curves".to_owned(), Value::Object(curves));
-            }
-            Self::Exposure => {
-                params::set_f32(&mut params, "ev", 0.0);
-                params::set_f32(&mut params, "offset", 0.0);
-                params::set_f32(&mut params, "gamma", 1.0);
-            }
-            Self::ColorBalance => {
-                params::set_string(&mut params, "range", "midtones");
-                params::set_f32(&mut params, "cyanRed", 0.0);
-                params::set_f32(&mut params, "magentaGreen", 0.0);
-                params::set_f32(&mut params, "yellowBlue", 0.0);
-                params::set_string(&mut params, "preserve", "yes");
-            }
-            Self::GradientMap => {
-                params::set_string(&mut params, "color1", "#000000");
-                params::set_string(&mut params, "color2", "#808080");
-                params::set_string(&mut params, "color3", "#ffffff");
-                params::set_f32(&mut params, "midpoint", 50.0);
-                params::set_string(&mut params, "reverse", "no");
-            }
-            Self::Invert => params::set_f32(&mut params, "amount", 100.0),
-            Self::Gradient => {
-                params::set_string(&mut params, "mode", "linear");
-                params::set_string(&mut params, "color1", "#000000");
-                params::set_string(&mut params, "color2", "#ffffff");
-                params::set_f32(&mut params, "angle", 90.0);
-                params::set_f32(&mut params, "color1Position", -200.0);
-                params::set_f32(&mut params, "color2Position", 200.0);
-                params::set_u32(&mut params, "width", 1280);
-                params::set_u32(&mut params, "height", 720);
-            }
-            Self::Noise => {
-                params::set_string(&mut params, "kind", "fbm");
-                params::set_f32(&mut params, "scale", 5.0);
-                params::set_f32(&mut params, "detail", 4.0);
-                params::set_f32(&mut params, "roughness", 0.5);
-                params::set_f32(&mut params, "lacunarity", 2.0);
-                params::set_f32(&mut params, "distortion", 0.0);
-                params::set_f32(&mut params, "seed", 0.0);
-            }
-            Self::RawFilter => {
-                params::set_f32(&mut params, "temp", 0.0);
-                params::set_f32(&mut params, "tint", 0.0);
-                params::set_f32(&mut params, "texture", 0.0);
-                params::set_f32(&mut params, "clarity", 0.0);
-                params::set_f32(&mut params, "dehaze", 0.0);
-                params::set_f32(&mut params, "sharpen", 0.0);
-                params::set_f32(&mut params, "sharpen_radius", 1.0);
-                params::set_f32(&mut params, "sharpen_detail", 25.0);
-                params::set_f32(&mut params, "noise_reduction", 0.0);
-                params::set_f32(&mut params, "noise_reduction_detail", 50.0);
-            }
-            Self::Texts => {
-                params::set_string(&mut params, "font", "unisans");
-                params::set_string(&mut params, "align", "left");
-                params::set_bool(&mut params, "uppercase", true);
-                params::set_bool(&mut params, "effects", true);
-                params::set_bool(&mut params, "box", false);
-                params::set_string(&mut params, "box_color", "#000000");
-                params::set_f32(&mut params, "box_padding_x", 24.0);
-                params::set_f32(&mut params, "box_padding_y", 12.0);
-                params::set_f32(&mut params, "line_gap", -16.0);
-                params::set_f32(&mut params, "letter_spacing", -2.0);
-                params::set_f32(&mut params, "outline_width", 0.0);
-                params::set_string(&mut params, "outline_color", "#ffffff");
-                params::set_f32(&mut params, "outline2_width", 12.0);
-                params::set_string(&mut params, "outline2_color", "#000000");
-                params::set_f32(&mut params, "depth", 7.0);
-                params::set_f32(&mut params, "depth_color", 8.0);
-                params::set_f32(&mut params, "depth_x", 1.0);
-                params::set_f32(&mut params, "depth_y", 1.0);
-                params::set_f32(&mut params, "shadow_opacity", 0.5);
-                params::set_string(&mut params, "shadow_color", "#000000");
-                params::set_f32(&mut params, "shadow_x", 10.0);
-                params::set_f32(&mut params, "shadow_y", 10.0);
-                params::set_f32(&mut params, "shadow_blur", 10.0);
-                params::set_string(&mut params, "text", "Hello world,\nThis is the end!");
-            }
+            params.insert("curves".to_owned(), Value::Object(curves));
         }
         params
     }
@@ -215,10 +116,6 @@ pub(crate) struct FilterNode {
     pub signature: Option<u64>,
     /// Whether to render the preview image in the node body.
     pub preview_enabled: bool,
-    /// Viewer-style layers used by the Group and Blend nodes. Empty for other
-    /// filters.
-    pub layers: Vec<ViewerLayer>,
-    pub canvas_size: egui::Vec2,
     /// Token of the in-flight full-resolution render, if any.
     pub job: Option<u64>,
     /// Absolute path to the persisted full-resolution composite on disk.
@@ -230,7 +127,91 @@ pub(crate) struct FilterNode {
     pub rendered: Option<u64>,
 }
 
-/// Debounce bookkeeping for the Group full-resolution render: the eval
+/// Layer compositing container node (Group and Blend).
+#[derive(Clone)]
+pub(crate) struct GroupNode {
+    pub is_blend: bool,
+    pub params: Params,
+    pub preview: Preview,
+    pub signature: Option<u64>,
+    pub preview_enabled: bool,
+    pub layers: Vec<ViewerLayer>,
+    pub canvas_size: egui::Vec2,
+    pub job: Option<u64>,
+    pub output_path: Option<PathBuf>,
+    pub render_state: Option<RenderState>,
+    pub rendered: Option<u64>,
+}
+
+impl GroupNode {
+    pub(crate) fn new(is_blend: bool) -> Self {
+        let mut params = Params::new();
+        if is_blend {
+            let spec = crate::catalog::spec(Kind::Blend);
+            spec.apply_defaults(&mut params);
+        }
+        Self {
+            is_blend,
+            params,
+            preview: Preview::default(),
+            signature: None,
+            preview_enabled: !is_blend,
+            layers: Vec::new(),
+            canvas_size: egui::Vec2::ZERO,
+            job: None,
+            output_path: None,
+            render_state: None,
+            rendered: None,
+        }
+    }
+}
+
+/// Dedicated typographic generator node.
+#[derive(Clone)]
+pub(crate) struct TextsNode {
+    pub params: Params,
+    pub preview: Preview,
+    pub signature: Option<u64>,
+    pub preview_enabled: bool,
+}
+
+impl TextsNode {
+    pub(crate) fn new() -> Self {
+        let mut params = Params::new();
+        params::set_string(&mut params, "font", "unisans");
+        params::set_string(&mut params, "align", "left");
+        params::set_bool(&mut params, "uppercase", true);
+        params::set_bool(&mut params, "effects", true);
+        params::set_bool(&mut params, "box", false);
+        params::set_string(&mut params, "box_color", "#000000");
+        params::set_f32(&mut params, "box_padding_x", 24.0);
+        params::set_f32(&mut params, "box_padding_y", 12.0);
+        params::set_f32(&mut params, "line_gap", -16.0);
+        params::set_f32(&mut params, "letter_spacing", -2.0);
+        params::set_f32(&mut params, "outline_width", 0.0);
+        params::set_string(&mut params, "outline_color", "#ffffff");
+        params::set_f32(&mut params, "outline2_width", 12.0);
+        params::set_string(&mut params, "outline2_color", "#000000");
+        params::set_f32(&mut params, "depth", 7.0);
+        params::set_f32(&mut params, "depth_color", 8.0);
+        params::set_f32(&mut params, "depth_x", 1.0);
+        params::set_f32(&mut params, "depth_y", 1.0);
+        params::set_f32(&mut params, "shadow_opacity", 0.5);
+        params::set_string(&mut params, "shadow_color", "#000000");
+        params::set_f32(&mut params, "shadow_x", 10.0);
+        params::set_f32(&mut params, "shadow_y", 10.0);
+        params::set_f32(&mut params, "shadow_blur", 10.0);
+        params::set_string(&mut params, "text", "Hello world,\nThis is the end!");
+        Self {
+            params,
+            preview: Preview::default(),
+            signature: None,
+            preview_enabled: true,
+        }
+    }
+}
+
+/// Debounce bookkeeping for the Group/Filter full-resolution render: the eval
 /// signature that must stay stable and when it first became stable.
 #[derive(Clone, Copy)]
 pub(crate) struct RenderState {
@@ -240,17 +221,12 @@ pub(crate) struct RenderState {
 
 impl FilterNode {
     pub(crate) fn new(kind: FilterKind) -> Self {
-        // Blend node hides its node-body preview by default; the canvas_ui
-        // shows the blended result directly when the node is selected.
-        let preview_enabled = kind != FilterKind::Blend;
         Self {
             kind,
             params: kind.defaults(),
             preview: Preview::default(),
             signature: None,
-            preview_enabled,
-            layers: Vec::new(),
-            canvas_size: egui::Vec2::ZERO,
+            preview_enabled: true,
             job: None,
             output_path: None,
             render_state: None,
@@ -272,8 +248,6 @@ impl FilterNode {
             preview: Preview::default(),
             signature: None,
             preview_enabled: true,
-            layers: Vec::new(),
-            canvas_size: egui::Vec2::ZERO,
             job: None,
             output_path: None,
             render_state: None,
@@ -312,6 +286,7 @@ impl Preview {
         self.error = None;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn eval_image(&self) -> Option<&RgbaImage> {
         self.eval.as_ref().or(self.cpu.as_ref())
     }
@@ -488,6 +463,10 @@ pub(crate) enum Node {
     RemoveBgV2(Process),
     FaceRestore(FaceRestoreNode),
     Output(ViewerNode),
+    Route,
+    Group(GroupNode),
+    Blend(GroupNode),
+    Texts(TextsNode),
     Filter(FilterNode),
 }
 
@@ -512,6 +491,24 @@ impl Node {
         Self::Output(ViewerNode::default())
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn route() -> Self {
+        Self::Route
+    }
+
+    pub(crate) fn group() -> Self {
+        Self::Group(GroupNode::new(false))
+    }
+
+    pub(crate) fn blend() -> Self {
+        Self::Blend(GroupNode::new(true))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn texts() -> Self {
+        Self::Texts(TextsNode::new())
+    }
+
     pub(crate) fn new_filter(kind: FilterKind) -> Self {
         Self::Filter(FilterNode::new(kind))
     }
@@ -523,6 +520,10 @@ impl Node {
             Self::RemoveBgV2(_) => Kind::RemoveBgV2,
             Self::FaceRestore(_) => Kind::FaceRestore,
             Self::Output(_) => Kind::Output,
+            Self::Route => Kind::Route,
+            Self::Group(_) => Kind::Group,
+            Self::Blend(_) => Kind::Blend,
+            Self::Texts(_) => Kind::Texts,
             Self::Filter(node) => Kind::Filter(node.kind),
         }
     }
@@ -530,13 +531,30 @@ impl Node {
     /// A Route node is a pure pass-through: downstream nodes resolve its
     /// upstream wire as if the Route were not in the graph.
     pub(crate) fn is_route(&self) -> bool {
-        matches!(self, Self::Filter(node) if node.kind == FilterKind::Route)
+        matches!(self, Self::Route)
     }
 
+    pub(crate) fn is_blend(&self) -> bool {
+        matches!(self, Self::Blend(_))
+    }
+
+    pub(crate) fn is_evaluable(&self) -> bool {
+        matches!(
+            self,
+            Self::Filter(_) | Self::Group(_) | Self::Blend(_) | Self::Texts(_)
+        )
+    }
+
+    pub(crate) fn can_render_full_res(&self) -> bool {
+        matches!(self, Self::Filter(_) | Self::Group(_) | Self::Blend(_))
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn filter(&self) -> Option<&FilterNode> {
         self.filter_node()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn filter_mut(&mut self) -> Option<&mut FilterNode> {
         self.filter_node_mut()
     }
@@ -555,11 +573,39 @@ impl Node {
         }
     }
 
+    pub(crate) fn group_node(&self) -> Option<&GroupNode> {
+        match self {
+            Self::Group(node) | Self::Blend(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn group_node_mut(&mut self) -> Option<&mut GroupNode> {
+        match self {
+            Self::Group(node) | Self::Blend(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn texts_node(&self) -> Option<&TextsNode> {
+        match self {
+            Self::Texts(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn texts_node_mut(&mut self) -> Option<&mut TextsNode> {
+        match self {
+            Self::Texts(node) => Some(node),
+            _ => None,
+        }
+    }
+
     /// Layers for nodes that act as a viewer (Output, Group, Blend).
     pub(crate) fn layers(&self) -> Option<&[ViewerLayer]> {
         match self {
             Self::Output(v) => Some(&v.layers),
-            Self::Filter(f) if f.kind.is_layer_kind() => Some(&f.layers),
+            Self::Group(g) | Self::Blend(g) => Some(&g.layers),
             _ => None,
         }
     }
@@ -567,7 +613,7 @@ impl Node {
     pub(crate) fn layers_mut(&mut self) -> Option<&mut Vec<ViewerLayer>> {
         match self {
             Self::Output(v) => Some(&mut v.layers),
-            Self::Filter(f) if f.kind.is_layer_kind() => Some(&mut f.layers),
+            Self::Group(g) | Self::Blend(g) => Some(&mut g.layers),
             _ => None,
         }
     }
@@ -575,7 +621,7 @@ impl Node {
     pub(crate) fn canvas_size(&self) -> egui::Vec2 {
         match self {
             Self::Output(v) => v.canvas_size,
-            Self::Filter(f) if f.kind.is_layer_kind() => f.canvas_size,
+            Self::Group(g) | Self::Blend(g) => g.canvas_size,
             _ => egui::Vec2::ZERO,
         }
     }
@@ -583,7 +629,7 @@ impl Node {
     pub(crate) fn set_canvas_size(&mut self, size: egui::Vec2) {
         match self {
             Self::Output(v) => v.canvas_size = size,
-            Self::Filter(f) if f.kind.is_layer_kind() => f.canvas_size = size,
+            Self::Group(g) | Self::Blend(g) => g.canvas_size = size,
             _ => {}
         }
     }
@@ -660,6 +706,9 @@ impl Node {
                 .layers
                 .last()
                 .and_then(|layer| layer.texture.as_ref()),
+            Self::Route => None,
+            Self::Group(group) | Self::Blend(group) => group.preview.texture.as_ref(),
+            Self::Texts(texts) => texts.preview.texture.as_ref(),
             Self::Filter(node) => node.preview.texture.as_ref(),
         }
     }
@@ -672,6 +721,9 @@ impl Node {
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview_enabled,
             Self::Output(viewer) => viewer.preview_enabled,
+            Self::Route => false,
+            Self::Group(group) | Self::Blend(group) => group.preview_enabled,
+            Self::Texts(texts) => texts.preview_enabled,
             Self::Filter(node) => node.preview_enabled,
         }
     }
@@ -685,6 +737,9 @@ impl Node {
                 process.preview_enabled = enabled
             }
             Self::Output(viewer) => viewer.preview_enabled = enabled,
+            Self::Route => {}
+            Self::Group(group) | Self::Blend(group) => group.preview_enabled = enabled,
+            Self::Texts(texts) => texts.preview_enabled = enabled,
             Self::Filter(node) => node.preview_enabled = enabled,
         }
     }
@@ -695,7 +750,9 @@ impl Node {
             Self::RemoveBg(process)
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview.cpu.as_ref(),
-            Self::Output(_) => None,
+            Self::Output(_) | Self::Route => None,
+            Self::Group(group) | Self::Blend(group) => group.preview.cpu.as_ref(),
+            Self::Texts(texts) => texts.preview.cpu.as_ref(),
             Self::Filter(node) => node.preview.cpu.as_ref(),
         }
     }
@@ -713,7 +770,8 @@ impl Node {
             Self::RemoveBg(process) | Self::RemoveBgV2(process) => process.output_path.as_deref(),
             Self::FaceRestore(node) => node.process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
-            Self::Image(_) | Self::Output(_) => None,
+            Self::Group(node) | Self::Blend(node) => node.output_path.as_deref(),
+            Self::Image(_) | Self::Output(_) | Self::Route | Self::Texts(_) => None,
         }
     }
 
@@ -727,7 +785,9 @@ impl Node {
             Self::Image(node) => Some(&mut node.preview),
             Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&mut process.preview),
             Self::FaceRestore(node) => Some(&mut node.process.preview),
-            Self::Output(_) => None,
+            Self::Output(_) | Self::Route => None,
+            Self::Group(group) | Self::Blend(group) => Some(&mut group.preview),
+            Self::Texts(texts) => Some(&mut texts.preview),
             Self::Filter(node) => Some(&mut node.preview),
         }
     }
@@ -760,7 +820,54 @@ impl Node {
     pub(crate) fn job(&self) -> Option<u64> {
         match self {
             Self::Filter(node) => node.job,
+            Self::Group(node) | Self::Blend(node) => node.job,
             _ => self.process().and_then(|process| process.job),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_job(&mut self, job: Option<u64>) {
+        match self {
+            Self::Filter(node) => node.job = job,
+            Self::Group(node) | Self::Blend(node) => node.job = job,
+            _ => {
+                if let Some(process) = self.process_mut() {
+                    process.job = job;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn render_state(&self) -> Option<RenderState> {
+        match self {
+            Self::Filter(node) => node.render_state,
+            Self::Group(node) | Self::Blend(node) => node.render_state,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_render_state(&mut self, state: Option<RenderState>) {
+        match self {
+            Self::Filter(node) => node.render_state = state,
+            Self::Group(node) | Self::Blend(node) => node.render_state = state,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn rendered(&self) -> Option<u64> {
+        match self {
+            Self::Filter(node) => node.rendered,
+            Self::Group(node) | Self::Blend(node) => node.rendered,
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_rendered(&mut self, rendered: Option<u64>) {
+        match self {
+            Self::Filter(node) => node.rendered = rendered,
+            Self::Group(node) | Self::Blend(node) => node.rendered = rendered,
+            _ => {}
         }
     }
 
@@ -777,6 +884,7 @@ impl Node {
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
+            Self::Group(node) | Self::Blend(node) => node.output_path.as_deref(),
             _ => None,
         }
     }
@@ -784,6 +892,7 @@ impl Node {
     pub(crate) fn set_output_path(&mut self, path: Option<PathBuf>) {
         match self {
             Self::Filter(node) => node.output_path = path,
+            Self::Group(node) | Self::Blend(node) => node.output_path = path,
             _ => {
                 if let Some(process) = self.process_mut() {
                     process.output_path = path;
@@ -800,21 +909,26 @@ impl Node {
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error.as_deref()
             }
-            Self::Output(_) => None,
+            Self::Output(_) | Self::Route => None,
+            Self::Group(group) | Self::Blend(group) => group.preview.error.as_deref(),
+            Self::Texts(texts) => texts.preview.error.as_deref(),
             Self::Filter(node) => node.preview.error.as_deref(),
         }
     }
 
     pub(crate) fn set_error(&mut self, message: impl Into<String>) {
+        let msg = message.into();
         match self {
-            Self::Image(node) => node.preview.error = Some(message.into()),
+            Self::Image(node) => node.preview.error = Some(msg),
             Self::RemoveBg(process)
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
-                process.preview.error = Some(message.into());
+                process.preview.error = Some(msg);
             }
-            Self::Output(_) => {}
-            Self::Filter(node) => node.preview.error = Some(message.into()),
+            Self::Output(_) | Self::Route => {}
+            Self::Group(group) | Self::Blend(group) => group.preview.error = Some(msg),
+            Self::Texts(texts) => texts.preview.error = Some(msg),
+            Self::Filter(node) => node.preview.error = Some(msg),
         }
     }
 
@@ -825,6 +939,21 @@ impl Node {
         outcome: Result<(TextureHandle, JobOutput), String>,
     ) {
         if let Self::Filter(node) = self {
+            if node.job != Some(token) {
+                return;
+            }
+            node.job = None;
+            node.render_state = None;
+            match outcome {
+                Ok((texture, output)) => {
+                    node.preview = Preview::with_image(texture, output.image);
+                    node.output_path = output.path;
+                }
+                Err(message) => node.preview.error = Some(message),
+            }
+            return;
+        }
+        if let Self::Group(node) | Self::Blend(node) = self {
             if node.job != Some(token) {
                 return;
             }
@@ -861,15 +990,27 @@ impl Node {
     /// Drop transient worker/eval state so a duplicated node runs and
     /// evaluates independently of its source. Preview data is kept.
     pub(crate) fn reset_transient_state(&mut self) {
-        if let Self::Filter(node) = self {
-            node.job = None;
-            node.render_state = None;
-            node.rendered = None;
-            node.signature = None;
-            return;
-        }
-        if let Some(process) = self.process_mut() {
-            process.job = None;
+        match self {
+            Self::Filter(node) => {
+                node.job = None;
+                node.render_state = None;
+                node.rendered = None;
+                node.signature = None;
+            }
+            Self::Group(node) | Self::Blend(node) => {
+                node.job = None;
+                node.render_state = None;
+                node.rendered = None;
+                node.signature = None;
+            }
+            Self::Texts(node) => {
+                node.signature = None;
+            }
+            _ => {
+                if let Some(process) = self.process_mut() {
+                    process.job = None;
+                }
+            }
         }
     }
 
@@ -880,6 +1021,7 @@ impl Node {
             // An Image is a pass-through: downstream consumers must refresh
             // when either its selected asset or its upstream input changes.
             Self::Image(_) => true,
+            Self::Route => true,
             Self::RemoveBg(process) => {
                 process.clear_outputs();
                 true
@@ -898,15 +1040,24 @@ impl Node {
                 }
                 true
             }
-            // Filters keep their previous preview until `eval` recomputes the
-            // new signature, avoiding a one-frame flash while dragging. A
-            // persisted Group render is dropped together with its pending job.
+            Self::Group(node) | Self::Blend(node) => {
+                node.signature = None;
+                node.job = None;
+                node.render_state = None;
+                node.rendered = None;
+                if node.output_path.take().is_some() {
+                    node.preview.clear();
+                }
+                true
+            }
+            Self::Texts(node) => {
+                node.signature = None;
+                true
+            }
             Self::Filter(node) => {
                 node.signature = None;
                 node.job = None;
                 node.render_state = None;
-                // The full-resolution render must be re-claimed even when the
-                // signature later returns to an earlier value.
                 node.rendered = None;
                 if node.output_path.take().is_some() {
                     node.preview.clear();

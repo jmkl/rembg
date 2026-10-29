@@ -84,7 +84,7 @@ The application is structured around strict separation between the UI event loop
 ### 3. Persistence, Cache & Memory
 - **Output Cache (`src/cache.rs`)**: Processed results are saved as PNGs under `%LOCALAPPDATA%\rembg\studio-cache\` keyed by SHA-256 hashes of inputs and parameters.
 - **CPU Memory Management (`src/memory.rs`)**: Full-resolution source images held in RAM are budgeted (512 MB cap) and dynamically evicted/reloaded from disk or asset store on demand.
-- **Session Serialization (`src/session.rs`)**: Saved graphs (`.rembg.json`) store node coordinates, connection links, embedded base64 assets, parameter dictionaries, and absolute output paths. Backward compatibility is maintained via `FilterKind::restore()`.
+- **Session Serialization (`src/session.rs`)**: Saved graphs (`.rembg.json`) store node coordinates, connection links, embedded base64 assets, parameter dictionaries, and absolute output paths. Backward compatibility with older session files is maintained (e.g., mapping `"mix"` to `Kind::Group`, `"route"` to `Kind::Route`, `"texts"` to `Kind::Texts`).
 
 ---
 
@@ -92,15 +92,15 @@ The application is structured around strict separation between the UI event loop
 
 | Module | Purpose | Key Types / Functions |
 | :--- | :--- | :--- |
-| `src/model.rs` | Core domain model & data structures | `Kind`, `FilterKind`, `Node`, `Preview`, `Process`, `ViewerLayer`, `RunTiming` |
-| `src/catalog.rs` | Node registry and static metadata | `NODE_SPECS`, `NodeSpec`, `FieldSpec`, `SocketSpec`, `spec()` |
+| `src/model.rs` | Core domain model & data structures | `Kind`, `FilterKind`, `Node`, `FilterNode`, `GroupNode`, `TextsNode`, `Preview`, `Process`, `ViewerLayer`, `RunTiming` |
+| `src/catalog.rs` | Node registry and static metadata | `NODE_SPECS`, `NodeSpec`, `FieldSpec`, `FieldKind`, `EvalFn`, `spec()` |
 | `src/editor.rs` | Snarl node graph viewer implementation | `GraphEditor`, `SnarlViewer` impl, wire cutting (`Ctrl`+drag), pin layout |
 | `src/graph.rs` | Graph topological algorithms | `resolve_route()`, `refresh_viewer()`, `upstream()`, `preview_dimensions()` |
 | `src/eval.rs` | Preview pipeline evaluation | `ensure_all()`, `ensure_filter()`, `filter_signature()`, `resolve_image()` |
 | `src/image_canvas.rs`| Interactive canvas viewer & gizmos | `ImageCanvas`, layer hit-testing, uniform scale, rotation snap, guides, marquee |
 | `src/worker.rs` | Inference & async job runner | `Job`, `spawn_worker()`, `WorkerRequest`, `JobDone`, `InferenceConfig` |
 | `src/assets.rs` | Content-addressed asset repository | `AssetStore`, `Asset`, embedded base64 encoding/decoding |
-| `src/nodes/` | Individual node body UI renderers | UI logic for `image`, `remove_bg`, `face_restore`, `filter`, `texts`, etc. |
+| `src/nodes/` | Individual node body UI renderers | UI logic for `image`, `remove_bg`, `face_restore`, `filter`, `texts`, `route`, etc. |
 | `src/ops/` | Pure image manipulation algorithms | Adjustments, blend modes, text layout, and raw camera filters |
 | `src/session.rs` | JSON session serialization | `SessionFile`, `SessionNode`, `SessionLink`, save / load logic |
 | `src/settings.rs` | App preferences | Model paths, caching preferences, autosave intervals |
@@ -111,12 +111,16 @@ The application is structured around strict separation between the UI event loop
 
 ## 5. Key Design Concepts
 
-### Pass-Through "Route" Nodes
-A `Route` node (`FilterKind::Route`) exists solely to organize complex graphs. It produces no image of its own and consumes minimal overhead. Downstream nodes and layer extractors resolve incoming wires through `Route` nodes via `graph::resolve_route()` until reaching the authoritative content-producing node.
+### Unbundled Node Archetypes
+- **Generic Filters & Generators (`Kind::Filter(FilterKind)`)**: Operate strictly on pixel arrays or procedural parameters. Backed by lightweight `FilterNode` structs containing only parameter map, preview cache, and signature.
+- **Pass-Through Route Nodes (`Kind::Route`)**: `Node::Route` has zero state and produces no image of its own. It organizes complex graphs visually; downstream nodes and layer extractors resolve incoming wires through Route nodes via `graph::resolve_route()` until reaching the authoritative content-producing node.
+- **Layer Containers (`Kind::Group`, `Kind::Blend`)**: Dedicated `GroupNode` structs that aggregate multiple upstream sources as transformable layers (`ViewerLayer`). Layers retain individual coordinates (`center`), dimensions (`size`), and rotation (`angle`). They can be manipulated interactively inside `ImageCanvas` or composited into flattened images.
+- **Typography Overlays (`Kind::Texts`)**: Dedicated `TextsNode` handling rich multi-layer vector text rendering, font asset bindings, outlines, and drop shadows.
 
-### Layer Nodes vs. Image Filters
-- **Standard Filters** (`Hsv`, `Curves`, `Exposure`, `Invert`, `RawFilter`, etc.): Operate strictly on pixel arrays, transforming input bitmap $A \rightarrow$ output bitmap $B$.
-- **Layer Nodes** (`Output`, `Group`, `Blend`): Aggregate multiple upstream sources as transformable layers (`ViewerLayer`). Layers retain individual coordinates (`center`), dimensions (`size`), and rotation (`angle`). They can be manipulated interactively inside `ImageCanvas` or composited into flattened images.
+### Self-Defaulting Fields & Pure Function Pointers
+- **Single Source of Truth for Defaults**: Parameter default values are embedded directly into `FieldSpec` (`FieldKind::Range`, `FieldKind::Number`, `FieldKind::Color`, `FieldKind::Select`). Node parameter defaults are auto-derived directly from catalog metadata.
+- **Decoupled Evaluation (`EvalFn`)**: Filter specs attach pure `eval` function pointers / closures. `ops::evaluate()` delegates directly without requiring large manual match tables across the codebase.
+- **Builder Pattern (`NodeSpec::filter`, `NodeSpec::generator`)**: Standard filter specifications are declared cleanly with boilerplate-free constructors.
 
 ### Dual-Backend Raw Filter (`src/ops/rf/`)
 The Raw Filter provides photographer-style adjustments: White Balance (temperature/tint), Texture, Clarity, Dehaze, Unsharp Mask Sharpening, and Noise Reduction.
@@ -127,9 +131,6 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 
 ## 6. Codebase Health & Future Work
 
-- **Compilation**: Passes cleanly (`cargo check -p compnode`).
-- **Test Suite**: 34 passing tests in `src/tests.rs`, `src/style/tests.rs`, and `src/image_canvas.rs`. One pre-existing test assertion (`tests::preview_textures_are_capped`) expects 200px while `PREVIEW_MAX_EDGE` was updated to 256px.
-- **Refactoring Roadmap**: Documented in [`PLAN.md`](./PLAN.md):
-  - Refactoring the `Node` enum into extensible trait-based abstractions.
-  - Reorganizing `src/ops/` into domain-specific modules (`color/`, `composite/`, `generators/`, `transform/`).
-  - Standardizing node UI body callbacks.
+- **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
+- **Test Suite**: 43 passing tests in `src/tests.rs`, `src/style/tests.rs`, and `src/image_canvas.rs`.
+- **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).
