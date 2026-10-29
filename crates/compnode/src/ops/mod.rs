@@ -22,8 +22,6 @@ use crate::params::Params;
 
 pub(crate) use color::adjust::curve_lut;
 
-pub(crate) const EVAL_MAX_EDGE: u32 = 256;
-
 pub(crate) fn primary_input(inputs: &[Vec<RgbaImage>]) -> Result<&RgbaImage, String> {
     inputs
         .first()

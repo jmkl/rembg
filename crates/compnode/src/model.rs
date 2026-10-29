@@ -249,7 +249,7 @@ impl FilterNode {
 pub(crate) struct Preview {
     pub texture: Option<TextureHandle>,
     pub cpu: Option<RgbaImage>,
-    /// Evaluation-resolution copy (at most `ops::EVAL_MAX_EDGE` on the longest
+    /// Evaluation-resolution copy (at most the normal preview tier on the longest
     /// side). Filter evaluation uses this instead of repeatedly downscaling
     /// `cpu`, which is expensive for full-resolution sources.
     pub eval: Option<RgbaImage>,
@@ -288,10 +288,11 @@ impl Preview {
 fn eval_copy(image: &RgbaImage) -> RgbaImage {
     let (width, height) = image.dimensions();
     let longest = width.max(height);
-    if longest <= crate::ops::EVAL_MAX_EDGE {
+    let max_edge = crate::resolution::PreviewQuality::Normal.max_edge();
+    if longest <= max_edge {
         return image.clone();
     }
-    let scale = crate::ops::EVAL_MAX_EDGE as f64 / longest as f64;
+    let scale = max_edge as f64 / longest as f64;
     let width = ((width as f64 * scale).round() as u32).max(1);
     let height = ((height as f64 * scale).round() as u32).max(1);
     image::imageops::resize(image, width, height, image::imageops::FilterType::Triangle)
@@ -1009,7 +1010,7 @@ impl Node {
         }
     }
 
-    /// Cached evaluation copy bounded by `ops::EVAL_MAX_EDGE`.
+    /// Cached evaluation copy bounded by the normal preview resolution tier.
     pub(crate) fn eval_image(&self) -> Option<&RgbaImage> {
         self.preview().and_then(Preview::eval_image)
     }

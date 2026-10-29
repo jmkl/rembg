@@ -12,16 +12,69 @@ use crate::model::{Kind, Node};
 use crate::ops;
 use crate::params;
 use crate::params::Params;
+pub(crate) use crate::resolution::PreviewQuality;
+
+#[path = "eval/signature.rs"]
+mod signature;
+
+/// Evaluation reads graph topology through this interface so the evaluator is
+/// not tied to Snarl's pin and node storage APIs.
+trait EvalContext {
+    fn node_ids(&self) -> Vec<NodeId>;
+    fn node(&self, id: NodeId) -> Option<&Node>;
+    fn node_mut(&mut self, id: NodeId) -> Option<&mut Node>;
+    fn input_sources(&self, node: NodeId, input: usize) -> Vec<NodeId>;
+    fn resolve_route(&self, id: NodeId) -> NodeId;
+    fn canvas_size(&self) -> (u32, u32);
+}
+
+struct SnarlEvalContext<'a>(&'a mut Snarl<Node>);
+
+impl EvalContext for SnarlEvalContext<'_> {
+    fn node_ids(&self) -> Vec<NodeId> {
+        self.0.node_ids().map(|(id, _)| id).collect()
+    }
+    fn node(&self, id: NodeId) -> Option<&Node> {
+        self.0.get_node(id)
+    }
+    fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.0.get_node_mut(id)
+    }
+    fn input_sources(&self, node: NodeId, input: usize) -> Vec<NodeId> {
+        self.0
+            .in_pin(InPinId { node, input })
+            .remotes
+            .iter()
+            .map(|r| r.node)
+            .collect()
+    }
+    fn resolve_route(&self, id: NodeId) -> NodeId {
+        crate::graph::resolve_route(self.0, id)
+    }
+    fn canvas_size(&self) -> (u32, u32) {
+        canvas_size(self.0)
+    }
+}
 
 pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
-    let ids: Vec<NodeId> = snarl
+    ensure_all_with_quality(snarl, ctx, PreviewQuality::Normal)
+}
+
+#[allow(dead_code)] // UI callers currently select Normal; tests exercise all tiers.
+pub(crate) fn ensure_all_with_quality(
+    snarl: &mut Snarl<Node>,
+    ctx: &egui::Context,
+    quality: PreviewQuality,
+) -> bool {
+    let mut graph = SnarlEvalContext(snarl);
+    let ids: Vec<NodeId> = graph
         .node_ids()
-        .filter(|(_, node)| node.is_evaluable())
-        .map(|(id, _)| id)
+        .into_iter()
+        .filter(|id| graph.node(*id).is_some_and(Node::is_evaluable))
         .collect();
     let mut changed = false;
     for id in ids {
-        if ensure_filter(snarl, id, ctx, &mut HashSet::new()) {
+        if ensure_filter(&mut graph, id, ctx, &mut HashSet::new(), quality) {
             changed = true;
         }
     }
@@ -29,16 +82,21 @@ pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
 }
 
 fn ensure_filter(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut dyn EvalContext,
     node: NodeId,
     ctx: &egui::Context,
     stack: &mut HashSet<NodeId>,
+    quality: PreviewQuality,
 ) -> bool {
     if !stack.insert(node) {
         return false;
     }
 
-    let (kind, params, cached_signature, has_output) = match &snarl[node] {
+    let Some(node_ref) = snarl.node(node) else {
+        stack.remove(&node);
+        return false;
+    };
+    let (kind, params, cached_signature, has_output) = match node_ref {
         Node::Filter(f) => (
             Kind::Filter(f.kind),
             f.params.clone(),
@@ -69,30 +127,34 @@ fn ensure_filter(
         }
     };
 
-    let signature = filter_signature(snarl, node, kind, &params, stack);
+    let signature = filter_signature(snarl, node, kind, &params, stack, quality);
 
     let result = if has_output && cached_signature == Some(signature) {
         stack.remove(&node);
         return false;
-    } else if kind.is_layer_kind() && snarl[node].layers().is_some_and(|l| !l.is_empty()) {
+    } else if kind.is_layer_kind()
+        && snarl
+            .node(node)
+            .and_then(Node::layers)
+            .is_some_and(|l| !l.is_empty())
+    {
         // Group and Blend composite their layers with their canvas transforms.
         let canvas = {
-            let c = snarl[node].canvas_size();
+            let c = snarl.node(node).map(Node::canvas_size).unwrap_or_default();
             if c.x > 0.0 && c.y > 0.0 {
                 (c.x as u32, c.y as u32)
             } else {
-                canvas_size(snarl)
+                snarl.canvas_size()
             }
         };
-        let layers = snarl[node].layers().map(|s| s.to_vec()).unwrap_or_default();
+        let layers = snarl
+            .node(node)
+            .and_then(Node::layers)
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
         let mut resolved: Vec<(crate::model::ViewerLayer, RgbaImage)> = Vec::new();
-        let full_res = kind == Kind::Blend;
         for layer in &layers {
-            let img = if full_res {
-                resolve_image_full(snarl, layer.source, ctx, stack)
-            } else {
-                resolve_image(snarl, layer.source, ctx, stack)
-            };
+            let img = resolve_image(snarl, layer.source, ctx, stack, quality);
             if let Some(img) = img {
                 resolved.push((layer.clone(), img));
             }
@@ -103,16 +165,36 @@ fn ensure_filter(
             let mode = params::string(&params, "mode", "source-over");
             let opacity = params::f32(&params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
             ops::composite::composite_layers_with(
-                &resolved, canvas,
-                None, // Full resolution with Rayon multithreading for crisp, fast preview
-                mode, opacity,
+                &resolved,
+                canvas,
+                Some(quality.max_edge() as u64),
+                mode,
+                opacity,
             )
         } else {
-            ops::composite::composite_layers(&resolved, canvas)
+            if quality == PreviewQuality::Normal {
+                ops::composite::composite_layers(&resolved, canvas)
+            } else {
+                ops::composite::composite_layers_with(
+                    &resolved,
+                    canvas,
+                    Some(quality.max_edge() as u64),
+                    "source-over",
+                    1.0,
+                )
+            }
         }
     } else {
-        let inputs = resolve_inputs(snarl, node, kind, ctx, stack);
-        let canvas = canvas_size(snarl);
+        let inputs = resolve_inputs(snarl, node, kind, ctx, stack, quality);
+        // Text rasterization is presented across the document canvas and the
+        // canvas applies its alpha-content crop in that same coordinate
+        // space. Keep this preview at canvas resolution; resizing it here
+        // makes the output layer visibly blurry until its worker render lands.
+        let canvas = if kind == Kind::Texts {
+            snarl.canvas_size()
+        } else {
+            quality.dimensions(snarl.canvas_size())
+        };
         let spec = catalog::spec(kind);
         let eval_fn = match spec.eval {
             Some(f) => f,
@@ -127,47 +209,51 @@ fn ensure_filter(
     let changed = match result {
         Ok(image) => {
             let texture = upload(ctx, node, &image);
-            match &mut snarl[node] {
-                Node::Filter(f) => {
-                    f.preview.texture = Some(texture);
-                    f.preview.set_cpu(image);
-                    f.preview.error = None;
-                    f.signature = Some(signature);
+            if let Some(node) = snarl.node_mut(node) {
+                match node {
+                    Node::Filter(f) => {
+                        f.preview.texture = Some(texture);
+                        f.preview.set_cpu(image);
+                        f.preview.error = None;
+                        f.signature = Some(signature);
+                    }
+                    Node::Group(g) | Node::Blend(g) => {
+                        g.preview.texture = Some(texture);
+                        g.preview.set_cpu(image);
+                        g.preview.error = None;
+                        g.signature = Some(signature);
+                    }
+                    Node::Texts(t) => {
+                        t.preview.texture = Some(texture);
+                        t.preview.set_cpu(image);
+                        t.preview.error = None;
+                        t.signature = Some(signature);
+                    }
+                    _ => {}
                 }
-                Node::Group(g) | Node::Blend(g) => {
-                    g.preview.texture = Some(texture);
-                    g.preview.set_cpu(image);
-                    g.preview.error = None;
-                    g.signature = Some(signature);
-                }
-                Node::Texts(t) => {
-                    t.preview.texture = Some(texture);
-                    t.preview.set_cpu(image);
-                    t.preview.error = None;
-                    t.signature = Some(signature);
-                }
-                _ => {}
             }
             true
         }
         Err(message) => {
-            match &mut snarl[node] {
-                Node::Filter(f) => {
-                    f.preview.clear();
-                    f.preview.error = Some(message);
-                    f.signature = Some(signature);
+            if let Some(node) = snarl.node_mut(node) {
+                match node {
+                    Node::Filter(f) => {
+                        f.preview.clear();
+                        f.preview.error = Some(message);
+                        f.signature = Some(signature);
+                    }
+                    Node::Group(g) | Node::Blend(g) => {
+                        g.preview.clear();
+                        g.preview.error = Some(message);
+                        g.signature = Some(signature);
+                    }
+                    Node::Texts(t) => {
+                        t.preview.clear();
+                        t.preview.error = Some(message);
+                        t.signature = Some(signature);
+                    }
+                    _ => {}
                 }
-                Node::Group(g) | Node::Blend(g) => {
-                    g.preview.clear();
-                    g.preview.error = Some(message);
-                    g.signature = Some(signature);
-                }
-                Node::Texts(t) => {
-                    t.preview.clear();
-                    t.preview.error = Some(message);
-                    t.signature = Some(signature);
-                }
-                _ => {}
             }
             true
         }
@@ -178,58 +264,86 @@ fn ensure_filter(
 }
 
 fn filter_signature(
-    snarl: &Snarl<Node>,
+    snarl: &mut dyn EvalContext,
     node: NodeId,
     kind: Kind,
     params: &Params,
     stack: &mut HashSet<NodeId>,
+    quality: PreviewQuality,
 ) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    kind.hash(&mut hasher);
-    if let Ok(serialized) = serde_json::to_string(params) {
-        serialized.hash(&mut hasher);
-    }
-    canvas_size(snarl).hash(&mut hasher);
-
+    let mut layer_entries = Vec::new();
     if kind.is_layer_kind() {
-        if let Some(layers) = snarl[node].layers() {
-            for layer in layers {
-                layer.source.0.hash(&mut hasher);
-                node_signature(snarl, layer.source, stack).hash(&mut hasher);
-                layer.center.x.to_bits().hash(&mut hasher);
-                layer.center.y.to_bits().hash(&mut hasher);
-                layer.size.x.to_bits().hash(&mut hasher);
-                layer.size.y.to_bits().hash(&mut hasher);
-                layer.angle.to_bits().hash(&mut hasher);
+        if let Some(layers) = snarl
+            .node(node)
+            .and_then(Node::layers)
+            .map(|layers| layers.to_vec())
+        {
+            for layer in &layers {
+                layer_entries.push(signature::LayerSignature {
+                    source_id: layer.source.0,
+                    source_signature: node_signature(snarl, layer.source, stack, quality),
+                    center_x: layer.center.x.to_bits(),
+                    center_y: layer.center.y.to_bits(),
+                    size_x: layer.size.x.to_bits(),
+                    size_y: layer.size.y.to_bits(),
+                    angle: layer.angle.to_bits(),
+                });
             }
         }
     }
     let spec = catalog::spec(kind);
+    let mut inputs = Vec::new();
     for input in 0..spec.sockets.len() {
-        let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
+        let remotes = snarl.input_sources(node, input);
         for remote in remotes {
-            node_signature(snarl, remote.node, stack).hash(&mut hasher);
+            inputs.push(node_signature(snarl, remote, stack, quality));
         }
     }
-    hasher.finish()
+    let canvas = if kind.is_layer_kind() {
+        snarl
+            .node(node)
+            .map(Node::canvas_size)
+            .filter(|size| size.x > 0.0 && size.y > 0.0)
+            .map(|size| (size.x.round() as u32, size.y.round() as u32))
+            .unwrap_or_else(|| snarl.canvas_size())
+    } else {
+        snarl.canvas_size()
+    };
+    signature::compute(kind, params, canvas, quality, &layer_entries, &inputs)
 }
 
-fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) -> u64 {
+fn node_signature(
+    snarl: &mut dyn EvalContext,
+    id: NodeId,
+    stack: &mut HashSet<NodeId>,
+    quality: PreviewQuality,
+) -> u64 {
     // Route contributes no effect of its own: hash the node it forwards.
-    let id = crate::graph::resolve_route(snarl, id);
+    let id = snarl.resolve_route(id);
     if !stack.insert(id) {
         return 0;
     }
-    let Some(node) = snarl.get_node(id) else {
+    let Some(node) = snarl.node(id).cloned() else {
         return 0;
     };
-    let signature = match node {
-        Node::Filter(filter) => {
-            filter_signature(snarl, id, Kind::Filter(filter.kind), &filter.params, stack)
+    let signature = match &node {
+        Node::Filter(filter) => filter_signature(
+            snarl,
+            id,
+            Kind::Filter(filter.kind),
+            &filter.params,
+            stack,
+            quality,
+        ),
+        Node::Group(group) => {
+            filter_signature(snarl, id, Kind::Group, &group.params, stack, quality)
         }
-        Node::Group(group) => filter_signature(snarl, id, Kind::Group, &group.params, stack),
-        Node::Blend(blend) => filter_signature(snarl, id, Kind::Blend, &blend.params, stack),
-        Node::Texts(texts) => filter_signature(snarl, id, Kind::Texts, &texts.params, stack),
+        Node::Blend(blend) => {
+            filter_signature(snarl, id, Kind::Blend, &blend.params, stack, quality)
+        }
+        Node::Texts(texts) => {
+            filter_signature(snarl, id, Kind::Texts, &texts.params, stack, quality)
+        }
         Node::Image(image) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             image.asset_id.hash(&mut hasher);
@@ -274,19 +388,20 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
 }
 
 fn resolve_inputs(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut dyn EvalContext,
     node: NodeId,
     kind: Kind,
     ctx: &egui::Context,
     stack: &mut HashSet<NodeId>,
+    quality: PreviewQuality,
 ) -> Vec<Vec<RgbaImage>> {
     let spec = catalog::spec(kind);
     let mut out = Vec::with_capacity(spec.sockets.len());
     for index in 0..spec.sockets.len() {
-        let remotes = snarl.in_pin(InPinId { node, input: index }).remotes.clone();
+        let remotes = snarl.input_sources(node, index);
         let mut images = Vec::new();
         for remote in remotes {
-            if let Some(image) = resolve_image(snarl, remote.node, ctx, stack) {
+            if let Some(image) = resolve_image(snarl, remote, ctx, stack, quality) {
                 images.push(image);
             }
         }
@@ -296,68 +411,53 @@ fn resolve_inputs(
 }
 
 fn resolve_image(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut dyn EvalContext,
     id: NodeId,
     ctx: &egui::Context,
     stack: &mut HashSet<NodeId>,
+    quality: PreviewQuality,
 ) -> Option<RgbaImage> {
     // A Route passes its input straight through, with no image of its own.
-    let id = crate::graph::resolve_route(snarl, id);
-    let Some(node) = snarl.get_node(id) else {
+    let id = snarl.resolve_route(id);
+    let Some(node) = snarl.node(id).cloned() else {
         return None;
     };
     if node.is_evaluable() {
-        ensure_filter(snarl, id, ctx, stack);
-        return snarl.get_node(id).and_then(|n| n.eval_image()).cloned();
+        ensure_filter(snarl, id, ctx, stack, quality);
+        return snarl
+            .node(id)
+            .and_then(Node::cpu)
+            .map(|image| bound_image(image, quality));
     }
 
+    if let Some(cpu) = node.cpu() {
+        return Some(bound_image(cpu, quality));
+    }
     if let Some(eval) = node.eval_image() {
-        return Some(eval.clone());
+        return Some(bound_image(eval, quality));
     }
     if let Some(path) = node.reload_path()
         && let Ok(image) = image::open(path)
     {
         let rgba = image.to_rgba8();
-        if let Some(node_mut) = snarl.get_node_mut(id) {
+        if let Some(node_mut) = snarl.node_mut(id) {
             node_mut.set_cpu(rgba.clone());
         }
         return snarl
-            .get_node(id)
-            .and_then(|node| node.eval_image())
-            .cloned();
+            .node(id)
+            .and_then(Node::cpu)
+            .map(|image| bound_image(image, quality));
     }
     None
 }
 
-/// Full-resolution image resolution for Blend nodes (no EVAL_MAX_EDGE cap).
-fn resolve_image_full(
-    snarl: &mut Snarl<Node>,
-    id: NodeId,
-    ctx: &egui::Context,
-    stack: &mut HashSet<NodeId>,
-) -> Option<RgbaImage> {
-    let id = crate::graph::resolve_route(snarl, id);
-    let Some(node) = snarl.get_node(id) else {
-        return None;
-    };
-    if node.is_evaluable() {
-        ensure_filter(snarl, id, ctx, stack);
-        return snarl.get_node(id).and_then(|n| n.cpu()).cloned();
+fn bound_image(image: &RgbaImage, quality: PreviewQuality) -> RgbaImage {
+    let (width, height) = quality.dimensions(image.dimensions());
+    if (width, height) == image.dimensions() {
+        image.clone()
+    } else {
+        image::imageops::resize(image, width, height, image::imageops::FilterType::Triangle)
     }
-
-    if let Some(cpu) = node.cpu() {
-        return Some(cpu.clone());
-    }
-    if let Some(path) = node.reload_path()
-        && let Ok(image) = image::open(path)
-    {
-        let rgba = image.to_rgba8();
-        if let Some(node_mut) = snarl.get_node_mut(id) {
-            node_mut.set_cpu(rgba.clone());
-        }
-        return Some(rgba);
-    }
-    None
 }
 
 pub(crate) fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> TextureHandle {

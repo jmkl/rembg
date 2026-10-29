@@ -408,7 +408,7 @@ pub(crate) fn composite_layers(
     composite_layers_with(
         layers,
         canvas,
-        Some(super::EVAL_MAX_EDGE as u64),
+        Some(crate::resolution::PreviewQuality::Normal.max_edge() as u64),
         "source-over",
         1.0,
     )

@@ -17,6 +17,7 @@ The application allows users to build non-destructive visual graphs combining:
 - **Persistence & Interop**: Lossless session save/load (`.rembg.json`), disk-level SHA-256 caching, and a TCP bridge to [`gpaste`](../gpaste) for AI prompt-based image generation.
 - **Shared Node Contract**: `NodeTrait` exposes catalog metadata, ports, field schemas, validation, and parameter persistence over the current node enum.
 - **Pixel Behavior Contract**: [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) records current color-space, alpha, luma, quantization, and sampling behavior.
+- **Graph Coordinate Contract**: [`GRAPH_COORDINATES.md`](./GRAPH_COORDINATES.md) defines document-canvas units and how layer transforms scale with render targets.
 
 ---
 
@@ -56,7 +57,7 @@ The application is structured around strict separation between the UI event loop
 │                         UI Thread                           │
 │  - Main event loop & shell (src/app.rs)                     │
 │  - Graph layout & interaction (src/editor.rs)               │
-│  - Fast preview evaluation (src/eval.rs, <= 256px max edge) │
+│  - Preview evaluation (src/eval.rs, 128/256/512px tiers)   │
 │  - Transform canvas & gizmos (src/image_canvas.rs)          │
 └──────────────────────────┬──────────────────────────────────┘
                            │ WorkerRequest (crossbeam / mpsc channel)
@@ -72,7 +73,7 @@ The application is structured around strict separation between the UI event loop
 
 ### 1. UI Thread (`src/app.rs`, `src/editor.rs`, `src/eval.rs`)
 - Runs at monitor refresh rate (60+ FPS).
-- Graph evaluation for previews is capped at `ops::EVAL_MAX_EDGE` (256px).
+- Graph evaluation has Draft (128px), Normal (256px), and High (512px) resolution tiers; the app currently uses Normal. Texts raster previews stay at document-canvas resolution to keep their layer bounds and alpha crop aligned.
 - Uses hash-based change detection (`eval::filter_signature`): nodes only re-evaluate when their upstream dependencies, parameters, or canvas dimensions mutate.
 - Source graph thumbnails are capped at `graph::PREVIEW_MAX_EDGE` (256px).
 - Image-producing nodes share `Preview`; its cached evaluation copy is bounded to 256px on the longest edge. Full-resolution CPU images remain available for layer compositing and worker jobs.
@@ -153,5 +154,5 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 ## 6. Codebase Health & Future Work
 
 - **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
-- **Test Suite**: 53 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, and sampler/noise edge cases.
+- **Test Suite**: 60 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, and sampler/noise edge cases.
 - **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).

@@ -291,7 +291,7 @@ The string returned by `FilterKind::id()` and matched in `FilterKind::from_id()`
 Operation modules stay independent of graph and windowing state. Catalog closures connect these operations to capped previews and worker renders.
 
 ### Invariant 5: Shared Preview Cache
-Image-producing nodes use the common `Preview` type. Whenever CPU image data changes, use `set_cpu()` or `Preview::with_image()` so the cached evaluation copy stays bounded to `ops::EVAL_MAX_EDGE` (currently 256px). Route and Output intentionally have no pixel preview.
+Image-producing nodes use the common `Preview` type. Whenever CPU image data changes, use `set_cpu()` or `Preview::with_image()` so the cached Normal-tier evaluation copy stays bounded to 256px. Graph evaluation also supports Draft (128px) and High (512px) tiers through `PreviewQuality`. Text raster previews remain at document-canvas resolution so the Viewer does not stretch low-resolution glyphs across the canvas. Route and Output intentionally have no pixel preview.
 
 ### Invariant 6: Node Invalidation on Change
 In custom node bodies, whenever a parameter or property changes, call:

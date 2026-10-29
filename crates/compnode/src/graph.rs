@@ -92,6 +92,103 @@ pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
     Some(resolve_route(snarl, remote))
 }
 
+/// Return every connected source feeding `node`, resolving pass-through Route
+/// chains and removing duplicate sources. Results are sorted by node id.
+#[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
+pub(crate) fn upstream_sources(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId> {
+    let Some(target) = snarl.get_node(node) else {
+        return Vec::new();
+    };
+    let input_count = catalog::spec(target.kind()).sockets.len();
+    let mut sources = Vec::new();
+    for input in 0..input_count {
+        for remote in &snarl.in_pin(InPinId { node, input }).remotes {
+            let source = resolve_route(snarl, remote.node);
+            if snarl.get_node(source).is_some() && !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+    }
+    sources.sort_by_key(|id| id.0);
+    sources
+}
+
+/// Return all transitive nodes that depend on `node`, following graph wires.
+/// Route nodes are included because they are explicit topology in the graph.
+#[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
+pub(crate) fn downstream_dependents(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId> {
+    let mut pending = vec![node];
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(node);
+    let mut dependents = Vec::new();
+    while let Some(current) = pending.pop() {
+        let Some(source) = snarl.get_node(current) else {
+            continue;
+        };
+        for output in 0..catalog::spec(source.kind()).outputs {
+            let remotes = &snarl
+                .out_pin(OutPinId {
+                    node: current,
+                    output,
+                })
+                .remotes;
+            for remote in remotes {
+                if seen.insert(remote.node) {
+                    dependents.push(remote.node);
+                    pending.push(remote.node);
+                }
+            }
+        }
+    }
+    dependents.sort_by_key(|id| id.0);
+    dependents
+}
+
+/// If adding the edge `from -> to` would create a cycle, return the cycle path
+/// beginning with that edge and ending at `from` (for example `[a, b, a]`).
+#[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
+pub(crate) fn find_cycle(snarl: &Snarl<Node>, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
+    if snarl.get_node(from).is_none() || snarl.get_node(to).is_none() {
+        return None;
+    }
+    if from == to {
+        return Some(vec![from, from]);
+    }
+
+    let mut pending = vec![(to, vec![to])];
+    let mut seen = std::collections::HashSet::new();
+    while let Some((current, path)) = pending.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        if current == from {
+            let mut cycle = Vec::with_capacity(path.len() + 1);
+            cycle.push(from);
+            cycle.extend(path);
+            return Some(cycle);
+        }
+        let Some(source) = snarl.get_node(current) else {
+            continue;
+        };
+        for output in 0..catalog::spec(source.kind()).outputs {
+            for remote in &snarl
+                .out_pin(OutPinId {
+                    node: current,
+                    output,
+                })
+                .remotes
+            {
+                if !seen.contains(&remote.node) {
+                    let mut next_path = path.clone();
+                    next_path.push(remote.node);
+                    pending.push((remote.node, next_path));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Preview of the node feeding `node`'s first input, if that source has one.
 /// Used as the fallback preview for processing nodes that have not run yet.
 pub(crate) fn upstream_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egui::TextureHandle> {

@@ -30,6 +30,7 @@ mod model;
 mod nodes;
 mod ops;
 mod params;
+mod resolution;
 mod session;
 mod settings;
 mod settings_window;

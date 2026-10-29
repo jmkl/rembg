@@ -989,6 +989,123 @@ fn route_is_transparent_to_downstream_nodes() {
 }
 
 #[test]
+fn graph_queries_cover_multi_hop_routes_and_cycle_paths() {
+    let ctx = egui::Context::default();
+    let image = image::RgbaImage::new(1, 1);
+    let texture = rgba_to_texture(&ctx, &image);
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("source.png", texture));
+    let route_a = snarl.insert_node(egui::pos2(100.0, 0.0), Node::route());
+    let route_b = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
+    let filter = snarl.insert_node(egui::pos2(300.0, 0.0), Node::new_filter(FilterKind::Invert));
+    for (from, to) in [(source, route_a), (route_a, route_b), (route_b, filter)] {
+        snarl.connect(
+            egui_snarl::OutPinId {
+                node: from,
+                output: 0,
+            },
+            egui_snarl::InPinId { node: to, input: 0 },
+        );
+    }
+
+    assert_eq!(crate::graph::upstream_sources(&snarl, filter), vec![source]);
+    assert_eq!(
+        crate::graph::downstream_dependents(&snarl, source),
+        vec![route_a, route_b, filter],
+    );
+    assert_eq!(
+        crate::graph::find_cycle(&snarl, filter, source),
+        Some(vec![filter, source, route_a, route_b, filter]),
+    );
+    assert_eq!(crate::graph::find_cycle(&snarl, source, filter), None);
+}
+
+#[test]
+fn diamond_graph_evaluates_both_branches() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("diamond.png"));
+    snarl[source].set_cpu(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([40, 80, 120, 255]),
+    ));
+    let left = snarl.insert_node(
+        egui::pos2(200.0, -80.0),
+        Node::new_filter(FilterKind::Invert),
+    );
+    let right = snarl.insert_node(egui::pos2(200.0, 80.0), Node::new_filter(FilterKind::Hsv));
+    let blend = snarl.insert_node(egui::pos2(400.0, 0.0), Node::blend());
+    for (from, to, input) in [
+        (source, left, 0),
+        (source, right, 0),
+        (left, blend, 0),
+        (right, blend, 1),
+    ] {
+        snarl.connect(
+            egui_snarl::OutPinId {
+                node: from,
+                output: 0,
+            },
+            egui_snarl::InPinId { node: to, input },
+        );
+    }
+    snarl[blend].set_canvas_size(egui::vec2(8.0, 8.0));
+    blend_layers_for(&mut snarl, blend, &[left, right]);
+
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    assert!(snarl[left].cpu().is_some());
+    assert!(snarl[right].cpu().is_some());
+    assert_eq!(snarl[blend].cpu().unwrap().dimensions(), (8, 8));
+}
+
+#[test]
+fn reconnecting_input_invalidates_downstream_outputs() {
+    let mut editor = test_editor();
+    let mut snarl = Snarl::new();
+    let old_source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("old.png"));
+    let new_source = snarl.insert_node(egui::pos2(0.0, 100.0), Node::image("new.png"));
+    let first = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
+    let downstream = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Hsv));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: old_source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: first,
+            input: 0,
+        },
+    );
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: first,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: downstream,
+            input: 0,
+        },
+    );
+    snarl[first].set_output_path(Some(PathBuf::from("first.png")));
+    snarl[downstream].set_output_path(Some(PathBuf::from("downstream.png")));
+
+    let from = snarl.out_pin(egui_snarl::OutPinId {
+        node: new_source,
+        output: 0,
+    });
+    let to = snarl.in_pin(egui_snarl::InPinId {
+        node: first,
+        input: 0,
+    });
+    editor.connect(&from, &to, &mut snarl);
+
+    assert!(snarl[first].output_path().is_none());
+    assert!(snarl[downstream].output_path().is_none());
+}
+
+#[test]
 fn route_matches_a_direct_connection_during_eval() {
     let ctx = egui::Context::default();
     let input = image::RgbaImage::from_fn(16, 12, |x, y| {
@@ -1048,6 +1165,49 @@ fn route_matches_a_direct_connection_during_eval() {
         routed[routed_curve].cpu().map(|img| img.as_raw()),
     );
     assert!(routed[routed_curve].cpu().is_some());
+}
+
+#[test]
+fn preview_quality_changes_evaluation_dimensions_and_cache_signature() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+    let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("quality.png"));
+    snarl[source].set_cpu(image::RgbaImage::new(1024, 512));
+    let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
+    snarl.connect(
+        egui_snarl::OutPinId {
+            node: source,
+            output: 0,
+        },
+        egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        },
+    );
+
+    for (quality, expected) in [
+        (crate::eval::PreviewQuality::Draft, (128, 64)),
+        (crate::eval::PreviewQuality::Normal, (256, 128)),
+        (crate::eval::PreviewQuality::High, (512, 256)),
+    ] {
+        assert!(crate::eval::ensure_all_with_quality(
+            &mut snarl, &ctx, quality
+        ));
+        assert_eq!(snarl[filter].cpu().unwrap().dimensions(), expected);
+    }
+}
+
+#[test]
+fn texts_preview_keeps_document_canvas_resolution() {
+    let ctx = egui::Context::default();
+    let mut snarl = Snarl::new();
+    let texts = snarl.insert_node(egui::pos2(0.0, 0.0), Node::texts());
+    let viewer = snarl.insert_node(egui::pos2(300.0, 0.0), Node::viewer());
+    snarl[viewer].set_canvas_size(egui::vec2(2048.0, 1024.0));
+
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    assert_eq!(snarl[texts].cpu().unwrap().dimensions(), (2048, 1024));
 }
 
 #[test]

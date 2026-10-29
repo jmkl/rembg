@@ -176,15 +176,15 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
 ### Phase 2: Graph & Evaluation Engine
 
 - [ ] **Decouple Graph from Evaluation (`src/eval.rs`)**:
-  - [ ] Introduce an evaluation context trait to avoid `eval.rs` directly indexing `snarl[node]` during execution.
-  - [ ] Encapsulate signature computation (`filter_signature`) to make cache invalidation independently testable.
-  - [ ] Isolate evaluation downscaling (`ops::EVAL_MAX_EDGE`) into a configurable evaluation pipeline.
+  - [x] Introduce an evaluation context trait to keep node and pin access out of evaluation logic.
+  - [x] Isolate deterministic signature hashing and test it independently of graph traversal.
+  - [x] Move preview bounds out of `ops` into configurable Draft/Normal/High resolution tiers.
 - [ ] **Resolution Negotiation & Canvas Transform Stability**:
   - [x] Propagate upstream effective dimensions (`effective_dimensions`) to prevent layers from collapsing to preview bounds on connect or slider tweak.
-  - [ ] Formalize document canvas coordinate space vs individual layer transform bounds.
+  - [x] Formalize document canvas coordinate space vs individual layer transforms in [`GRAPH_COORDINATES.md`](./GRAPH_COORDINATES.md).
 - [ ] **Graph Topology Improvements (`src/graph.rs`)**:
-  - [ ] Abstract upstream traversal and `Route` resolution behind a clean graph query API.
-  - [ ] Unit test multi-hop `Route` resolution and cycle detection.
+  - [x] Add graph queries for upstream sources, downstream dependents, and cycle paths.
+  - [x] Test multi-hop `Route` traversal, cycle-path detection, diamond evaluation, and reconnection invalidation.
 
 ### Phase 3: Worker & ML Inference Pipeline
 
@@ -525,5 +525,5 @@ The implementation is tracked in detail in [`CHECKLIST.md`](./CHECKLIST.md).
 - [x] **Step 3 (Spec Builder)**: Added `NodeSpec::filter(...)` and `NodeSpec::generator(...)` constructors. Simplified all existing entries in `catalog.rs`.
 - [x] **Step 4 (Modularization)**: Colocated filter eval closures and field definitions with builder specs in `catalog.rs`, ready for optional per-file extraction as new filters are created.
 - [x] **Step 5 (FilterKind Unbundling)**: Promoted `Route`, `Group`, `Blend`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants. Created dedicated `GroupNode` and `TextsNode` structs. Stripped `FilterNode` of layer-stack fields (`layers`, `canvas_size`). Preserved 100% backward compatibility for `.rembg.json` sessions.
-- [x] **Verification**: 53 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
+- [x] **Verification**: 60 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
 

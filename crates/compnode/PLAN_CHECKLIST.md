@@ -8,14 +8,14 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 
 ## Progress Overview
 
-| Phase | Description | Status | Progress |
-| :--- | :--- | :--- | :--- |
-| **Baseline** | Quick Fixes & Compiler Health | **Completed** | 100% |
-| **Phase 1** | Operations Reorganization & Core Data Foundation | **In Progress** | ~75% (Ops reorganized, unbundling complete) |
-| **Phase 2** | Graph & Evaluation Engine Decoupling | **Pending** | 15% (Scale stability complete) |
-| **Phase 3** | Worker & ML Inference Pipeline Abstraction | **Pending** | 0% |
-| **Phase 4** | Node UI, Catalog & Session Modernization | **Pending** | 20% (Builder pattern done) |
-| **Phase 5** | Verification, Benchmarking & Documentation | **In Progress** | ~50% (Tests & docs current) |
+| Phase        | Description                                      | Status          | Progress                                    |
+| :----------- | :----------------------------------------------- | :-------------- | :------------------------------------------ |
+| **Baseline** | Quick Fixes & Compiler Health                    | **Completed**   | 100%                                        |
+| **Phase 1**  | Operations Reorganization & Core Data Foundation | **Completed**   | 100%                                        |
+| **Phase 2**  | Graph & Evaluation Engine Decoupling             | **Completed**   | 100%                                        |
+| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **Pending**     | 0%                                          |
+| **Phase 4**  | Node UI, Catalog & Session Modernization         | **Pending**     | 20% (Builder pattern done)                  |
+| **Phase 5**  | Verification, Benchmarking & Documentation       | **In Progress** | ~50% (Tests & docs current)                 |
 
 ---
 
@@ -29,13 +29,14 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (53 passed, 1 ignored benchmark)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (60 passed, 1 ignored benchmark)
 
 ---
 
 ## Phase 1: Operations Reorganization & Core Data Foundation
 
 ### 1.1 Unbundling Structural & Layer Nodes (Completed via Node Redesign)
+
 - [x] Promote `Route` to top-level `Kind::Route` and zero-state `Node::Route`
 - [x] Promote `Group` and `Blend` to top-level `Kind::Group` / `Kind::Blend` with dedicated `GroupNode`
 - [x] Promote `Texts` to top-level `Kind::Texts` with dedicated `TextsNode`
@@ -43,6 +44,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 - [x] Ensure 100% backward compatibility for `.rembg.json` session files
 
 ### 1.2 Operations Module Reorganization (`src/ops/`)
+
 - [x] Create domain-focused directory structure:
   - [x] `src/ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
   - [x] `src/ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
@@ -54,6 +56,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Share bilinear and bicubic RGBA sampling helpers
 
 ### 1.3 Pixel Semantics & Operation Contracts
+
 - [x] Document encoded-sRGB versus linear-light assumptions at operation boundaries in [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md)
 - [x] Document straight-alpha versus premultiplied-alpha expectations for compositing, masks, text, and resampling
 - [x] Record rounding, clamping, and edge-sampling rules for shared pixel helpers
@@ -62,6 +65,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 - [x] Require golden cases and compatibility notes for color-space or alpha behavior changes
 
 ### 1.4 Core Node Trait & Lifecycle Abstraction
+
 - [x] Define object-safe `NodeTrait` adapter for dynamic node metadata and parameter dispatch:
   - [x] Expose catalog metadata and socket/port definitions
   - [x] Expose parameter schemas and schema-driven field validation
@@ -77,44 +81,50 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 ## Phase 2: Graph & Evaluation Engine Decoupling
 
 ### 2.1 Graph & Evaluation Decoupling (`src/eval.rs`)
-- [ ] Introduce `EvalContext` trait to eliminate direct `snarl[node]` indexing in `eval.rs`:
-  - [ ] Encapsulate node input lookups and route traversal
-  - [ ] Provide immutable view of graph topology during evaluation
-- [ ] Encapsulate signature computation:
-  - [ ] Isolate hashing of inputs, parameters, and canvas dimensions
-  - [ ] Make signature generation and cache invalidation unit-testable in isolation
-- [ ] Decouple evaluation downscaling:
-  - [ ] Move `ops::EVAL_MAX_EDGE` preview clamping into a configurable resolution strategy
-  - [ ] Support custom preview quality tiers (e.g., draft 128px, normal 256px, high-res 512px)
+
+- [x] Introduce `EvalContext` trait to eliminate direct Snarl node/pin access in `eval.rs`:
+  - [x] Encapsulate node input lookups and route traversal
+  - [x] Keep topology reads behind the evaluation context interface
+- [x] Encapsulate signature computation:
+  - [x] Isolate hashing of inputs, parameters, and canvas dimensions
+  - [x] Make signature generation deterministic and unit-testable in isolation
+- [x] Decouple evaluation downscaling:
+  - [x] Move preview clamping into the shared resolution strategy
+  - [x] Support Draft (128px), Normal (256px), and High (512px) evaluation tiers
 
 ### 2.2 Resolution Negotiation & Transform Stability
+
 - [x] Walk upstream to compute `effective_dimensions` across filter chains
 - [x] Prevent temporary preview dimension collapses (e.g. 1024 -> 256) during slider scrubbing or pin wiring
-- [ ] Formalize document canvas coordinate space vs individual layer transform bounds
+- [x] Formalize document canvas coordinate space vs individual layer transform bounds in [`GRAPH_COORDINATES.md`](./GRAPH_COORDINATES.md)
 
 ### 2.3 Graph Topology Improvements (`src/graph.rs`)
-- [ ] Create formal graph query API:
-  - [ ] `upstream_sources(node)`
-  - [ ] `downstream_dependents(node)`
-  - [ ] `find_cycle(from, to)`
-- [ ] Unit tests for complex topologies:
-  - [ ] Multi-hop `Route` chains (`Node -> Route -> Route -> Route -> Viewer`)
-  - [ ] Diamond dependency evaluation
-  - [ ] Reconnection and invalidation cascade
+
+- [x] Create formal graph query API:
+  - [x] `upstream_sources(node)`
+  - [x] `downstream_dependents(node)`
+  - [x] `find_cycle(from, to)`
+- [x] Unit tests for complex topologies:
+  - [x] Multi-hop `Route` chains and cycle-path detection
+  - [x] Diamond dependency evaluation
+  - [x] Reconnection and invalidation cascade
 
 ---
 
 ## Phase 3: Worker & ML Inference Pipeline Abstraction
 
 ### 3.1 Job Queue & Dispatcher Modernization (`src/worker.rs`)
+
 - [ ] Refactor `Job` enum into structured request/response types:
   - [ ] `RenderRequest` / `InferenceRequest`
   - [ ] `RenderResponse` / `InferenceResponse`
 - [ ] Formalize token cancellation:
   - [ ] Explicit job cancellation token / atomic flag for aborted preview renders
   - [ ] Discard outdated jobs before model inference begins
+  - [ ] Simple running job info in title bar
 
 ### 3.2 Inference Backend Abstraction
+
 - [ ] Define `InferenceBackend` trait for AI models:
   - [ ] Lifecycle management (e.g. keep-alive timeout, unload on low memory)
   - [ ] Standardized execution signature: `predict(&self, input: &RgbaImage) -> Result<RgbaImage, InferenceError>`
@@ -124,12 +134,14 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Test rapid parameter scrubbing and token invalidation
 
 ### 3.3 Cache Interface Abstraction (`src/cache.rs`)
+
 - [ ] Define `OutputCacheInterface` trait:
   - [ ] `get(key: &CacheKey) -> Option<RgbaImage>`
   - [ ] `put(key: &CacheKey, image: &RgbaImage) -> Result<PathBuf, CacheError>`
 - [ ] Enable in-memory cache backend for automated headless tests without disk writes
 
 ### 3.4 GPU Accelerated Compute Pipeline
+
 - [ ] Integrate WGPU compute device/queue sharing for compute shaders
 - [ ] Port expensive color grading (Curves LUT, Color Balance) and multi-layer composites to WGSL compute passes
 
@@ -138,6 +150,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 ## Phase 4: Node UI, Catalog & Session Modernization
 
 ### 4.1 UI Component Standardization (`src/nodes/`)
+
 - [ ] Create reusable UI layout helpers:
   - [ ] Standardized node header with status indicator and bypass button
   - [ ] Standardized preview thumbnail container with zoom/pan tooltip
@@ -145,6 +158,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 - [ ] Uniform slider and control spacing across all node bodies
 
 ### 4.2 Catalog & Node Discovery (`src/catalog.rs`, `src/graph_menu.rs`)
+
 - [x] NodeSpec builder constructors (`NodeSpec::filter`, `NodeSpec::generator`)
 - [ ] Grouped context menu categories in `graph_menu.rs`:
   - [ ] Input / Sources (Image, GPasTe Bridge)
@@ -157,11 +171,8 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Fuzzy search over titles and keywords
   - [ ] Recently used node suggestions
 
-### 4.3 Session Schema Versioning & Forward Migration (`src/session.rs`)
-- [ ] Introduce explicit `schema_version` to `.rembg.json` root
-- [ ] Create structured migration handlers (`migrate_v0_to_v1`, etc.) replacing scattered ad-hoc string aliases
-
 ### 4.4 Graph Undo / Redo Command History
+
 - [ ] Implement command pattern stack for node additions, wire changes, parameter scrubbing, and canvas layer transforms
 
 ---
@@ -169,6 +180,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 ## Phase 5: Polish, Benchmarking & Documentation
 
 ### 5.1 Benchmarking & Performance
+
 - [ ] Automated image processing benchmarks:
   - [ ] Benchmark all filter operations on standard test images (1080p, 4K)
   - [ ] Benchmark GPU vs CPU Raw Filter crossover point
@@ -178,12 +190,14 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [ ] Check for texture memory leaks across repeated node creations/deletions
 
 ### 5.2 Automated Fuzzing & Stress Testing
+
 - [ ] Add random graph topology fuzz testing (connecting/disconnecting arbitrary pins to ensure no panics)
 - [ ] Golden image regression test suite comparing CPU and GPU outputs
   - [ ] Define operation-specific tolerances and compare alpha separately from RGB
 - [ ] Add property/edge-case checks for sampling bounds, alpha preservation, empty inputs, and non-finite parameters
 
 ### 5.3 Documentation & Verification
+
 - [x] Maintain up-to-date [README_AG.md](./README_AG.md)
 - [x] Maintain up-to-date [NODE.md](./NODE.md) guide for creating nodes
 - [x] Maintain [CHECKLIST.md](./CHECKLIST.md) for node system redesign
