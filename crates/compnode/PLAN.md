@@ -192,6 +192,7 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
   - [x] Split worker transport into typed Render/Inference requests and responses.
   - [x] Cancel invalidated queued jobs before execution; preserve stale-result token matching.
   - [x] Show the active node type and job count in the title bar.
+  - [x] Add a mockable `InferenceBackend::predict` boundary for background removal.
   - [ ] Formalize model lifecycle management (keep-alive vs unload-on-demand) behind an `InferenceBackend` trait.
   - [ ] Abstract disk cache interaction via `OutputCacheInterface` to enable in-memory mock testing.
   - [ ] Add integration tests verifying token invalidation on rapid parameter changes.

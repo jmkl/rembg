@@ -81,6 +81,7 @@ The application is structured around strict separation between the UI event loop
 
 ### 2. Inference & Render Worker (`src/worker.rs`)
 - Single long-lived worker thread accepting typed `RenderRequest` and `InferenceRequest` envelopes:
+  - Background-removal models share a mockable `InferenceBackend::predict` interface; the worker retains responsibility for model loading and cache policy.
   - `RemoveBg` (BiRefNet) & `RemoveBgV2` (RMBG-1.4)
   - `FaceRestore` (SCRFD alignment + GFPGAN)
   - `Composite` (full-resolution Group / Blend multi-layer rendering)
@@ -155,5 +156,5 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 ## 6. Codebase Health & Future Work
 
 - **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
-- **Test Suite**: 62 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, and sampler/noise edge cases.
+- **Test Suite**: 63 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, mock inference backends, and sampler/noise edge cases.
 - **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).

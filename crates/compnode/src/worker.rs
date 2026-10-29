@@ -20,6 +20,28 @@ use crate::cancellation::CancellationToken;
 use crate::model::{FilterKind, JobOutput, Kind, RunTiming, ViewerLayer};
 use crate::params::Params;
 
+/// Common boundary for image-to-image inference backends. The worker owns
+/// backend lifetimes; implementations only need to predict from RGBA pixels.
+trait InferenceBackend {
+    fn predict(&self, input: &image::RgbaImage) -> Result<image::RgbaImage, InferenceError>;
+}
+
+type InferenceError = String;
+
+impl InferenceBackend for BirefNet {
+    fn predict(&self, input: &image::RgbaImage) -> Result<image::RgbaImage, InferenceError> {
+        let image = image::DynamicImage::ImageRgba8(input.clone());
+        self.process_image(&image).map_err(|err| format!("{err:#}"))
+    }
+}
+
+impl InferenceBackend for RemoveBg {
+    fn predict(&self, input: &image::RgbaImage) -> Result<image::RgbaImage, InferenceError> {
+        let image = image::DynamicImage::ImageRgba8(input.clone());
+        self.process_image(&image).map_err(|err| format!("{err:#}"))
+    }
+}
+
 enum Job {
     Inference(InferenceJob),
     Render(RenderJob),
@@ -597,8 +619,8 @@ pub(crate) fn spawn_worker(
 
 struct Models {
     config: InferenceConfig,
-    birefnet: Option<BirefNet>,
-    remove_bg_v2: Option<RemoveBg>,
+    birefnet: Option<Box<dyn InferenceBackend>>,
+    remove_bg_v2: Option<Box<dyn InferenceBackend>>,
     gfpgan: Option<Gfpgan>,
     detector: Option<FaceDetector>,
 }
@@ -670,11 +692,15 @@ impl Models {
         if self.config.cache_models {
             if self.birefnet.is_none() {
                 let started = Instant::now();
-                self.birefnet = Some(load_birefnet(&path)?);
+                self.birefnet = Some(Box::new(load_birefnet(&path)?));
                 load = started.elapsed();
             }
             let started = Instant::now();
-            let image = process_birefnet(self.birefnet.as_ref().expect("just loaded"), input)?;
+            let image = self
+                .birefnet
+                .as_ref()
+                .expect("just loaded")
+                .predict(input)?;
             Ok(TimedImage {
                 image,
                 load,
@@ -686,7 +712,7 @@ impl Models {
             load = started.elapsed();
 
             let started = Instant::now();
-            let image = process_birefnet(&model, input)?;
+            let image = model.predict(input)?;
             Ok(TimedImage {
                 image,
                 load,
@@ -765,14 +791,6 @@ fn model_tag(path: &Path) -> String {
     format!("{}:{size}", path.display())
 }
 
-fn process_birefnet(
-    model: &BirefNet,
-    input: &image::RgbaImage,
-) -> Result<image::RgbaImage, String> {
-    let img = image::DynamicImage::ImageRgba8(input.clone());
-    model.process_image(&img).map_err(|e| format!("{e:#}"))
-}
-
 fn remove_bg_v2(models: &mut Models, input: &image::RgbaImage) -> Result<TimedImage, String> {
     let path = models.config.model_dir.join(MODEL_RMBG_FILE);
     let mut load = Duration::ZERO;
@@ -780,11 +798,15 @@ fn remove_bg_v2(models: &mut Models, input: &image::RgbaImage) -> Result<TimedIm
     if models.config.cache_models {
         if models.remove_bg_v2.is_none() {
             let started = Instant::now();
-            models.remove_bg_v2 = Some(load_rmbg(&path)?);
+            models.remove_bg_v2 = Some(Box::new(load_rmbg(&path)?));
             load = started.elapsed();
         }
         let started = Instant::now();
-        let image = process_rmbg(models.remove_bg_v2.as_ref().expect("just loaded"), input)?;
+        let image = models
+            .remove_bg_v2
+            .as_ref()
+            .expect("just loaded")
+            .predict(input)?;
         Ok(TimedImage {
             image,
             load,
@@ -796,7 +818,7 @@ fn remove_bg_v2(models: &mut Models, input: &image::RgbaImage) -> Result<TimedIm
         load = started.elapsed();
 
         let started = Instant::now();
-        let image = process_rmbg(&model, input)?;
+        let image = model.predict(input)?;
         Ok(TimedImage {
             image,
             load,
@@ -807,11 +829,6 @@ fn remove_bg_v2(models: &mut Models, input: &image::RgbaImage) -> Result<TimedIm
 
 fn load_rmbg(path: &Path) -> Result<RemoveBg, String> {
     RemoveBg::load_from(path).map_err(|e| format!("load {}: {e:#}", path.display()))
-}
-
-fn process_rmbg(model: &RemoveBg, input: &image::RgbaImage) -> Result<image::RgbaImage, String> {
-    let img = image::DynamicImage::ImageRgba8(input.clone());
-    model.process_image(&img).map_err(|e| format!("{e:#}"))
 }
 
 fn restore_faces(
@@ -846,4 +863,29 @@ fn restore_faces(
         out.put_pixel(x, y, image::Rgba([p[0], p[1], p[2], a]));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod inference_backend_tests {
+    use super::{InferenceBackend, InferenceError};
+
+    struct MockBackend;
+
+    impl InferenceBackend for MockBackend {
+        fn predict(&self, input: &image::RgbaImage) -> Result<image::RgbaImage, InferenceError> {
+            let mut output = input.clone();
+            for pixel in output.pixels_mut() {
+                pixel[0] = pixel[0].saturating_add(1);
+            }
+            Ok(output)
+        }
+    }
+
+    #[test]
+    fn mock_backend_uses_the_production_prediction_contract() {
+        let input = image::RgbaImage::from_pixel(1, 1, image::Rgba([10, 20, 30, 40]));
+        let output = MockBackend.predict(&input).unwrap();
+
+        assert_eq!(output.get_pixel(0, 0), &image::Rgba([11, 20, 30, 40]));
+    }
 }

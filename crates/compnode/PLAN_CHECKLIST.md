@@ -13,7 +13,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 | **Baseline** | Quick Fixes & Compiler Health                    | **Completed**   | 100%                                        |
 | **Phase 1**  | Operations Reorganization & Core Data Foundation | **Completed**   | 100%                                        |
 | **Phase 2**  | Graph & Evaluation Engine Decoupling             | **Completed**   | 100%                                        |
-| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **In Progress** | ~20% (Typed worker requests/responses and stale-job cancellation) |
+| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **In Progress** | ~25% (Typed worker transport, cancellation, and prediction backend boundary) |
 | **Phase 4**  | Node UI, Catalog & Session Modernization         | **Pending**     | 20% (Builder pattern done)                  |
 | **Phase 5**  | Verification, Benchmarking & Documentation       | **In Progress** | ~50% (Tests & docs current)                 |
 
@@ -29,7 +29,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (62 passed, 1 ignored benchmark)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (63 passed, 1 ignored benchmark)
 
 ---
 
@@ -127,11 +127,11 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 
 - [ ] Define `InferenceBackend` trait for AI models:
   - [ ] Lifecycle management (e.g. keep-alive timeout, unload on low memory)
-  - [ ] Standardized execution signature: `predict(&self, input: &RgbaImage) -> Result<RgbaImage, InferenceError>`
-  - [ ] Decouple `rembg-core` bindings to allow mock backends in tests
+  - [x] Standardized execution signature: `predict(&self, input: &RgbaImage) -> Result<RgbaImage, InferenceError>`
+  - [x] Decouple background-removal `rembg-core` bindings to allow mock backends in tests
 - [ ] Mock worker test suite:
   - [ ] Add integration test verifying UI non-blocking behavior under simulated worker load
-  - [ ] Test rapid parameter scrubbing and token invalidation
+  - [x] Test backend substitution through a mock implementation; rapid parameter scrubbing and token invalidation remain to be covered at worker integration level
 
 ### 3.3 Cache Interface Abstraction (`src/cache.rs`)
 
