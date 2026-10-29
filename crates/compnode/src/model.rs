@@ -14,6 +14,7 @@ use egui_snarl::NodeId;
 use image::RgbaImage;
 use serde_json::Value;
 
+use crate::catalog::{self, FieldKind, NodeSpec, SocketSpec};
 use crate::params::{self, Params};
 
 /// Stable identity for every node kind. Used by the catalog and session layer.
@@ -241,27 +242,6 @@ impl FilterNode {
             rendered: None,
         }
     }
-
-    /// Restore a saved node, filling any newly added parameter with its default.
-    pub(crate) fn restore(kind: FilterKind, stored: Option<Params>) -> Self {
-        let mut params = kind.defaults();
-        if let Some(stored) = stored {
-            for (key, value) in stored {
-                params.insert(key, value);
-            }
-        }
-        Self {
-            kind,
-            params,
-            preview: Preview::default(),
-            signature: None,
-            preview_enabled: true,
-            job: None,
-            output_path: None,
-            render_state: None,
-            rendered: None,
-        }
-    }
 }
 
 /// Image preview shared by source and processed nodes.
@@ -287,6 +267,11 @@ impl Preview {
         }
     }
 
+    pub(crate) fn set_cpu(&mut self, image: RgbaImage) {
+        self.eval = Some(eval_copy(&image));
+        self.cpu = Some(image);
+    }
+
     pub(crate) fn clear(&mut self) {
         self.texture = None;
         self.cpu = None;
@@ -294,7 +279,6 @@ impl Preview {
         self.error = None;
     }
 
-    #[allow(dead_code)]
     pub(crate) fn eval_image(&self) -> Option<&RgbaImage> {
         self.eval.as_ref().or(self.cpu.as_ref())
     }
@@ -310,7 +294,7 @@ fn eval_copy(image: &RgbaImage) -> RgbaImage {
     let scale = crate::ops::EVAL_MAX_EDGE as f64 / longest as f64;
     let width = ((width as f64 * scale).round() as u32).max(1);
     let height = ((height as f64 * scale).round() as u32).max(1);
-    image::imageops::thumbnail(image, width, height)
+    image::imageops::resize(image, width, height, image::imageops::FilterType::Triangle)
 }
 
 /// Timing for the most recent successful inference run.
@@ -476,6 +460,207 @@ pub(crate) enum Node {
     Blend(GroupNode),
     Texts(TextsNode),
     Filter(FilterNode),
+}
+
+/// Shared runtime contract for node instances.
+///
+/// The enum remains the storage representation, while this trait exposes the
+/// definition metadata, ports, parameter schema, validation, and parameter
+/// persistence hooks through one object-safe interface.
+#[allow(dead_code)]
+pub(crate) trait NodeTrait {
+    fn kind(&self) -> Kind;
+
+    fn parameters(&self) -> Option<&Params>;
+
+    fn parameters_mut(&mut self) -> Option<&mut Params>;
+
+    fn definition(&self) -> &'static NodeSpec {
+        catalog::spec(self.kind())
+    }
+
+    fn input_ports(&self) -> &'static [SocketSpec] {
+        self.definition().sockets
+    }
+
+    fn output_count(&self) -> usize {
+        self.definition().outputs
+    }
+
+    fn parameter_schema(&self) -> &'static [catalog::FieldSpec] {
+        self.definition().fields
+    }
+
+    fn serialize_parameters(&self) -> Option<Value> {
+        self.parameters().cloned().map(Value::Object)
+    }
+
+    /// Merge saved values into constructor defaults, retaining unknown keys
+    /// for forward compatibility with newer session files.
+    fn restore_parameters(&mut self, stored: &Value) {
+        let Some(stored) = stored.as_object() else {
+            return;
+        };
+        let Some(parameters) = self.parameters_mut() else {
+            return;
+        };
+        for (key, value) in stored {
+            parameters.insert(key.clone(), value.clone());
+        }
+    }
+
+    /// Validate fields described by the catalog and preserve unknown values.
+    /// Returns false for nodes whose state is stored in typed fields instead
+    /// of a parameter map.
+    fn validate_parameters(&mut self) -> bool {
+        let definition = self.definition();
+        let Some(parameters) = self.parameters_mut() else {
+            return false;
+        };
+        for field in definition.fields {
+            match field.kind {
+                FieldKind::Range {
+                    min, max, default, ..
+                }
+                | FieldKind::Number {
+                    min, max, default, ..
+                } => {
+                    let value = parameters
+                        .get(field.key)
+                        .and_then(Value::as_f64)
+                        .map(|value| value as f32)
+                        .filter(|value| value.is_finite())
+                        .unwrap_or(default)
+                        .clamp(min, max);
+                    params::set_f32(parameters, field.key, value);
+                }
+                FieldKind::Color { default } => {
+                    let valid = parameters
+                        .get(field.key)
+                        .and_then(Value::as_str)
+                        .is_some_and(is_rgb_hex_color);
+                    if !valid {
+                        params::set_string(parameters, field.key, default);
+                    }
+                }
+                FieldKind::Select { options, default } => {
+                    let valid = parameters
+                        .get(field.key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| options.iter().any(|option| option.value == value));
+                    if !valid {
+                        params::set_string(parameters, field.key, default);
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+fn is_rgb_hex_color(value: &str) -> bool {
+    let value = value.strip_prefix('#').unwrap_or(value);
+    value.len() == 6 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+impl NodeTrait for Node {
+    fn kind(&self) -> Kind {
+        Node::kind(self)
+    }
+
+    fn parameters(&self) -> Option<&Params> {
+        match self {
+            Self::Group(node) | Self::Blend(node) => Some(&node.params),
+            Self::Texts(node) => Some(&node.params),
+            Self::Filter(node) => Some(&node.params),
+            _ => None,
+        }
+    }
+
+    fn parameters_mut(&mut self) -> Option<&mut Params> {
+        match self {
+            Self::Group(node) | Self::Blend(node) => Some(&mut node.params),
+            Self::Texts(node) => Some(&mut node.params),
+            Self::Filter(node) => Some(&mut node.params),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod node_trait_tests {
+    use super::{FilterKind, Kind, Node, NodeTrait};
+    use image::RgbaImage;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn node_trait_exposes_definition_and_validates_catalog_fields() {
+        let mut node = Node::new_filter(FilterKind::Hsv);
+        let definition = (&node as &dyn NodeTrait).definition();
+        assert_eq!(definition.kind, Kind::Filter(FilterKind::Hsv));
+        assert_eq!(definition.title, "Hue / Saturation");
+        assert_eq!(node.input_ports().len(), 1);
+        assert_eq!(node.output_count(), 1);
+        assert_eq!(node.parameter_schema().len(), 3);
+
+        let parameters = node.parameters_mut().unwrap();
+        parameters.insert("hue".into(), json!(900.0));
+        parameters.insert("sat".into(), json!(1e300));
+        parameters.insert("val".into(), json!("invalid"));
+        parameters.insert("future_field".into(), json!("keep me"));
+
+        assert!(node.validate_parameters());
+        let parameters = node.parameters().unwrap();
+        assert_eq!(parameters.get("hue"), Some(&json!(360.0)));
+        assert_eq!(parameters.get("sat"), Some(&json!(100.0)));
+        assert_eq!(parameters.get("val"), Some(&json!(100.0)));
+        assert_eq!(parameters.get("future_field"), Some(&json!("keep me")));
+
+        let encoded = node.serialize_parameters().unwrap();
+        let mut restored = Node::new_filter(FilterKind::Hsv);
+        restored.restore_parameters(&encoded);
+        assert_eq!(restored.serialize_parameters(), Some(encoded));
+    }
+
+    #[test]
+    fn parameter_restore_keeps_defaults_and_non_parameter_nodes_are_explicit() {
+        let mut node = Node::new_filter(FilterKind::Hsv);
+        node.restore_parameters(&json!({ "hue": 42.0 }));
+        let parameters = node.parameters().unwrap();
+        assert_eq!(parameters.get("hue"), Some(&json!(42.0)));
+        assert_eq!(parameters.get("sat"), Some(&json!(100.0)));
+        assert_eq!(
+            node.serialize_parameters().unwrap()["hue"],
+            Value::from(42.0)
+        );
+
+        let mut route = Node::route();
+        assert!(route.parameters().is_none());
+        assert!(route.serialize_parameters().is_none());
+        assert!(!route.validate_parameters());
+    }
+
+    #[test]
+    fn parameter_validation_covers_colors_and_select_options() {
+        let mut node = Node::new_filter(FilterKind::GradientMap);
+        let parameters = node.parameters_mut().unwrap();
+        parameters.insert("color1".into(), json!("not-a-color"));
+        parameters.insert("reverse".into(), json!("maybe"));
+
+        assert!(node.validate_parameters());
+        let parameters = node.parameters().unwrap();
+        assert_eq!(parameters.get("color1"), Some(&json!("#000000")));
+        assert_eq!(parameters.get("reverse"), Some(&json!("no")));
+    }
+
+    #[test]
+    fn cpu_preview_updates_one_bounded_evaluation_cache() {
+        let mut node = Node::image("input.png");
+        node.set_cpu(RgbaImage::new(1024, 512));
+
+        assert_eq!(node.cpu().unwrap().dimensions(), (1024, 512));
+        assert_eq!(node.eval_image().unwrap().dimensions(), (256, 128));
+    }
 }
 
 impl Node {
@@ -791,6 +976,18 @@ impl Node {
         self.reload_path().is_some_and(|path| path.is_file())
     }
 
+    fn preview(&self) -> Option<&Preview> {
+        match self {
+            Self::Image(node) => Some(&node.preview),
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&process.preview),
+            Self::FaceRestore(node) => Some(&node.process.preview),
+            Self::Output(_) | Self::Route => None,
+            Self::Group(group) | Self::Blend(group) => Some(&group.preview),
+            Self::Texts(texts) => Some(&texts.preview),
+            Self::Filter(node) => Some(&node.preview),
+        }
+    }
+
     fn preview_mut(&mut self) -> Option<&mut Preview> {
         match self {
             Self::Image(node) => Some(&mut node.preview),
@@ -808,8 +1005,13 @@ impl Node {
     #[allow(dead_code)]
     pub(crate) fn set_cpu(&mut self, image: RgbaImage) {
         if let Some(preview) = self.preview_mut() {
-            preview.cpu = Some(image);
+            preview.set_cpu(image);
         }
+    }
+
+    /// Cached evaluation copy bounded by `ops::EVAL_MAX_EDGE`.
+    pub(crate) fn eval_image(&self) -> Option<&RgbaImage> {
+        self.preview().and_then(Preview::eval_image)
     }
 
     /// Replace both the CPU image and its downscaled preview texture.
@@ -1011,9 +1213,7 @@ impl Node {
         process.job = None;
         match outcome {
             Ok((texture, output)) => {
-                process.preview.texture = Some(texture);
-                process.preview.cpu = Some(output.image);
-                process.preview.error = None;
+                process.preview = Preview::with_image(texture, output.image);
                 process.output_path = output.path;
                 process.last_timing = Some(output.timing);
             }

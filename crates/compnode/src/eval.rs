@@ -103,11 +103,9 @@ fn ensure_filter(
             let mode = params::string(&params, "mode", "source-over");
             let opacity = params::f32(&params, "opacity", 100.0).clamp(0.0, 100.0) / 100.0;
             ops::composite::composite_layers_with(
-                &resolved,
-                canvas,
+                &resolved, canvas,
                 None, // Full resolution with Rayon multithreading for crisp, fast preview
-                mode,
-                opacity,
+                mode, opacity,
             )
         } else {
             ops::composite::composite_layers(&resolved, canvas)
@@ -132,19 +130,19 @@ fn ensure_filter(
             match &mut snarl[node] {
                 Node::Filter(f) => {
                     f.preview.texture = Some(texture);
-                    f.preview.cpu = Some(image);
+                    f.preview.set_cpu(image);
                     f.preview.error = None;
                     f.signature = Some(signature);
                 }
                 Node::Group(g) | Node::Blend(g) => {
                     g.preview.texture = Some(texture);
-                    g.preview.cpu = Some(image);
+                    g.preview.set_cpu(image);
                     g.preview.error = None;
                     g.signature = Some(signature);
                 }
                 Node::Texts(t) => {
                     t.preview.texture = Some(texture);
-                    t.preview.cpu = Some(image);
+                    t.preview.set_cpu(image);
                     t.preview.error = None;
                     t.signature = Some(signature);
                 }
@@ -310,11 +308,11 @@ fn resolve_image(
     };
     if node.is_evaluable() {
         ensure_filter(snarl, id, ctx, stack);
-        return snarl.get_node(id).and_then(|n| n.cpu()).map(limit_image);
+        return snarl.get_node(id).and_then(|n| n.eval_image()).cloned();
     }
 
-    if let Some(cpu) = node.cpu() {
-        return Some(limit_image(cpu));
+    if let Some(eval) = node.eval_image() {
+        return Some(eval.clone());
     }
     if let Some(path) = node.reload_path()
         && let Ok(image) = image::open(path)
@@ -323,7 +321,10 @@ fn resolve_image(
         if let Some(node_mut) = snarl.get_node_mut(id) {
             node_mut.set_cpu(rgba.clone());
         }
-        return Some(limit_image(&rgba));
+        return snarl
+            .get_node(id)
+            .and_then(|node| node.eval_image())
+            .cloned();
     }
     None
 }
@@ -357,23 +358,6 @@ fn resolve_image_full(
         return Some(rgba);
     }
     None
-}
-
-fn limit_image(image: &RgbaImage) -> RgbaImage {
-    let (width, height) = image.dimensions();
-    let longest = width.max(height);
-    if longest <= ops::EVAL_MAX_EDGE {
-        return image.clone();
-    }
-    let scale = ops::EVAL_MAX_EDGE as f64 / longest as f64;
-    let target_width = ((width as f64 * scale).round() as u32).max(1);
-    let target_height = ((height as f64 * scale).round() as u32).max(1);
-    image::imageops::resize(
-        image,
-        target_width,
-        target_height,
-        image::imageops::FilterType::Triangle,
-    )
 }
 
 pub(crate) fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> TextureHandle {

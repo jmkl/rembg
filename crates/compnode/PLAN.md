@@ -47,7 +47,7 @@ This plan outlines a comprehensive refactoring of the CompNode crate to improve 
 
 ### 2. New Abstractions
 
-- **Node trait**: Replace the `Node` enum with a trait-based system for better extensibility
+- **Node trait**: Introduce an object-safe contract over the current `Node` enum for metadata, ports, parameter validation, and persistence; only replace enum storage if future extension requirements justify it
 - **Node Lifecycle Contract**: Formalize the 4-stage lifecycle across all node types:
   1. *Immediate UI Preview* (capped resolution, non-blocking on UI thread)
   2. *Full-Resolution Worker Render* (background thread with disk cache persistence)
@@ -160,8 +160,8 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
     - [x] `ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
     - [x] `ops/rf/`: White balance, dehaze, texture, clarity, sharpen, noise reduction (CPU & WGSL)
   - [x] Consolidate common math & color utilities in `src/ops/math.rs` (luma, clamping, color space conversions).
-- [ ] **Core Node Abstraction (`src/model/`)**:
-  - [ ] Define `NodeTrait` for node definitions (ports, metadata, parameter definitions).
+- [x] **Core Node Abstraction (`src/model/`)**:
+  - [x] Define object-safe `NodeTrait` over current node instances for metadata, ports, parameter definitions/validation, and parameter persistence hooks.
   - [x] **Promote `Route`, `Group`, and `Texts` out of `FilterKind` into top-level `model::Kind`**:
     - [x] Make `Route` a dedicated structural pass-through variant (`Kind::Route`, `Node::Route`).
     - [x] Make `Group` a dedicated layer container node (`Kind::Group`, `Node::Group(GroupNode)`), removing `layers`, `canvas_size`, and debounce state from `FilterNode`.
@@ -170,6 +170,7 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
   - [x] **Node Lifecycle & Bounding Box Contract**:
     - [x] Ensure all evaluable nodes (including unbundled generator nodes like `TextsNode`) support background full-resolution renders (`can_render_full_res`) with disk caching.
     - [x] Ensure instant tight alpha bounding box calculation (`alpha_content_uv`) from both immediate UI preview CPU pixels and cached worker outputs.
+  - [x] Standardize image-producing nodes on `Preview` and its bounded 256px evaluation cache; structural Route and Output nodes have no pixel preview.
   - [ ] Standardize `Preview` structure and caching bounds across all node types.
 
 ### Phase 2: Graph & Evaluation Engine
@@ -524,5 +525,5 @@ The implementation is tracked in detail in [`CHECKLIST.md`](./CHECKLIST.md).
 - [x] **Step 3 (Spec Builder)**: Added `NodeSpec::filter(...)` and `NodeSpec::generator(...)` constructors. Simplified all existing entries in `catalog.rs`.
 - [x] **Step 4 (Modularization)**: Colocated filter eval closures and field definitions with builder specs in `catalog.rs`, ready for optional per-file extraction as new filters are created.
 - [x] **Step 5 (FilterKind Unbundling)**: Promoted `Route`, `Group`, `Blend`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants. Created dedicated `GroupNode` and `TextsNode` structs. Stripped `FilterNode` of layer-stack fields (`layers`, `canvas_size`). Preserved 100% backward compatibility for `.rembg.json` sessions.
-- [x] **Verification**: 49 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
+- [x] **Verification**: 53 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
 

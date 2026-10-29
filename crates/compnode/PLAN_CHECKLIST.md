@@ -29,7 +29,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (49 passed, 1 ignored benchmark)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (53 passed, 1 ignored benchmark)
 
 ---
 
@@ -62,15 +62,15 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 - [x] Require golden cases and compatibility notes for color-space or alpha behavior changes
 
 ### 1.4 Core Node Trait & Lifecycle Abstraction
-- [ ] Define `NodeTrait` for dynamic node dispatch:
-  - [ ] Sockets / port definitions
-  - [ ] Parameter schema and validation
-  - [ ] Serialization hooks
+- [x] Define object-safe `NodeTrait` adapter for dynamic node metadata and parameter dispatch:
+  - [x] Expose catalog metadata and socket/port definitions
+  - [x] Expose parameter schemas and schema-driven field validation
+  - [x] Add parameter serialization and default-preserving restore hooks; use them in session persistence
 - [x] **Node Lifecycle & Content Bounding Box Contract**:
   - [x] Register all evaluable nodes (e.g. `TextsNode`) in `can_render_full_res` for disk cache persistence
   - [x] Compute instant alpha bounds crop (`content_uv`) from preview CPU pixels on frame 1
   - [x] Maintain full-res on-disk output path for downstream consumers and export nodes
-- [ ] Standardize `Preview` structure and caching bounds across all node types
+- [x] Standardize `Preview` access and the 256px evaluation-image cache across image-producing nodes; structural Route and Output nodes intentionally have no pixel preview
 
 ---
 

@@ -18,7 +18,7 @@ use crate::cache::{OutputCache, load_cached};
 use crate::catalog;
 use crate::graph::{connect_input, ensure_output_node, rgba_to_texture};
 use crate::model::{
-    FaceRestoreNode, FilterKind, FilterNode, GroupNode, ImageNode, Node, Preview, Process,
+    FaceRestoreNode, FilterKind, GroupNode, ImageNode, Node, NodeTrait, Preview, Process,
     TextsNode, ViewerNode,
 };
 
@@ -188,6 +188,7 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
         let Some(info) = snarl.get_node_info(id) else {
             continue;
         };
+        let node_definition: &dyn NodeTrait = node;
         let data = match node {
             Node::Image(image) => {
                 if let Some(asset_id) = &image.asset_id {
@@ -219,31 +220,41 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
             },
             Node::Route => SessionNodeData::Filter {
                 filter_kind: "route".to_owned(),
-                params: Value::Object(Default::default()),
+                params: node_definition
+                    .serialize_parameters()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
                 layers: Vec::new(),
                 transforms: Vec::new(),
             },
             Node::Group(group) => SessionNodeData::Filter {
                 filter_kind: "mix".to_owned(),
-                params: Value::Object(group.params.clone()),
+                params: node_definition
+                    .serialize_parameters()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
                 layers: group.layers.iter().map(|l| l.source.0).collect(),
                 transforms: layer_transforms(&group.layers),
             },
             Node::Blend(blend) => SessionNodeData::Filter {
                 filter_kind: "blend".to_owned(),
-                params: Value::Object(blend.params.clone()),
+                params: node_definition
+                    .serialize_parameters()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
                 layers: blend.layers.iter().map(|l| l.source.0).collect(),
                 transforms: layer_transforms(&blend.layers),
             },
-            Node::Texts(texts) => SessionNodeData::Filter {
+            Node::Texts(_) => SessionNodeData::Filter {
                 filter_kind: "texts".to_owned(),
-                params: Value::Object(texts.params.clone()),
+                params: node_definition
+                    .serialize_parameters()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
                 layers: Vec::new(),
                 transforms: Vec::new(),
             },
             Node::Filter(filter) => SessionNodeData::Filter {
                 filter_kind: filter.kind.id().to_owned(),
-                params: Value::Object(filter.params.clone()),
+                params: node_definition
+                    .serialize_parameters()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
                 layers: Vec::new(),
                 transforms: Vec::new(),
             },
@@ -407,37 +418,32 @@ pub(crate) fn load(
                 "route" => Node::Route,
                 "mix" | "group" => {
                     pending_layers = Some((layers, transforms));
-                    let mut group = GroupNode::new(false);
-                    if let Some(params_obj) = params.as_object() {
-                        group.params = params_obj.clone();
-                    }
-                    Node::Group(group)
+                    let mut node = Node::Group(GroupNode::new(false));
+                    let node_definition: &mut dyn NodeTrait = &mut node;
+                    node_definition.restore_parameters(&params);
+                    node
                 }
                 "blend" => {
                     pending_layers = Some((layers, transforms));
-                    let mut blend = GroupNode::new(true);
-                    if let Some(params_obj) = params.as_object() {
-                        blend.params = params_obj.clone();
-                    }
-                    Node::Blend(blend)
+                    let mut node = Node::Blend(GroupNode::new(true));
+                    let node_definition: &mut dyn NodeTrait = &mut node;
+                    node_definition.restore_parameters(&params);
+                    node
                 }
                 "texts" | "text" => {
-                    let mut texts = TextsNode::new();
-                    if let Some(params_obj) = params.as_object() {
-                        for (k, v) in params_obj {
-                            texts.params.insert(k.clone(), v.clone());
-                        }
-                    }
-                    Node::Texts(texts)
+                    let mut node = Node::Texts(TextsNode::new());
+                    let node_definition: &mut dyn NodeTrait = &mut node;
+                    node_definition.restore_parameters(&params);
+                    node
                 }
                 other => {
                     let Some(filter_kind) = FilterKind::from_id(other) else {
                         continue;
                     };
-                    Node::Filter(FilterNode::restore(
-                        filter_kind,
-                        params.as_object().cloned(),
-                    ))
+                    let mut node = Node::new_filter(filter_kind);
+                    let node_definition: &mut dyn NodeTrait = &mut node;
+                    node_definition.restore_parameters(&params);
+                    node
                 }
             },
         };

@@ -226,7 +226,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         .insert_node(egui::pos2(250.0, 80.0), Node::remove_bg());
     if let Some(process) = app.snarl[bg_node].process_mut() {
         process.preview.texture = Some(tex.clone());
-        process.preview.cpu = Some(img.clone());
+        process.preview.set_cpu(img.clone());
         process.output_path = Some(output_path.clone());
     }
     let viewer = app
@@ -489,7 +489,7 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
         .snarl
         .insert_node(egui::pos2(0.0, 0.0), Node::image("test.png"));
     if let Some(img) = app.snarl[img_node].image_node_mut() {
-        img.preview.cpu = Some(image::RgbaImage::new(1024, 1024));
+        img.preview.set_cpu(image::RgbaImage::new(1024, 1024));
     }
 
     let filter_node = app
@@ -563,7 +563,10 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
         )],
     );
     let full_size = app.image_canvas.layers().next().unwrap().size;
-    assert_eq!(initial_size, full_size, "Full-res arrival must not change scale");
+    assert_eq!(
+        initial_size, full_size,
+        "Full-res arrival must not change scale"
+    );
 
     // 4. User cranks slider on filter: invalidates output, falling back to 256px preview texture
     app.image_canvas.sync_layers(
@@ -960,8 +963,7 @@ fn route_is_transparent_to_downstream_nodes() {
             input: 0,
         },
     );
-    let route_after =
-        snarl.insert_node(egui::pos2(800.0, 0.0), Node::route());
+    let route_after = snarl.insert_node(egui::pos2(800.0, 0.0), Node::route());
     snarl.connect(
         egui_snarl::OutPinId {
             node: filter,
@@ -1002,8 +1004,7 @@ fn route_matches_a_direct_connection_during_eval() {
         snarl[source].set_cpu(input.clone());
         let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
         if with_route {
-            let route =
-                snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
+            let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
             snarl.connect(
                 egui_snarl::OutPinId {
                     node: source,
@@ -1406,14 +1407,18 @@ fn delete_connected_node_does_not_panic_in_refresh_viewer() {
     let viewer = snarl.insert_node(egui::pos2(200.0, 0.0), Node::viewer());
 
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: image,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: viewer,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: image,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: viewer,
+                input: 0,
+            })
+            .id,
     );
 
     refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
@@ -1438,24 +1443,32 @@ fn delete_connected_route_node_does_not_panic() {
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
 
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: image,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: route,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: image,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: route,
+                input: 0,
+            })
+            .id,
     );
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: route,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: viewer,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: route,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: viewer,
+                input: 0,
+            })
+            .id,
     );
 
     refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
@@ -1479,24 +1492,32 @@ fn delete_connected_node_does_not_panic_in_eval() {
     let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: base,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: blend,
-            input: 1,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: base,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: blend,
+                input: 1,
+            })
+            .id,
     );
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: overlay,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: blend,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: overlay,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: blend,
+                input: 0,
+            })
+            .id,
     );
 
     refresh_viewer(&mut snarl, blend, &ctx, &mut AssetStore::default());
@@ -1522,24 +1543,32 @@ fn delete_selected_invalidates_downstream_and_avoids_panic() {
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
 
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: image,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: filter,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: image,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: filter,
+                input: 0,
+            })
+            .id,
     );
     snarl.connect(
-        snarl.out_pin(egui_snarl::OutPinId {
-            node: filter,
-            output: 0,
-        }).id,
-        snarl.in_pin(egui_snarl::InPinId {
-            node: viewer,
-            input: 0,
-        }).id,
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: filter,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: viewer,
+                input: 0,
+            })
+            .id,
     );
 
     refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
@@ -1568,11 +1597,17 @@ fn texts_layer_computes_content_bounds_crop() {
 
     let node = &snarl[text_node];
     let preview_cpu = node.cpu().cloned();
-    assert!(preview_cpu.is_some(), "TextsNode should generate preview CPU image");
+    assert!(
+        preview_cpu.is_some(),
+        "TextsNode should generate preview CPU image"
+    );
 
     let cpu_img = preview_cpu.as_ref().unwrap();
     let non_transparent_count = cpu_img.pixels().filter(|p| p[3] > 0).count();
-    assert!(non_transparent_count > 0, "Default text should render some text pixels");
+    assert!(
+        non_transparent_count > 0,
+        "Default text should render some text pixels"
+    );
 
     // Test ImageCanvas sync_layers with preview_cpu provides content_uv immediately
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -1592,18 +1627,26 @@ fn texts_layer_computes_content_bounds_crop() {
 
     canvas.sync_layers(&ctx, &layers);
     let layer = canvas.layers().next().expect("layer present");
-    assert!(layer.content_uv.is_some(), "content_uv must be computed from preview_cpu");
+    assert!(
+        layer.content_uv.is_some(),
+        "content_uv must be computed from preview_cpu"
+    );
     let [u0, v0, u1, v1] = layer.content_uv.unwrap();
     // Default text does not fill the entire canvas, so content_uv shouldn't be full [0, 0, 1, 1]
     assert!(u0 > 0.0 || v0 > 0.0 || u1 < 1.0 || v1 < 1.0);
 
     // Verify TextsNode can render full res and start_filter_render dispatches job
-    assert!(snarl[text_node].can_render_full_res(), "TextsNode must be eligible for full-res render");
+    assert!(
+        snarl[text_node].can_render_full_res(),
+        "TextsNode must be eligible for full-res render"
+    );
     let (job_tx, job_rx) = mpsc::channel();
     let mut editor = GraphEditor::new(job_tx);
     assert!(editor.start_filter_render(&mut snarl, text_node, 1234, &ctx));
     assert!(snarl[text_node].job().is_some());
     assert_eq!(snarl[text_node].rendered(), Some(1234));
     let req = job_rx.try_recv().expect("job received");
-    assert!(matches!(req, WorkerRequest::Job(crate::worker::Job::Texts { node, .. }) if node == text_node));
+    assert!(
+        matches!(req, WorkerRequest::Job(crate::worker::Job::Texts { node, .. }) if node == text_node)
+    );
 }
