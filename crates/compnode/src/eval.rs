@@ -172,7 +172,10 @@ fn node_signature(snarl: &Snarl<Node>, id: NodeId, stack: &mut HashSet<NodeId>) 
     if !stack.insert(id) {
         return 0;
     }
-    let signature = match &snarl[id] {
+    let Some(node) = snarl.get_node(id) else {
+        return 0;
+    };
+    let signature = match node {
         Node::Filter(filter) => filter_signature(snarl, id, filter.kind, &filter.params, stack),
         Node::Image(image) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -247,19 +250,24 @@ fn resolve_image(
 ) -> Option<RgbaImage> {
     // A Route passes its input straight through, with no image of its own.
     let id = crate::graph::resolve_route(snarl, id);
-    if snarl[id].filter().is_some() {
+    let Some(node) = snarl.get_node(id) else {
+        return None;
+    };
+    if node.filter().is_some() {
         ensure_filter(snarl, id, ctx, stack);
-        return snarl[id].cpu().map(limit_image);
+        return snarl.get_node(id).and_then(|n| n.cpu()).map(limit_image);
     }
 
-    if let Some(cpu) = snarl[id].cpu() {
+    if let Some(cpu) = node.cpu() {
         return Some(limit_image(cpu));
     }
-    if let Some(path) = snarl[id].reload_path()
+    if let Some(path) = node.reload_path()
         && let Ok(image) = image::open(path)
     {
         let rgba = image.to_rgba8();
-        snarl[id].set_cpu(rgba.clone());
+        if let Some(node_mut) = snarl.get_node_mut(id) {
+            node_mut.set_cpu(rgba.clone());
+        }
         return Some(limit_image(&rgba));
     }
     None
@@ -273,19 +281,24 @@ fn resolve_image_full(
     stack: &mut HashSet<NodeId>,
 ) -> Option<RgbaImage> {
     let id = crate::graph::resolve_route(snarl, id);
-    if snarl[id].filter().is_some() {
+    let Some(node) = snarl.get_node(id) else {
+        return None;
+    };
+    if node.filter().is_some() {
         ensure_filter(snarl, id, ctx, stack);
-        return snarl[id].cpu().cloned();
+        return snarl.get_node(id).and_then(|n| n.cpu()).cloned();
     }
 
-    if let Some(cpu) = snarl[id].cpu() {
+    if let Some(cpu) = node.cpu() {
         return Some(cpu.clone());
     }
-    if let Some(path) = snarl[id].reload_path()
+    if let Some(path) = node.reload_path()
         && let Ok(image) = image::open(path)
     {
         let rgba = image.to_rgba8();
-        snarl[id].set_cpu(rgba.clone());
+        if let Some(node_mut) = snarl.get_node_mut(id) {
+            node_mut.set_cpu(rgba.clone());
+        }
         return Some(rgba);
     }
     None

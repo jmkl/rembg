@@ -1397,7 +1397,7 @@ const ADDRESS: &str = "127.0.0.1:38471";
 pub fn run() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1180.0, 760.0])
+            .with_maximized(true)
             .with_min_inner_size([640.0, 420.0])
             .with_title("CompNode")
             .with_decorations(false),
@@ -1421,7 +1421,10 @@ fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
     // Layers normally point at the real source, but older sessions may still
     // store a Route id; resolve it before deciding.
     let source = crate::graph::resolve_route(snarl, source);
-    matches!(snarl[source], crate::model::Node::Filter(_)) && snarl[source].output_path().is_none()
+    let Some(node) = snarl.get_node(source) else {
+        return false;
+    };
+    matches!(node, crate::model::Node::Filter(_)) && node.output_path().is_none()
 }
 
 /// Node ids that can reach an Output node through input wires, plus the layers
@@ -1445,7 +1448,10 @@ fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<
         if !needed.insert(id) {
             continue;
         }
-        let sockets = crate::catalog::spec(snarl[id].kind()).sockets.len();
+        let Some(node) = snarl.get_node(id) else {
+            continue;
+        };
+        let sockets = crate::catalog::spec(node.kind()).sockets.len();
         for input in 0..sockets {
             let remotes = snarl
                 .in_pin(egui_snarl::InPinId { node: id, input })

@@ -1283,3 +1283,164 @@ fn blend_op_canvas_size_and_top_layer_effects() {
     assert_eq!(px[2], 128);
     assert_eq!(px[3], 255);
 }
+
+#[test]
+fn delete_connected_node_does_not_panic_in_refresh_viewer() {
+    let ctx = egui::Context::default();
+    let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+    let tex = rgba_to_texture(&ctx, &image_data);
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
+    let viewer = snarl.insert_node(egui::pos2(200.0, 0.0), Node::viewer());
+
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: image,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        }).id,
+    );
+
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+    assert_eq!(snarl[viewer].layers().unwrap().len(), 1);
+
+    // Delete the connected node.
+    snarl.remove_node(image);
+
+    // refresh_viewer must not panic and must cleanly remove the dangling layer.
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+    assert_eq!(snarl[viewer].layers().unwrap().len(), 0);
+}
+
+#[test]
+fn delete_connected_route_node_does_not_panic() {
+    let ctx = egui::Context::default();
+    let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+    let tex = rgba_to_texture(&ctx, &image_data);
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Route));
+    let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
+
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: image,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: route,
+            input: 0,
+        }).id,
+    );
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: route,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        }).id,
+    );
+
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+    assert_eq!(snarl[viewer].layers().unwrap().len(), 1);
+
+    // Delete the intermediate Route node.
+    snarl.remove_node(route);
+
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+    assert_eq!(snarl[viewer].layers().unwrap().len(), 0);
+}
+
+#[test]
+fn delete_connected_node_does_not_panic_in_eval() {
+    let ctx = egui::Context::default();
+    let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+    let tex = rgba_to_texture(&ctx, &image_data);
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let base = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("base", tex.clone()));
+    let overlay = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("overlay", tex));
+    let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Blend));
+
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: base,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: blend,
+            input: 1,
+        }).id,
+    );
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: overlay,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: blend,
+            input: 0,
+        }).id,
+    );
+
+    refresh_viewer(&mut snarl, blend, &ctx, &mut AssetStore::default());
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    // Delete one of the connected inputs.
+    snarl.remove_node(overlay);
+
+    // Neither evaluation nor refresh_viewer should panic with "invalid key".
+    crate::eval::ensure_all(&mut snarl, &ctx);
+    refresh_viewer(&mut snarl, blend, &ctx, &mut AssetStore::default());
+    assert_eq!(snarl[blend].layers().unwrap().len(), 1);
+}
+
+#[test]
+fn delete_selected_invalidates_downstream_and_avoids_panic() {
+    let ctx = egui::Context::default();
+    let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+    let tex = rgba_to_texture(&ctx, &image_data);
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
+    let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
+    let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
+
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: image,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: filter,
+            input: 0,
+        }).id,
+    );
+    snarl.connect(
+        snarl.out_pin(egui_snarl::OutPinId {
+            node: filter,
+            output: 0,
+        }).id,
+        snarl.in_pin(egui_snarl::InPinId {
+            node: viewer,
+            input: 0,
+        }).id,
+    );
+
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    let mut editor = test_editor();
+    editor.selected = vec![image];
+    editor.delete_selected(&mut snarl);
+
+    assert!(snarl.get_node(image).is_none());
+    assert!(editor.selected.is_empty());
+
+    // Both eval and refresh_viewer succeed cleanly.
+    crate::eval::ensure_all(&mut snarl, &ctx);
+    refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+}

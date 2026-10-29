@@ -44,7 +44,7 @@ pub(crate) struct GraphEditor {
     /// App-level node selection. egui-snarl 0.12 only updates its own selection
     /// for Shift/Ctrl-click and rectangle selection, so a normal click would
     /// otherwise leave Delete with nothing to act on.
-    selected: Vec<NodeId>,
+    pub(crate) selected: Vec<NodeId>,
     /// Snarl's selection from the previous frame. Rectangle selection still
     /// comes from Snarl, so mirror it when it changes.
     snarl_selection: Vec<NodeId>,
@@ -225,45 +225,52 @@ impl GraphEditor {
         self.image_memory.trim(snarl, &self.assets);
     }
 
-    /// Remove the app-level selection from the graph. Both Delete shortcuts and
-    /// the Edit menu go through here so the selection cannot go stale.
-    pub(crate) fn delete_selected(&mut self, snarl: &mut Snarl<Node>) {
-        let removing = std::mem::take(&mut self.selected);
+    /// Remove specific nodes from the graph and invalidate affected downstream nodes.
+    pub(crate) fn delete_nodes(&mut self, snarl: &mut Snarl<Node>, nodes: &[NodeId]) {
         let mut downstream = Vec::new();
 
-        for node in &removing {
-            if snarl.get_node_info(*node).is_none()
-                || catalog::spec(snarl[*node].kind()).outputs == 0
-            {
+        for node in nodes {
+            self.selected.retain(|id| id != node);
+            let Some(node_ref) = snarl.get_node(*node) else {
                 continue;
-            }
-            for remote in snarl
-                .out_pin(OutPinId {
-                    node: *node,
-                    output: 0,
-                })
-                .remotes
-            {
-                if !removing.contains(&remote.node) {
-                    downstream.push(remote.node);
+            };
+            let spec = catalog::spec(node_ref.kind());
+            for output in 0..spec.outputs {
+                for remote in snarl
+                    .out_pin(OutPinId {
+                        node: *node,
+                        output,
+                    })
+                    .remotes
+                {
+                    if !nodes.contains(&remote.node) {
+                        downstream.push(remote.node);
+                    }
                 }
             }
         }
 
-        for node in removing {
-            if snarl.get_node_info(node).is_some() {
-                snarl.remove_node(node);
+        for node in nodes {
+            if snarl.get_node(*node).is_some() {
+                snarl.remove_node(*node);
             }
         }
 
         downstream.sort_by_key(|node| node.0);
         downstream.dedup();
         for node in downstream {
-            if snarl.get_node_info(node).is_some() {
+            if snarl.get_node(node).is_some() {
                 invalidate_node(snarl, node);
             }
         }
         self.assets.retain_used(snarl);
+    }
+
+    /// Remove the app-level selection from the graph. Both Delete shortcuts and
+    /// the Edit menu go through here so the selection cannot go stale.
+    pub(crate) fn delete_selected(&mut self, snarl: &mut Snarl<Node>) {
+        let removing = std::mem::take(&mut self.selected);
+        self.delete_nodes(snarl, &removing);
     }
 
     /// Duplicate the selected nodes, offset down-right of the originals.
@@ -1020,7 +1027,7 @@ impl SnarlViewer<Node> for GraphEditor {
             .add(MenuItem::new("Delete node").danger().icon(icons::TRASH))
             .clicked()
         {
-            snarl.remove_node(node);
+            self.delete_nodes(snarl, &[node]);
             ui.close();
         }
     }

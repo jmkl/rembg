@@ -74,7 +74,7 @@ pub(crate) fn first_input(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
 pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
-    while snarl[current].is_route() {
+    while snarl.get_node(current).is_some_and(|n| n.is_route()) {
         if !seen.insert(current) {
             return current;
         }
@@ -108,9 +108,12 @@ pub(crate) fn effective_output_path(snarl: &Snarl<Node>, node: NodeId) -> Option
         if !seen.insert(current) {
             return None;
         }
+        let Some(node_ref) = snarl.get_node(current) else {
+            return None;
+        };
         // Route produces no output of its own; keep walking through it.
-        if !snarl[current].is_route()
-            && let Some(path) = snarl[current].output_path()
+        if !node_ref.is_route()
+            && let Some(path) = node_ref.output_path()
         {
             return Some(path.to_path_buf());
         }
@@ -135,9 +138,12 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
         if !seen.insert(current) {
             return None;
         }
+        let Some(node_ref) = snarl.get_node(current) else {
+            return None;
+        };
         // A Route has no output file of its own; downstream consumers must
         // read the pass-through input exactly as if Route were not there.
-        if snarl[current].is_route() {
+        if node_ref.is_route() {
             match upstream(snarl, current) {
                 Some(next) => {
                     current = next;
@@ -146,13 +152,13 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
                 None => return None,
             }
         }
-        match &snarl[current] {
+        match node_ref {
             Node::Filter(_) => {
-                return snarl[current].output_path().map(|path| path.to_path_buf());
+                return node_ref.output_path().map(|path| path.to_path_buf());
             }
             Node::Image(_) => match upstream(snarl, current) {
                 Some(upstream) => current = upstream,
-                None => return snarl[current].output_path().map(|path| path.to_path_buf()),
+                None => return node_ref.output_path().map(|path| path.to_path_buf()),
             },
             _ => return effective_output_path(snarl, current),
         }
@@ -168,10 +174,13 @@ pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egu
         if !seen.insert(current) {
             return None;
         }
+        let Some(node_ref) = snarl.get_node(current) else {
+            return None;
+        };
         // Never show a Route's own (possibly stale) texture: its content is
         // whatever its upstream produces.
-        if !snarl[current].is_route()
-            && let Some(tex) = snarl[current].texture()
+        if !node_ref.is_route()
+            && let Some(tex) = node_ref.texture()
         {
             return Some(tex.clone());
         }
@@ -188,7 +197,10 @@ pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egu
 /// Single-input nodes replace an existing wire. Multi-input nodes (currently
 /// the Viewer's `Layers` socket) keep every connection.
 pub(crate) fn connect_input(snarl: &mut Snarl<Node>, from: OutPinId, to: InPinId) -> bool {
-    if !catalog::spec(snarl[to.node].kind()).multi_input {
+    let Some(to_node) = snarl.get_node(to.node) else {
+        return false;
+    };
+    if !catalog::spec(to_node.kind()).multi_input {
         let existing = snarl.in_pin(to).remotes.clone();
         for remote in existing {
             snarl.disconnect(remote, to);
@@ -206,7 +218,7 @@ pub(crate) fn ensure_image_loaded(
     ctx: &egui::Context,
     assets: &mut AssetStore,
 ) {
-    let Some(image) = snarl[node].image_node() else {
+    let Some(image) = snarl.get_node(node).and_then(|n| n.image_node()) else {
         return;
     };
     if image.preview.texture.is_some() || image.preview.error.is_some() {
@@ -234,19 +246,23 @@ pub(crate) fn ensure_image_loaded(
     match decoded {
         Some(Ok(rgba)) => {
             let texture = rgba_to_texture(ctx, &rgba);
-            if let Some(image) = snarl[node].image_node_mut() {
+            if let Some(image) = snarl.get_node_mut(node).and_then(|n| n.image_node_mut()) {
                 image.preview = Preview::with_image(texture, rgba);
             }
             // Adopt file-backed assets on first load so they become portable.
             if asset_id.is_none()
                 && !path.is_empty()
                 && let Ok(id) = assets.insert_path(&path)
-                && let Some(image) = snarl[node].image_node_mut()
+                && let Some(image) = snarl.get_node_mut(node).and_then(|n| n.image_node_mut())
             {
                 image.asset_id = Some(id);
             }
         }
-        Some(Err(err)) => snarl[node].set_error(format!("Could not open image: {err}")),
+        Some(Err(err)) => {
+            if let Some(node_mut) = snarl.get_node_mut(node) {
+                node_mut.set_error(format!("Could not open image: {err}"));
+            }
+        }
         None => {}
     }
 }
@@ -265,7 +281,7 @@ pub(crate) fn upstream_image(
     // Any node (Image, RemoveBg, FaceRestore) can produce an output path.
     let mut up = upstream(snarl, node).ok_or_else(|| "No input connected".to_owned())?;
     let mut seen = std::collections::HashSet::new();
-    while snarl[up].output_path().is_none() {
+    while snarl.get_node(up).and_then(|n| n.output_path()).is_none() {
         if !seen.insert(up) {
             return Err("Image input cycle detected".to_owned());
         }
@@ -276,7 +292,10 @@ pub(crate) fn upstream_image(
         }
     }
 
-    let path = snarl[up]
+    let up_node = snarl
+        .get_node(up)
+        .ok_or_else(|| "Upstream node not found".to_owned())?;
+    let path = up_node
         .output_path()
         .map(|p| p.to_path_buf())
         .ok_or_else(|| "Run the upstream node first".to_owned())?;
@@ -284,13 +303,16 @@ pub(crate) fn upstream_image(
     ensure_image_loaded(snarl, up, ctx, assets);
     memory.touch(up);
 
-    if let Some(image) = snarl[up].cpu() {
+    let up_node = snarl
+        .get_node(up)
+        .ok_or_else(|| "Upstream node not found".to_owned())?;
+    if let Some(image) = up_node.cpu() {
         return Ok(image.clone());
     }
-    if let Some(error) = snarl[up].error() {
+    if let Some(error) = up_node.error() {
         return Err(error.to_owned());
     }
-    if snarl[up].job().is_some() {
+    if up_node.job().is_some() {
         return Err("The upstream node is still processing".to_owned());
     }
 
@@ -304,7 +326,9 @@ pub(crate) fn upstream_image(
 /// Drop a node's own output and everything downstream of it. Used when an
 /// input wire changes, including connect and disconnect.
 pub(crate) fn invalidate_node(snarl: &mut Snarl<Node>, node: NodeId) {
-    snarl[node].invalidate_output();
+    if let Some(n) = snarl.get_node_mut(node) {
+        n.invalidate_output();
+    }
     invalidate_downstream(snarl, node);
 }
 
@@ -325,8 +349,11 @@ pub(crate) fn invalidate_downstream(snarl: &mut Snarl<Node>, node: NodeId) {
             .remotes;
         for remote in remotes {
             let down = remote.node;
-            let can_propagate =
-                snarl[down].invalidate_output() && catalog::spec(snarl[down].kind()).outputs > 0;
+            let can_propagate = if let Some(down_node) = snarl.get_node_mut(down) {
+                down_node.invalidate_output() && catalog::spec(down_node.kind()).outputs > 0
+            } else {
+                false
+            };
             if can_propagate {
                 stack.push(down);
             }
@@ -343,8 +370,11 @@ pub(crate) fn refresh_viewer(
     ctx: &egui::Context,
     assets: &mut AssetStore,
 ) {
-    let sockets = catalog::spec(snarl[node].kind()).sockets.len();
-    let is_blend = snarl[node]
+    let Some(viewer_ref) = snarl.get_node(node) else {
+        return;
+    };
+    let sockets = catalog::spec(viewer_ref.kind()).sockets.len();
+    let is_blend = viewer_ref
         .filter_node()
         .is_some_and(|f| f.kind == crate::model::FilterKind::Blend);
 
@@ -361,7 +391,7 @@ pub(crate) fn refresh_viewer(
         let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
         for remote in remotes {
             let source = resolve_route(snarl, remote.node);
-            if !sources.contains(&source) {
+            if snarl.get_node(source).is_some() && !sources.contains(&source) {
                 sources.push(source);
             }
         }
@@ -369,8 +399,9 @@ pub(crate) fn refresh_viewer(
 
     // Existing layers are matched by their resolved source, so inserting or
     // removing a Route keeps the layer identity (and its user transform).
-    let existing_sources: Vec<NodeId> = snarl[node]
-        .layers()
+    let existing_sources: Vec<NodeId> = snarl
+        .get_node(node)
+        .and_then(|n| n.layers())
         .map(|layers| {
             layers
                 .iter()
@@ -388,10 +419,13 @@ pub(crate) fn refresh_viewer(
     let mut layer_data: Vec<(NodeId, Kind, String, Option<PathBuf>, Option<TextureHandle>)> =
         Vec::with_capacity(sources.len());
     for source in &sources {
-        let spec = catalog::spec(snarl[*source].kind());
+        let Some(source_node) = snarl.get_node(*source) else {
+            continue;
+        };
+        let spec = catalog::spec(source_node.kind());
         let source_name = spec.title.to_string();
         let source_kind = spec.kind;
-        let source_path = snarl[*source].output_path().map(|p| p.to_path_buf());
+        let source_path = source_node.output_path().map(|p| p.to_path_buf());
         let existing_tex = effective_texture(snarl, *source);
         layer_data.push((*source, source_kind, source_name, source_path, existing_tex));
     }
@@ -475,7 +509,7 @@ pub(crate) fn effective_dimensions(
     let node = resolve_route(snarl, node);
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
-    while let Some(image) = snarl[current].image_node() {
+    while let Some(image) = snarl.get_node(current).and_then(|n| n.image_node()) {
         if !seen.insert(current) {
             return None;
         }
@@ -491,10 +525,10 @@ pub(crate) fn effective_dimensions(
             return None;
         }
     }
-    if let Some(cpu) = snarl[current].cpu() {
+    if let Some(cpu) = snarl.get_node(current).and_then(|n| n.cpu()) {
         return Some(cpu.dimensions());
     }
-    if let Some(path) = snarl[current].reload_path() {
+    if let Some(path) = snarl.get_node(current).and_then(|n| n.reload_path()) {
         return image::image_dimensions(path).ok();
     }
     None
@@ -506,7 +540,7 @@ pub(crate) fn source_name(snarl: &Snarl<Node>, node: NodeId) -> String {
     let node = resolve_route(snarl, node);
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
-    while let Some(image) = snarl[current].image_node() {
+    while let Some(image) = snarl.get_node(current).and_then(|n| n.image_node()) {
         if !seen.insert(current) {
             return "image".to_owned();
         }
