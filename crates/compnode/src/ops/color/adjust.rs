@@ -4,7 +4,9 @@ use std::cmp::Ordering;
 
 use image::RgbaImage;
 
-use crate::ops::math::{byte_to_unit, clamp01, unit_to_u8_round};
+use crate::ops::math::{
+    byte_to_unit, byte_value_to_u8_round, clamp01, luma709, luma709_bytes, unit_to_u8_round,
+};
 use crate::params::{self, CurvePoint, Params};
 
 fn percent(params: &Params, key: &str, default: f32) -> f32 {
@@ -135,9 +137,7 @@ pub(crate) fn curve_lut(points: &[CurvePoint]) -> [u8; 256] {
     let normalized = sanitize_curve(points);
     let mut lut = [0u8; 256];
     for (index, slot) in lut.iter_mut().enumerate() {
-        *slot = (sample_curve(&normalized, index as f32 / 255.0) * 255.0)
-            .round()
-            .clamp(0.0, 255.0) as u8;
+        *slot = byte_value_to_u8_round(sample_curve(&normalized, index as f32 / 255.0) * 255.0);
     }
     lut
 }
@@ -165,9 +165,7 @@ pub(crate) fn invert(src: &RgbaImage, params: &Params) -> RgbaImage {
     for pixel in out.pixels_mut() {
         for channel in 0..3 {
             let value = pixel[channel] as f32;
-            pixel[channel] = (value + (255.0 - 2.0 * value) * amount)
-                .round()
-                .clamp(0.0, 255.0) as u8;
+            pixel[channel] = byte_value_to_u8_round(value + (255.0 - 2.0 * value) * amount);
         }
     }
     out
@@ -182,9 +180,7 @@ pub(crate) fn exposure(src: &RgbaImage, params: &Params) -> RgbaImage {
     let mut lut = [0u8; 256];
     for (value, slot) in lut.iter_mut().enumerate() {
         let normalized = clamp01((value as f32 / 255.0) * gain + offset);
-        *slot = (normalized.powf(1.0 / gamma) * 255.0)
-            .round()
-            .clamp(0.0, 255.0) as u8;
+        *slot = byte_value_to_u8_round(normalized.powf(1.0 / gamma) * 255.0);
     }
 
     let mut out = src.clone();
@@ -280,7 +276,7 @@ pub(crate) fn color_balance(src: &RgbaImage, params: &Params) -> RgbaImage {
         let r = pixel[0] as f32 / 255.0;
         let g = pixel[1] as f32 / 255.0;
         let b = pixel[2] as f32 / 255.0;
-        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let lum = luma709([r, g, b]);
         let weight = match range {
             "shadows" => (1.0 - lum) * (1.0 - lum),
             "highlights" => lum * lum,
@@ -292,7 +288,7 @@ pub(crate) fn color_balance(src: &RgbaImage, params: &Params) -> RgbaImage {
         let mut nb = b + yb * 0.5 * weight;
 
         if preserve {
-            let next_lum = 0.2126 * nr + 0.7152 * ng + 0.0722 * nb;
+            let next_lum = luma709([nr, ng, nb]);
             if next_lum > 0.0001 {
                 let scale = lum / next_lum;
                 nr *= scale;
@@ -339,16 +335,15 @@ pub(crate) fn gradient_map(src: &RgbaImage, params: &Params) -> RgbaImage {
             )
         };
         for channel in 0..3 {
-            slot[channel] = (from[channel] as f32
-                + (to[channel] as f32 - from[channel] as f32) * local)
-                .round()
-                .clamp(0.0, 255.0) as u8;
+            slot[channel] = byte_value_to_u8_round(
+                from[channel] as f32 + (to[channel] as f32 - from[channel] as f32) * local,
+            );
         }
     }
 
     let mut out = src.clone();
     for pixel in out.pixels_mut() {
-        let lum = 0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32;
+        let lum = luma709_bytes([pixel[0], pixel[1], pixel[2]]);
         let entry = &lut[lum.round().clamp(0.0, 255.0) as usize];
         pixel[0] = entry[0];
         pixel[1] = entry[1];

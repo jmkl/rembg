@@ -8,7 +8,7 @@
 
 use crate::{
     ops::effects::{self, Fx},
-    ops::math::{byte_to_unit, unit_to_u8_round},
+    ops::math::{byte_to_unit, byte_value_to_u8_round, unit_to_u8_round},
     params::{self, Params},
 };
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
@@ -363,7 +363,7 @@ fn paint_box(
             for channel in 0..3 {
                 let src = pixel.0[channel] as f32 * alpha;
                 let dst = color[channel] as f32 * (1.0 - alpha);
-                pixel.0[channel] = (src + dst).round() as u8;
+                pixel.0[channel] = byte_value_to_u8_round(src + dst);
             }
             pixel.0[3] = 255;
         }

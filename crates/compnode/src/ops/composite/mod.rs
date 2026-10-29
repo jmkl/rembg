@@ -4,7 +4,9 @@ use image::{RgbaImage, imageops::FilterType};
 use rayon::prelude::*;
 
 use crate::model::ViewerLayer;
-use crate::ops::math::{byte_to_unit, css_blend_luma, sample_bilinear_rgba8};
+use crate::ops::math::{
+    byte_to_unit, byte_value_to_u8_round, css_blend_luma, luma709_bytes, sample_bilinear_rgba8,
+};
 use crate::params::{self, Params};
 
 type Rgb = [f32; 3];
@@ -251,17 +253,15 @@ pub(crate) fn apply_mask(
 
     let mut out = image.clone();
     for (source, mask_pixel) in out.pixels_mut().zip(mask.pixels()) {
-        let brightness = (0.2126 * mask_pixel[0] as f32
-            + 0.7152 * mask_pixel[1] as f32
-            + 0.0722 * mask_pixel[2] as f32)
-            * (1.0 / 255.0);
+        let brightness =
+            luma709_bytes([mask_pixel[0], mask_pixel[1], mask_pixel[2]]) * (1.0 / 255.0);
         let mask_alpha = if dark_is_opaque {
             1.0 - brightness
         } else {
             brightness
         };
         let factor = 1.0 - strength + mask_alpha * strength;
-        source[3] = (source[3] as f32 * factor).round().clamp(0.0, 255.0) as u8;
+        source[3] = byte_value_to_u8_round(source[3] as f32 * factor);
     }
     out
 }
@@ -289,13 +289,16 @@ fn composite_pixel(base: [u8; 4], source: [u8; 4], opacity: f32, op: BlendOp) ->
     let b_term = (1.0 - alpha_s) * alpha_b;
 
     [
-        ((s_term * cs[0] + mix_term * mixed[0] + b_term * cb[0]) * inv_alpha_o + 0.5)
-            .clamp(0.0, 255.0) as u8,
-        ((s_term * cs[1] + mix_term * mixed[1] + b_term * cb[1]) * inv_alpha_o + 0.5)
-            .clamp(0.0, 255.0) as u8,
-        ((s_term * cs[2] + mix_term * mixed[2] + b_term * cb[2]) * inv_alpha_o + 0.5)
-            .clamp(0.0, 255.0) as u8,
-        (alpha_o * 255.0 + 0.5).clamp(0.0, 255.0) as u8,
+        byte_value_to_u8_round(
+            (s_term * cs[0] + mix_term * mixed[0] + b_term * cb[0]) * inv_alpha_o,
+        ),
+        byte_value_to_u8_round(
+            (s_term * cs[1] + mix_term * mixed[1] + b_term * cb[1]) * inv_alpha_o,
+        ),
+        byte_value_to_u8_round(
+            (s_term * cs[2] + mix_term * mixed[2] + b_term * cb[2]) * inv_alpha_o,
+        ),
+        byte_value_to_u8_round(alpha_o * 255.0),
     ]
 }
 

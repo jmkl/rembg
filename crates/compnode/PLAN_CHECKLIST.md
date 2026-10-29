@@ -23,13 +23,13 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 
 - [x] Fix pre-existing unit test failure in `tests::preview_textures_are_capped`
 - [x] Clean up compiler warnings:
-  - [x] Remove unused import `self` in `src/ops/rawfilter.rs`
+  - [x] Remove unused import `self` from the legacy Raw Filter wrapper
   - [x] Prefix unused variables `_t` and `_backend` in `src/ops/rf/mod.rs`
-  - [x] Annotate/clean dead helper functions in `src/ops/rawfilter.rs`
+  - [x] Remove obsolete `src/ops/rawfilter.rs` and route catalog dispatch directly to `src/ops/rf/`
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (43 passed)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (49 passed, 1 ignored benchmark)
 
 ---
 
@@ -53,7 +53,15 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Share normalized color clamping and byte/float conversion helpers
   - [x] Share bilinear and bicubic RGBA sampling helpers
 
-### 1.3 Core Node Trait & Lifecycle Abstraction
+### 1.3 Pixel Semantics & Operation Contracts
+- [x] Document encoded-sRGB versus linear-light assumptions at operation boundaries in [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md)
+- [x] Document straight-alpha versus premultiplied-alpha expectations for compositing, masks, text, and resampling
+- [x] Record rounding, clamping, and edge-sampling rules for shared pixel helpers
+- [x] Define behavior for empty images, non-finite parameters, and generator dimensions
+- [x] Add deterministic generator and sampler edge-case checks
+- [x] Require golden cases and compatibility notes for color-space or alpha behavior changes
+
+### 1.4 Core Node Trait & Lifecycle Abstraction
 - [ ] Define `NodeTrait` for dynamic node dispatch:
   - [ ] Sockets / port definitions
   - [ ] Parameter schema and validation
@@ -172,6 +180,8 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 ### 5.2 Automated Fuzzing & Stress Testing
 - [ ] Add random graph topology fuzz testing (connecting/disconnecting arbitrary pins to ensure no panics)
 - [ ] Golden image regression test suite comparing CPU and GPU outputs
+  - [ ] Define operation-specific tolerances and compare alpha separately from RGB
+- [ ] Add property/edge-case checks for sampling bounds, alpha preservation, empty inputs, and non-finite parameters
 
 ### 5.3 Documentation & Verification
 - [x] Maintain up-to-date [README_AG.md](./README_AG.md)

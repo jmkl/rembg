@@ -14,6 +14,7 @@ impl Mask {
         }
     }
 }
+use crate::ops::math::unit_to_u8_round;
 use crate::params::{self, Params};
 
 /// Premultiplied RGBA canvas.
@@ -56,7 +57,7 @@ impl Canvas {
         }
     }
     pub fn to_bytes(&self, premultiplied: bool) -> Vec<u8> {
-        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let q = unit_to_u8_round;
         self.px
             .iter()
             .flat_map(|p| {

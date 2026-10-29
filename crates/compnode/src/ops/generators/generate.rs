@@ -2,7 +2,7 @@
 
 use image::{Rgba, RgbaImage};
 
-use crate::ops::math::unit_to_u8_round;
+use crate::ops::math::{byte_value_to_u8_round, unit_to_u8_round};
 use crate::params::{self, Params};
 
 fn sample_stops(stops: &[(f32, [u8; 3])], t: f32) -> [u8; 3] {
@@ -19,10 +19,9 @@ fn sample_stops(stops: &[(f32, [u8; 3])], t: f32) -> [u8; 3] {
             let local = (t - start) / (end - start);
             let mut out = [0u8; 3];
             for channel in 0..3 {
-                out[channel] = (from[channel] as f32
-                    + (to[channel] as f32 - from[channel] as f32) * local)
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
+                out[channel] = byte_value_to_u8_round(
+                    from[channel] as f32 + (to[channel] as f32 - from[channel] as f32) * local,
+                );
             }
             return out;
         }
@@ -216,4 +215,30 @@ pub(crate) fn noise(params: &Params, canvas: (u32, u32)) -> RgbaImage {
         *pixel = Rgba([gray, gray, gray, 255]);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::noise;
+    use crate::params::Params;
+    use serde_json::json;
+
+    #[test]
+    fn noise_is_repeatable_for_a_fixed_kind_and_seed() {
+        for kind in ["fbm", "perlin", "simplex", "ridged", "multifractal"] {
+            let mut params = Params::new();
+            params.insert("kind".into(), json!(kind));
+            params.insert("seed".into(), json!(19));
+            let first = noise(&params, (32, 24));
+            let second = noise(&params, (32, 24));
+            assert_eq!(first, second, "noise kind {kind} should be deterministic");
+            assert!(first.pixels().all(|pixel| pixel[3] == 255));
+        }
+    }
+
+    #[test]
+    fn zero_canvas_noise_uses_a_single_pixel() {
+        let image = noise(&Params::new(), (0, 0));
+        assert_eq!(image.dimensions(), (1, 1));
+    }
 }

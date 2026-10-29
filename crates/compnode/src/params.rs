@@ -18,18 +18,25 @@ pub(crate) struct CurvePoint {
 }
 
 pub(crate) fn f32(params: &Params, key: &str, default: f32) -> f32 {
-    params
+    let value = params
         .get(key)
         .and_then(Value::as_f64)
         .map(|value| value as f32)
-        .unwrap_or(default)
+        .unwrap_or(default);
+    if value.is_finite() { value } else { default }
 }
 
 pub(crate) fn u32(params: &Params, key: &str, default: u32) -> u32 {
     params
         .get(key)
         .and_then(Value::as_f64)
-        .map(|value| value.max(0.0) as u32)
+        .map(|value| {
+            if value.is_finite() {
+                value.max(0.0) as u32
+            } else {
+                default
+            }
+        })
         .unwrap_or(default)
 }
 
@@ -118,4 +125,15 @@ pub(crate) fn identity_curve() -> Vec<CurvePoint> {
 /// JSON value for the default identity curve, used when a node is created.
 pub(crate) fn identity_curve_value() -> Value {
     serde_json::to_value(identity_curve()).unwrap_or(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Params, f32};
+
+    #[test]
+    fn float_reader_uses_default_when_f64_overflows_f32() {
+        let params: Params = serde_json::from_value(serde_json::json!({ "value": 1e300 })).unwrap();
+        assert_eq!(f32(&params, "value", 2.5), 2.5);
+    }
 }

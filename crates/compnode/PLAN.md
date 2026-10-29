@@ -21,7 +21,7 @@ This plan outlines a comprehensive refactoring of the CompNode crate to improve 
 4. **Node body UI scattered**: Each node's `show_body` in separate files, but logic varies in consistency
 5. **Limited test coverage**: Some tests exist but comprehensive coverage is lacking
 6. **No formal plugin/extension system**: All nodes are compiled in statically
-7. **Operations module (`ops/`)**: Ad-hoc organization with `adjust.rs`, `composite.rs`, `effects.rs`, `generate.rs`, `rawfilter.rs`, `texts.rs`
+7. **Pixel semantics**: Color-space, alpha, rounding, and resampling behavior should be explicit and consistent across operations.
 
 ## Refactoring Goals
 
@@ -63,27 +63,42 @@ This plan outlines a comprehensive refactoring of the CompNode crate to improve 
 
 ### 3. Operations Organization
 
-Move ops from `src/ops/` to `src/operations/` with proper module structure:
+Keep operations under `src/ops/` and organize them by domain:
 
-- `arithmetic/` - Blend modes, opacity adjustments
-- `color/` - Hsv, curves, exposure, color balance, etc.
-- `generators/` - Gradient, noise, texts
-- `transform/` - Raw filter, resize, etc.
-- `composite/` - Layer compositing
+- `color/` - HSV, curves, exposure, color balance, gradient map, invert
+- `composite/` - Blend modes, layer stacking, transforms, masks
+- `generators/` - Gradients, value/Perlin/Simplex noise, text rendering
+- `rf/` - CPU and GPU Raw Filter implementations
+- `math.rs` - Shared luma, clamping, conversion, and sampling helpers
 
-### 4. Node System Improvements
+### 4. Pixel Semantics & Operation Contracts
+
+Make the image-processing assumptions explicit before changing algorithms:
+
+See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior and compatibility baseline.
+
+- Document whether RGB values are treated as encoded sRGB or linear light at each operation boundary.
+- Document straight-alpha versus premultiplied-alpha expectations, including text rendering, masks, resize, and compositing.
+- Name the luma definition used by each operation (Rec. 709, Rec. 601, or CSS blend luminosity) and preserve CSS blend behavior.
+- Define rounding and clamping rules for float-to-byte conversion and sampling at image edges.
+- Record behavior for empty images, non-finite parameters, and extreme dimensions; keep operations deterministic for a fixed input and seed.
+- Require any behavior-changing color-space or alpha correction to include before/after golden cases and a session compatibility note.
+
+### 5. Node System Improvements
 
 - Standardize `show_body` signatures and patterns
 - Create base trait for node bodies
 - Add node registry hooks for auto-discovery
 - Improve preview management consistency
 
-### 5. Testing Framework
+### 6. Testing Framework
 
 - Add integration test suite
 - Create mock worker for UI tests
-- Test evaluation pipeline with known inputs/outputs
+- Test evaluation pipeline with known inputs/outputs, including alpha and edge cases
 - Test cache behavior
+- Compare CPU and GPU output with documented per-operation tolerances
+- Check deterministic generator output for fixed parameters and seeds
 
 ## Migration Plan
 
@@ -131,9 +146,9 @@ Move ops from `src/ops/` to `src/operations/` with proper module structure:
 
 - [x] Fix pre-existing unit test failure in `tests::preview_textures_are_capped` (assert dimension check 256 vs 200).
 - [x] Clean up compiler warnings:
-  - [x] Remove unused import `self` in `src/ops/rawfilter.rs`.
+  - [x] Remove unused import `self` from the legacy Raw Filter wrapper.
   - [x] Remove unused variables `_t` and `_backend` in `src/ops/rf/mod.rs`.
-  - [x] Remove dead/unused functions in `src/ops/rawfilter.rs` (`clamp01`, `luma`, `blurred`, etc.) or replace with active implementation.
+  - [x] Remove the obsolete `src/ops/rawfilter.rs` wrapper and route catalog dispatch to `src/ops/rf/`.
   - [x] Remove unused `min_pixels` in `src/ops/rf/mod.rs` and `eval_image` in `src/model.rs`.
 
 ### Phase 1: Operations & Core Data Foundation
@@ -509,5 +524,5 @@ The implementation is tracked in detail in [`CHECKLIST.md`](./CHECKLIST.md).
 - [x] **Step 3 (Spec Builder)**: Added `NodeSpec::filter(...)` and `NodeSpec::generator(...)` constructors. Simplified all existing entries in `catalog.rs`.
 - [x] **Step 4 (Modularization)**: Colocated filter eval closures and field definitions with builder specs in `catalog.rs`, ready for optional per-file extraction as new filters are created.
 - [x] **Step 5 (FilterKind Unbundling)**: Promoted `Route`, `Group`, `Blend`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants. Created dedicated `GroupNode` and `TextsNode` structs. Stripped `FilterNode` of layer-stack fields (`layers`, `canvas_size`). Preserved 100% backward compatibility for `.rembg.json` sessions.
-- [x] **Verification**: All 43 unit tests passing; zero compiler warnings (`cargo check -p compnode`).
+- [x] **Verification**: 49 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
 
