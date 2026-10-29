@@ -11,6 +11,7 @@ use egui_snarl::{
 };
 
 use crate::assets::AssetStore;
+use crate::cancellation::CancellationToken;
 use crate::catalog;
 use crate::graph::{connect_input, full_res_source_path, invalidate_downstream, invalidate_node};
 use crate::memory::ImageMemory;
@@ -18,7 +19,9 @@ use crate::model::{Kind, Node, ViewerLayer};
 use crate::style::controls::{MenuItem, muted};
 use crate::style::{self, BODY_MARGIN, font, icons, pal};
 use crate::widgets::socket;
-use crate::worker::{FilterInput, Job, WorkerRequest};
+use crate::worker::{
+    FilterInput, InferenceJob, InferenceRequest, RenderJob, RenderRequest, WorkerRequest,
+};
 
 pub(crate) struct GraphEditor {
     /// Current canvas scale, used to keep the dot grid a constant size.
@@ -411,19 +414,24 @@ impl GraphEditor {
             Ok(input) => {
                 let token = self.next_token;
                 self.next_token += 1;
+                let cancellation = CancellationToken::default();
                 let source_name = crate::graph::source_name(snarl, node);
                 if self
                     .jobs
-                    .send(WorkerRequest::Job(Job::RemoveBg {
-                        token,
-                        node,
-                        input,
-                        source_name,
+                    .send(WorkerRequest::Inference(InferenceRequest {
+                        job: InferenceJob::RemoveBg {
+                            token,
+                            node,
+                            input,
+                            source_name,
+                        },
+                        cancellation: cancellation.clone(),
                     }))
                     .is_ok()
                 {
                     if let Some(process) = snarl[node].process_mut() {
                         process.job = Some(token);
+                        process.cancellation = Some(cancellation);
                         process.preview.error = None;
                     }
                     invalidate_downstream(snarl, node);
@@ -461,18 +469,23 @@ impl GraphEditor {
             Ok(input) => {
                 let token = self.next_token;
                 self.next_token += 1;
+                let cancellation = CancellationToken::default();
                 let source_name = crate::graph::source_name(snarl, node);
-                let job = Job::FaceRestore {
-                    token,
-                    node,
-                    input,
-                    strength,
-                    only_center,
-                    source_name,
-                };
-                if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+                let request = WorkerRequest::Inference(InferenceRequest {
+                    job: InferenceJob::FaceRestore {
+                        token,
+                        node,
+                        input,
+                        strength,
+                        only_center,
+                        source_name,
+                    },
+                    cancellation: cancellation.clone(),
+                });
+                if self.jobs.send(request).is_ok() {
                     if let Some(process) = snarl[node].process_mut() {
                         process.job = Some(token);
+                        process.cancellation = Some(cancellation);
                         process.preview.error = None;
                     }
                     invalidate_downstream(snarl, node);
@@ -545,19 +558,24 @@ impl GraphEditor {
 
         let token = self.next_token;
         self.next_token += 1;
+        let cancellation = CancellationToken::default();
         let source_name = crate::graph::source_name(snarl, node);
-        let job = Job::Composite {
-            token,
-            node,
-            layers,
-            canvas,
-            mode,
-            opacity,
-            source_name,
-        };
-        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+        let request = WorkerRequest::Render(RenderRequest {
+            job: RenderJob::Composite {
+                token,
+                node,
+                layers,
+                canvas,
+                mode,
+                opacity,
+                source_name,
+            },
+            cancellation: cancellation.clone(),
+        });
+        if self.jobs.send(request).is_ok() {
             if let Some(group) = snarl[node].group_node_mut() {
                 group.job = Some(token);
+                group.cancellation = Some(cancellation);
                 group.render_state = None;
                 group.rendered = Some(signature);
                 group.preview.error = None;
@@ -615,19 +633,24 @@ impl GraphEditor {
 
         let token = self.next_token;
         self.next_token += 1;
+        let cancellation = CancellationToken::default();
         let source_name = crate::graph::source_name(snarl, node);
-        let job = Job::Filter {
-            token,
-            node,
-            kind,
-            params,
-            inputs,
-            canvas,
-            source_name,
-        };
-        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+        let request = WorkerRequest::Render(RenderRequest {
+            job: RenderJob::Filter {
+                token,
+                node,
+                kind,
+                params,
+                inputs,
+                canvas,
+                source_name,
+            },
+            cancellation: cancellation.clone(),
+        });
+        if self.jobs.send(request).is_ok() {
             if let Some(filter) = snarl[node].filter_node_mut() {
                 filter.job = Some(token);
+                filter.cancellation = Some(cancellation);
                 filter.render_state = None;
                 filter.rendered = Some(signature);
                 filter.preview.error = None;
@@ -654,17 +677,22 @@ impl GraphEditor {
 
         let token = self.next_token;
         self.next_token += 1;
+        let cancellation = CancellationToken::default();
         let source_name = crate::graph::source_name(snarl, node);
-        let job = Job::Texts {
-            token,
-            node,
-            params,
-            canvas,
-            source_name,
-        };
-        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+        let request = WorkerRequest::Render(RenderRequest {
+            job: RenderJob::Texts {
+                token,
+                node,
+                params,
+                canvas,
+                source_name,
+            },
+            cancellation: cancellation.clone(),
+        });
+        if self.jobs.send(request).is_ok() {
             if let Some(texts) = snarl[node].texts_node_mut() {
                 texts.job = Some(token);
+                texts.cancellation = Some(cancellation);
                 texts.render_state = None;
                 texts.rendered = Some(signature);
                 texts.preview.error = None;
@@ -731,19 +759,24 @@ impl GraphEditor {
             Ok(input) => {
                 let token = self.next_token;
                 self.next_token += 1;
+                let cancellation = CancellationToken::default();
                 let source_name = crate::graph::source_name(snarl, node);
                 if self
                     .jobs
-                    .send(WorkerRequest::Job(Job::RemoveBgV2 {
-                        token,
-                        node,
-                        input,
-                        source_name,
+                    .send(WorkerRequest::Inference(InferenceRequest {
+                        job: InferenceJob::RemoveBgV2 {
+                            token,
+                            node,
+                            input,
+                            source_name,
+                        },
+                        cancellation: cancellation.clone(),
                     }))
                     .is_ok()
                 {
                     if let Some(process) = snarl[node].process_mut() {
                         process.job = Some(token);
+                        process.cancellation = Some(cancellation);
                         process.preview.error = None;
                     }
                     invalidate_downstream(snarl, node);

@@ -17,6 +17,7 @@
 mod app;
 mod assets;
 mod cache;
+mod cancellation;
 mod catalog;
 mod editor;
 mod eval;

@@ -16,10 +16,16 @@ use rembg_core::{
 };
 
 use crate::cache::{OutputCache, cache_key, cache_key_layers, cache_key_refs};
+use crate::cancellation::CancellationToken;
 use crate::model::{FilterKind, JobOutput, Kind, RunTiming, ViewerLayer};
 use crate::params::Params;
 
-pub(crate) enum Job {
+enum Job {
+    Inference(InferenceJob),
+    Render(RenderJob),
+}
+
+pub(crate) enum InferenceJob {
     RemoveBg {
         token: u64,
         node: NodeId,
@@ -39,38 +45,6 @@ pub(crate) enum Job {
         input: image::RgbaImage,
         strength: f32,
         only_center: bool,
-        source_name: String,
-    },
-    /// Full-resolution Group/Blend composite rendered from on-disk source
-    /// images.
-    Composite {
-        token: u64,
-        node: NodeId,
-        layers: Vec<CompositeLayer>,
-        canvas: (u32, u32),
-        /// Blend mode applied to every layer above the bottom one
-        /// ("source-over" for Group).
-        mode: String,
-        /// Opacity 0..1 for the same layers.
-        opacity: f32,
-        source_name: String,
-    },
-    /// Full-resolution render of any non-Group filter node.
-    Filter {
-        token: u64,
-        node: NodeId,
-        kind: FilterKind,
-        params: Params,
-        inputs: Vec<Vec<FilterInput>>,
-        canvas: (u32, u32),
-        source_name: String,
-    },
-    /// Full-resolution render of a Texts typography node.
-    Texts {
-        token: u64,
-        node: NodeId,
-        params: Params,
-        canvas: (u32, u32),
         source_name: String,
     },
 }
@@ -117,8 +91,48 @@ pub(crate) struct InferenceConfig {
     pub cache_dir: PathBuf, // <- new
 }
 
+pub(crate) enum RenderJob {
+    /// Full-resolution Group/Blend composite rendered from on-disk source images.
+    Composite {
+        token: u64,
+        node: NodeId,
+        layers: Vec<CompositeLayer>,
+        canvas: (u32, u32),
+        mode: String,
+        opacity: f32,
+        source_name: String,
+    },
+    Filter {
+        token: u64,
+        node: NodeId,
+        kind: FilterKind,
+        params: Params,
+        inputs: Vec<Vec<FilterInput>>,
+        canvas: (u32, u32),
+        source_name: String,
+    },
+    Texts {
+        token: u64,
+        node: NodeId,
+        params: Params,
+        canvas: (u32, u32),
+        source_name: String,
+    },
+}
+
+pub(crate) struct InferenceRequest {
+    pub(crate) job: InferenceJob,
+    pub(crate) cancellation: CancellationToken,
+}
+
+pub(crate) struct RenderRequest {
+    pub(crate) job: RenderJob,
+    pub(crate) cancellation: CancellationToken,
+}
+
 pub(crate) enum WorkerRequest {
-    Job(Job),
+    Inference(InferenceRequest),
+    Render(RenderRequest),
     Configure(InferenceConfig),
 }
 
@@ -126,6 +140,28 @@ pub(crate) struct JobDone {
     pub token: u64,
     pub node: NodeId,
     pub result: Result<JobOutput, String>,
+}
+
+pub(crate) struct InferenceResponse {
+    pub done: JobDone,
+}
+
+pub(crate) struct RenderResponse {
+    pub done: JobDone,
+}
+
+pub(crate) enum WorkerResponse {
+    Inference(InferenceResponse),
+    Render(RenderResponse),
+}
+
+impl WorkerResponse {
+    pub(crate) fn into_job_done(self) -> JobDone {
+        match self {
+            Self::Inference(response) => response.done,
+            Self::Render(response) => response.done,
+        }
+    }
 }
 
 /// Render a Group/Blend node at full resolution from on-disk source images and
@@ -305,7 +341,11 @@ fn texts_full(
     params_bytes.extend_from_slice(&canvas.0.to_le_bytes());
     params_bytes.extend_from_slice(&canvas.1.to_le_bytes());
     let domain = "compnode-filter-v1:texts";
-    let key = cache_key_refs(domain, std::iter::empty::<&image::RgbaImage>(), &params_bytes);
+    let key = cache_key_refs(
+        domain,
+        std::iter::empty::<&image::RgbaImage>(),
+        &params_bytes,
+    );
 
     let cached_path = cache.path_for(&key);
     if cached_path.is_file()
@@ -347,9 +387,9 @@ pub(crate) fn spawn_worker(
     ctx: egui::Context,
     mut cache: OutputCache,
     config: InferenceConfig,
-) -> (Sender<WorkerRequest>, Receiver<JobDone>) {
+) -> (Sender<WorkerRequest>, Receiver<WorkerResponse>) {
     let (request_tx, request_rx) = mpsc::channel::<WorkerRequest>();
-    let (done_tx, done_rx) = mpsc::channel::<JobDone>();
+    let (done_tx, done_rx) = mpsc::channel::<WorkerResponse>();
 
     thread::Builder::new()
         .name("compnode-inference".to_owned())
@@ -357,7 +397,7 @@ pub(crate) fn spawn_worker(
             let mut models = Models::new(config.clone());
 
             while let Ok(request) = request_rx.recv() {
-                let (token, node, result) = match request {
+                let (job, cancellation, inference) = match request {
                     WorkerRequest::Configure(config) => {
                         if config.cache_dir != models.config.cache_dir {
                             cache = OutputCache::new(config.cache_dir.clone());
@@ -365,7 +405,18 @@ pub(crate) fn spawn_worker(
                         models.configure(config);
                         continue;
                     }
-                    WorkerRequest::Job(Job::RemoveBg {
+                    WorkerRequest::Inference(request) => {
+                        (Job::Inference(request.job), request.cancellation, true)
+                    }
+                    WorkerRequest::Render(request) => {
+                        (Job::Render(request.job), request.cancellation, false)
+                    }
+                };
+                if cancellation.is_cancelled() {
+                    continue;
+                }
+                let (token, node, result) = match job {
+                    Job::Inference(InferenceJob::RemoveBg {
                         token,
                         node,
                         input,
@@ -401,7 +452,7 @@ pub(crate) fn spawn_worker(
                         });
                         (token, node, result)
                     }
-                    WorkerRequest::Job(Job::RemoveBgV2 {
+                    Job::Inference(InferenceJob::RemoveBgV2 {
                         token,
                         node,
                         input,
@@ -440,7 +491,7 @@ pub(crate) fn spawn_worker(
                         });
                         (token, node, result)
                     }
-                    WorkerRequest::Job(Job::FaceRestore {
+                    Job::Inference(InferenceJob::FaceRestore {
                         token,
                         node,
                         input,
@@ -484,7 +535,7 @@ pub(crate) fn spawn_worker(
                                 });
                         (token, node, result)
                     }
-                    WorkerRequest::Job(Job::Composite {
+                    Job::Render(RenderJob::Composite {
                         token,
                         node,
                         layers,
@@ -497,7 +548,7 @@ pub(crate) fn spawn_worker(
                             composite_full(&cache, &layers, canvas, &mode, opacity, &source_name);
                         (token, node, result)
                     }
-                    WorkerRequest::Job(Job::Filter {
+                    Job::Render(RenderJob::Filter {
                         token,
                         node,
                         kind,
@@ -510,27 +561,29 @@ pub(crate) fn spawn_worker(
                             filter_full(&cache, kind, &params, inputs, canvas, &source_name);
                         (token, node, result)
                     }
-                    WorkerRequest::Job(Job::Texts {
+                    Job::Render(RenderJob::Texts {
                         token,
                         node,
                         params,
                         canvas,
                         source_name,
                     }) => {
-                        let result =
-                            texts_full(&cache, &params, canvas, &source_name);
+                        let result = texts_full(&cache, &params, canvas, &source_name);
                         (token, node, result)
                     }
                 };
 
-                if done_tx
-                    .send(JobDone {
-                        token,
-                        node,
-                        result,
-                    })
-                    .is_err()
-                {
+                let done = JobDone {
+                    token,
+                    node,
+                    result,
+                };
+                let response = if inference {
+                    WorkerResponse::Inference(InferenceResponse { done })
+                } else {
+                    WorkerResponse::Render(RenderResponse { done })
+                };
+                if done_tx.send(response).is_err() {
                     break;
                 }
                 // Wake the UI so the finished job is picked up immediately.

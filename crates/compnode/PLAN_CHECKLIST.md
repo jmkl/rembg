@@ -13,7 +13,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 | **Baseline** | Quick Fixes & Compiler Health                    | **Completed**   | 100%                                        |
 | **Phase 1**  | Operations Reorganization & Core Data Foundation | **Completed**   | 100%                                        |
 | **Phase 2**  | Graph & Evaluation Engine Decoupling             | **Completed**   | 100%                                        |
-| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **Pending**     | 0%                                          |
+| **Phase 3**  | Worker & ML Inference Pipeline Abstraction       | **In Progress** | ~20% (Typed worker requests/responses and stale-job cancellation) |
 | **Phase 4**  | Node UI, Catalog & Session Modernization         | **Pending**     | 20% (Builder pattern done)                  |
 | **Phase 5**  | Verification, Benchmarking & Documentation       | **In Progress** | ~50% (Tests & docs current)                 |
 
@@ -29,7 +29,7 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
   - [x] Annotate/clean unused `min_pixels` in `src/ops/rf/mod.rs` and `set_u32` in `src/params.rs`
   - [x] Annotate `SocketSpec` fields
 - [x] Verify zero warnings with `cargo check -p compnode`
-- [x] Verify all unit tests pass with `cargo test -p compnode` (60 passed, 1 ignored benchmark)
+- [x] Verify all unit tests pass with `cargo test -p compnode` (62 passed, 1 ignored benchmark)
 
 ---
 
@@ -115,13 +115,13 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 
 ### 3.1 Job Queue & Dispatcher Modernization (`src/worker.rs`)
 
-- [ ] Refactor `Job` enum into structured request/response types:
-  - [ ] `RenderRequest` / `InferenceRequest`
-  - [ ] `RenderResponse` / `InferenceResponse`
-- [ ] Formalize token cancellation:
-  - [ ] Explicit job cancellation token / atomic flag for aborted preview renders
-  - [ ] Discard outdated jobs before model inference begins
-  - [ ] Simple running job info in title bar
+- [x] Refactor worker job transport into structured request/response types:
+  - [x] `RenderRequest` / `InferenceRequest`
+  - [x] `RenderResponse` / `InferenceResponse`
+- [x] Formalize token cancellation:
+  - [x] Shared atomic cancellation token for stale queued worker work
+  - [x] Discard invalidated jobs before inference or render work begins
+  - [x] Show the active node type and job count in the title bar
 
 ### 3.2 Inference Backend Abstraction
 

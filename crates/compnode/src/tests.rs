@@ -1198,6 +1198,20 @@ fn preview_quality_changes_evaluation_dimensions_and_cache_signature() {
 }
 
 #[test]
+fn invalidating_node_cancels_its_pending_worker_request() {
+    let cancellation = crate::cancellation::CancellationToken::default();
+    let mut node = Node::texts();
+    let texts = node.texts_node_mut().unwrap();
+    texts.job = Some(7);
+    texts.cancellation = Some(cancellation.clone());
+
+    node.invalidate_output();
+
+    assert!(cancellation.is_cancelled());
+    assert!(node.job().is_none());
+}
+
+#[test]
 fn texts_preview_keeps_document_canvas_resolution() {
     let ctx = egui::Context::default();
     let mut snarl = Snarl::new();
@@ -1807,6 +1821,6 @@ fn texts_layer_computes_content_bounds_crop() {
     assert_eq!(snarl[text_node].rendered(), Some(1234));
     let req = job_rx.try_recv().expect("job received");
     assert!(
-        matches!(req, WorkerRequest::Job(crate::worker::Job::Texts { node, .. }) if node == text_node)
+        matches!(req, WorkerRequest::Render(request) if matches!(request.job, crate::worker::RenderJob::Texts { node, .. } if node == text_node))
     );
 }

@@ -60,8 +60,8 @@ The application is structured around strict separation between the UI event loop
 │  - Preview evaluation (src/eval.rs, 128/256/512px tiers)   │
 │  - Transform canvas & gizmos (src/image_canvas.rs)          │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ WorkerRequest (crossbeam / mpsc channel)
-                           │ JobDone / token matching
+                           │ WorkerRequest (typed render / inference)
+                           │ WorkerResponse / token matching
 ┌──────────────────────────▼──────────────────────────────────┐
 │                   Background Worker Thread                  │
 │  - Long-lived background thread (src/worker.rs)             │
@@ -80,7 +80,7 @@ The application is structured around strict separation between the UI event loop
 - Heavy pixel processing or model loading is **never** executed directly on the UI thread.
 
 ### 2. Inference & Render Worker (`src/worker.rs`)
-- Single long-lived worker thread accepting `Job` variants:
+- Single long-lived worker thread accepting typed `RenderRequest` and `InferenceRequest` envelopes:
   - `RemoveBg` (BiRefNet) & `RemoveBgV2` (RMBG-1.4)
   - `FaceRestore` (SCRFD alignment + GFPGAN)
   - `Composite` (full-resolution Group / Blend multi-layer rendering)
@@ -93,6 +93,7 @@ The application is structured around strict separation between the UI event loop
 - **CPU Memory Management (`src/memory.rs`)**: Full-resolution source images held in RAM are budgeted (512 MB cap) and dynamically evicted/reloaded from disk or asset store on demand.
 - **Session Serialization (`src/session.rs`)**: Saved graphs (`.rembg.json`) store node coordinates, connection links, embedded base64 assets, parameter dictionaries, and absolute output paths. Backward compatibility with older session files is maintained (e.g., mapping `"mix"` to `Kind::Group`, `"route"` to `Kind::Route`, `"texts"` to `Kind::Texts`).
 - **Parameter restore**: Generic parameter maps merge saved values into constructor defaults and preserve unknown keys. Validation is explicit; session loading does not silently alter saved values.
+- **Worker jobs**: Render and inference work use separate request/response types. Invalidated queued jobs carry shared cancellation flags and are skipped before execution; stale completion tokens remain guarded by the UI.
 
 ---
 
@@ -106,7 +107,7 @@ The application is structured around strict separation between the UI event loop
 | `src/graph.rs` | Graph topological algorithms | `resolve_route()`, `refresh_viewer()`, `upstream()`, `preview_dimensions()` |
 | `src/eval.rs` | Preview pipeline evaluation | `ensure_all()`, `ensure_filter()`, `filter_signature()`, `resolve_image()` |
 | `src/image_canvas.rs`| Interactive canvas viewer & gizmos | `ImageCanvas`, layer hit-testing, uniform scale, rotation snap, guides, marquee |
-| `src/worker.rs` | Inference & async job runner | `Job`, `spawn_worker()`, `WorkerRequest`, `JobDone`, `InferenceConfig` |
+| `src/worker.rs` | Inference & async job runner | `RenderRequest`, `InferenceRequest`, `WorkerResponse`, `spawn_worker()`, `InferenceConfig` |
 | `src/assets.rs` | Content-addressed asset repository | `AssetStore`, `Asset`, embedded base64 encoding/decoding |
 | `src/nodes/` | Individual node body UI renderers | UI logic for `image`, `remove_bg`, `face_restore`, `filter`, `texts`, `route`, etc. |
 | `src/ops/color/` | Color adjustment algorithms | HSV, curves, exposure, balance, gradient map, invert |
@@ -154,5 +155,5 @@ The Raw Filter provides photographer-style adjustments: White Balance (temperatu
 ## 6. Codebase Health & Future Work
 
 - **Compilation**: Passes cleanly (`cargo check -p compnode` with 0 warnings).
-- **Test Suite**: 60 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, and sampler/noise edge cases.
+- **Test Suite**: 62 passing tests and 1 ignored manual benchmark. Coverage includes session compatibility, graph/evaluation, previews, compositing, Raw Filter alpha, node metadata/parameter validation, cancellation, and sampler/noise edge cases.
 - **Node System Redesign**: Completed and tracked in [`CHECKLIST.md`](./CHECKLIST.md) and [`PLAN.md`](./PLAN.md).

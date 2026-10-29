@@ -189,7 +189,9 @@ See [`PIXEL_CONTRACT.md`](./PIXEL_CONTRACT.md) for the measured current behavior
 ### Phase 3: Worker & ML Inference Pipeline
 
 - [ ] **Job Queue & Dispatcher (`src/worker.rs`)**:
-  - [ ] Refactor `Job` enum into structured request/response types.
+  - [x] Split worker transport into typed Render/Inference requests and responses.
+  - [x] Cancel invalidated queued jobs before execution; preserve stale-result token matching.
+  - [x] Show the active node type and job count in the title bar.
   - [ ] Formalize model lifecycle management (keep-alive vs unload-on-demand) behind an `InferenceBackend` trait.
   - [ ] Abstract disk cache interaction via `OutputCacheInterface` to enable in-memory mock testing.
   - [ ] Add integration tests verifying token invalidation on rapid parameter changes.
@@ -525,5 +527,5 @@ The implementation is tracked in detail in [`CHECKLIST.md`](./CHECKLIST.md).
 - [x] **Step 3 (Spec Builder)**: Added `NodeSpec::filter(...)` and `NodeSpec::generator(...)` constructors. Simplified all existing entries in `catalog.rs`.
 - [x] **Step 4 (Modularization)**: Colocated filter eval closures and field definitions with builder specs in `catalog.rs`, ready for optional per-file extraction as new filters are created.
 - [x] **Step 5 (FilterKind Unbundling)**: Promoted `Route`, `Group`, `Blend`, and `Texts` out of `FilterKind` into top-level `Kind` and `Node` variants. Created dedicated `GroupNode` and `TextsNode` structs. Stripped `FilterNode` of layer-stack fields (`layers`, `canvas_size`). Preserved 100% backward compatibility for `.rembg.json` sessions.
-- [x] **Verification**: 60 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
+- [x] **Verification**: 62 library tests pass (1 ignored benchmark); `cargo check -p compnode` passes.
 

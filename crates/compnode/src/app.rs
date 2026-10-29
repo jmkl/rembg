@@ -24,7 +24,7 @@ use crate::settings_window::{self, SettingsAction};
 use crate::style::controls::{Button, sidebar_frame};
 use crate::style::{install_theme, pal, snarl_style};
 use crate::title_bar::{self, Actions};
-use crate::worker::{InferenceConfig, JobDone, WorkerRequest, spawn_worker};
+use crate::worker::{InferenceConfig, WorkerRequest, WorkerResponse, spawn_worker};
 use image::ImageEncoder;
 use std::sync::mpsc;
 
@@ -38,7 +38,7 @@ pub struct CompNodeApp {
     pub(crate) snarl: Snarl<Node>,
     pub(crate) style: egui_snarl::ui::SnarlStyle,
     pub(crate) editor: GraphEditor,
-    pub(crate) inflight: Receiver<JobDone>,
+    pub(crate) inflight: Receiver<WorkerResponse>,
     pub(crate) cache: OutputCache,
     pub(crate) session_path: Option<PathBuf>,
     pub(crate) notice: Option<Notice>,
@@ -153,7 +153,8 @@ impl CompNodeApp {
     /// Collect finished inference jobs. Stale results (node deleted or
     /// superseded by a newer run) are dropped by [`Node::finish_job`].
     fn poll_jobs(&mut self, ctx: &egui::Context) {
-        while let Ok(done) = self.inflight.try_recv() {
+        while let Ok(response) = self.inflight.try_recv() {
+            let done = response.into_job_done();
             if !self.snarl.node_ids().any(|(id, _)| id == done.node) {
                 continue;
             }
@@ -815,7 +816,7 @@ impl CompNodeApp {
         ctx.request_repaint();
     }
 
-    fn status_text(&self, busy: usize) -> (String, Color32) {
+    fn status_text(&self, busy: usize, active_job: Option<&str>) -> (String, Color32) {
         let (mut text, color) = if let Some(notice) = &self.notice {
             (
                 notice.text.clone(),
@@ -826,7 +827,10 @@ impl CompNodeApp {
                 },
             )
         } else if busy > 0 {
-            (format!("Inference running ({busy})"), pal::SOCKET)
+            (
+                format!("{} running ({busy})", active_job.unwrap_or("Worker job")),
+                pal::SOCKET,
+            )
         } else if self.autosave_due.is_some() {
             ("Autosaving…".to_owned(), pal::ACCENT)
         } else {
@@ -1180,11 +1184,13 @@ impl App for CompNodeApp {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
 
-        let busy: usize = self
+        let busy_nodes: Vec<String> = self
             .snarl
             .node_ids()
             .filter(|(_, node)| node.job().is_some())
-            .count();
+            .map(|(_, node)| crate::catalog::spec(node.kind()).title.to_owned())
+            .collect();
+        let busy = busy_nodes.len();
         let selected_count = self.editor.selected_nodes().len();
         let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
         let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
@@ -1192,7 +1198,8 @@ impl App for CompNodeApp {
         // Delete/Backspace. Only real text entry should own those keys.
         let text_edit_focused = ctx.text_edit_focused();
 
-        let (status_text, status_dot) = self.status_text(busy);
+        let (status_text, status_dot) =
+            self.status_text(busy, busy_nodes.first().map(String::as_str));
         let (mut actions, _) = title_bar::show(
             ui,
             &status_text,
@@ -1433,9 +1440,12 @@ fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<
         .filter(|(_, node)| node.viewer_node().is_some())
         .map(|(id, _)| id)
         .collect();
-    stack.extend(selected.iter().copied().filter(|id| {
-        snarl.get_node_info(*id).is_some() && snarl[*id].kind().is_layer_kind()
-    }));
+    stack.extend(
+        selected
+            .iter()
+            .copied()
+            .filter(|id| snarl.get_node_info(*id).is_some() && snarl[*id].kind().is_layer_kind()),
+    );
     while let Some(id) = stack.pop() {
         if !needed.insert(id) {
             continue;

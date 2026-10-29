@@ -14,6 +14,7 @@ use egui_snarl::NodeId;
 use image::RgbaImage;
 use serde_json::Value;
 
+use crate::cancellation::CancellationToken;
 use crate::catalog::{self, FieldKind, NodeSpec, SocketSpec};
 use crate::params::{self, Params};
 
@@ -119,6 +120,7 @@ pub(crate) struct FilterNode {
     pub preview_enabled: bool,
     /// Token of the in-flight full-resolution render, if any.
     pub job: Option<u64>,
+    pub cancellation: Option<CancellationToken>,
     /// Absolute path to the persisted full-resolution composite on disk.
     pub output_path: Option<PathBuf>,
     /// Debounce state for scheduling the full-resolution render.
@@ -139,6 +141,7 @@ pub(crate) struct GroupNode {
     pub layers: Vec<ViewerLayer>,
     pub canvas_size: egui::Vec2,
     pub job: Option<u64>,
+    pub cancellation: Option<CancellationToken>,
     pub output_path: Option<PathBuf>,
     pub render_state: Option<RenderState>,
     pub rendered: Option<u64>,
@@ -160,6 +163,7 @@ impl GroupNode {
             layers: Vec::new(),
             canvas_size: egui::Vec2::ZERO,
             job: None,
+            cancellation: None,
             output_path: None,
             render_state: None,
             rendered: None,
@@ -175,6 +179,7 @@ pub(crate) struct TextsNode {
     pub signature: Option<u64>,
     pub preview_enabled: bool,
     pub job: Option<u64>,
+    pub cancellation: Option<CancellationToken>,
     pub output_path: Option<PathBuf>,
     pub render_state: Option<RenderState>,
     pub rendered: Option<u64>,
@@ -213,6 +218,7 @@ impl TextsNode {
             signature: None,
             preview_enabled: true,
             job: None,
+            cancellation: None,
             output_path: None,
             render_state: None,
             rendered: None,
@@ -237,6 +243,7 @@ impl FilterNode {
             signature: None,
             preview_enabled: true,
             job: None,
+            cancellation: None,
             output_path: None,
             render_state: None,
             rendered: None,
@@ -317,6 +324,7 @@ pub(crate) struct Process {
     pub preview: Preview,
     /// Token of the job currently running for this node, if any.
     pub job: Option<u64>,
+    pub cancellation: Option<CancellationToken>,
     /// Absolute path to this node's result image on disk.
     pub output_path: Option<PathBuf>,
     /// Benchmark for the last successful run.
@@ -328,6 +336,9 @@ pub(crate) struct Process {
 impl Process {
     /// Drop computed output and any pending job, preserving node parameters.
     pub(crate) fn clear_outputs(&mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            cancellation.cancel();
+        }
         self.preview.clear();
         self.job = None;
         self.output_path = None;
@@ -1054,6 +1065,20 @@ impl Node {
         }
     }
 
+    fn cancel_pending_job(&mut self) {
+        let cancellation = match self {
+            Self::Filter(node) => node.cancellation.take(),
+            Self::Group(node) | Self::Blend(node) => node.cancellation.take(),
+            Self::Texts(node) => node.cancellation.take(),
+            _ => self
+                .process_mut()
+                .and_then(|process| process.cancellation.take()),
+        };
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+        }
+    }
+
     pub(crate) fn render_state(&self) -> Option<RenderState> {
         match self {
             Self::Filter(node) => node.render_state,
@@ -1165,6 +1190,7 @@ impl Node {
                 return;
             }
             node.job = None;
+            node.cancellation = None;
             node.render_state = None;
             match outcome {
                 Ok((texture, output)) => {
@@ -1180,6 +1206,7 @@ impl Node {
                 return;
             }
             node.job = None;
+            node.cancellation = None;
             node.render_state = None;
             match outcome {
                 Ok((texture, output)) => {
@@ -1195,6 +1222,7 @@ impl Node {
                 return;
             }
             node.job = None;
+            node.cancellation = None;
             node.render_state = None;
             match outcome {
                 Ok((texture, output)) => {
@@ -1212,6 +1240,7 @@ impl Node {
             return;
         }
         process.job = None;
+        process.cancellation = None;
         match outcome {
             Ok((texture, output)) => {
                 process.preview = Preview::with_image(texture, output.image);
@@ -1225,21 +1254,25 @@ impl Node {
     /// Drop transient worker/eval state so a duplicated node runs and
     /// evaluates independently of its source. Preview data is kept.
     pub(crate) fn reset_transient_state(&mut self) {
+        self.cancel_pending_job();
         match self {
             Self::Filter(node) => {
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 node.signature = None;
             }
             Self::Group(node) | Self::Blend(node) => {
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 node.signature = None;
             }
             Self::Texts(node) => {
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 node.signature = None;
@@ -1247,6 +1280,7 @@ impl Node {
             _ => {
                 if let Some(process) = self.process_mut() {
                     process.job = None;
+                    process.cancellation = None;
                 }
             }
         }
@@ -1255,6 +1289,7 @@ impl Node {
     /// Drop computed preview/data after an upstream change. Returns `true` if
     /// the node can have downstream consumers that should also be invalidated.
     pub(crate) fn invalidate_output(&mut self) -> bool {
+        self.cancel_pending_job();
         match self {
             // An Image is a pass-through: downstream consumers must refresh
             // when either its selected asset or its upstream input changes.
@@ -1281,6 +1316,7 @@ impl Node {
             Self::Group(node) | Self::Blend(node) => {
                 node.signature = None;
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 if node.output_path.take().is_some() {
@@ -1291,6 +1327,7 @@ impl Node {
             Self::Texts(node) => {
                 node.signature = None;
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 if node.output_path.take().is_some() {
@@ -1301,6 +1338,7 @@ impl Node {
             Self::Filter(node) => {
                 node.signature = None;
                 node.job = None;
+                node.cancellation = None;
                 node.render_state = None;
                 node.rendered = None;
                 if node.output_path.take().is_some() {

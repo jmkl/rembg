@@ -546,6 +546,7 @@ fn process_with_image(path: PathBuf, image: image::RgbaImage, ctx: &egui::Contex
     Process {
         preview: Preview::with_image(rgba_to_texture(ctx, &image), image),
         job: None,
+        cancellation: None,
         output_path: Some(path),
         last_timing: None,
         preview_enabled: false,
@@ -559,6 +560,7 @@ fn missing_process(error: String) -> Process {
             ..Default::default()
         },
         job: None,
+        cancellation: None,
         output_path: None,
         last_timing: None,
         preview_enabled: false,
