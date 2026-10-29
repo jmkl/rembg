@@ -11,16 +11,7 @@ use image::RgbaImage;
 use rayon::prelude::*;
 
 use super::Settings;
-
-#[inline]
-fn clamp01(v: f32) -> f32 {
-    v.clamp(0.0, 1.0)
-}
-
-#[inline]
-fn luma(r: f32, g: f32, b: f32) -> f32 {
-    0.2126 * r + 0.7152 * g + 0.0722 * b
-}
+use crate::ops::math::{clamp01, luma709};
 
 pub(super) fn apply(src: &RgbaImage, s: &Settings) -> RgbaImage {
     let (w, h) = (src.width() as usize, src.height() as usize);
@@ -39,7 +30,7 @@ pub(super) fn apply(src: &RgbaImage, s: &Settings) -> RgbaImage {
 
     let bytes: Vec<u8> = buf
         .par_iter()
-        .map(|&v| (clamp01(v) * 255.0).round() as u8)
+        .map(|&v| crate::ops::math::unit_to_u8_round(v))
         .collect();
     RgbaImage::from_raw(w as u32, h as u32, bytes).expect("buffer matches dimensions")
 }
@@ -101,7 +92,7 @@ fn blur_plane(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
 
 fn luma_plane(buf: &[f32]) -> Vec<f32> {
     buf.par_chunks_exact(4)
-        .map(|p| luma(p[0], p[1], p[2]))
+        .map(|p| luma709([p[0], p[1], p[2]]))
         .collect()
 }
 
@@ -124,7 +115,7 @@ fn noise_reduction(buf: &mut [f32], w: usize, h: usize, s: &Settings) {
 
     buf.par_chunks_exact_mut(4).enumerate().for_each(|(i, px)| {
         let b = [blurred[0][i], blurred[1][i], blurred[2][i]];
-        let diff = luma(px[0], px[1], px[2]) - luma(b[0], b[1], b[2]);
+        let diff = luma709([px[0], px[1], px[2]]) - luma709([b[0], b[1], b[2]]);
         let edge = (diff.abs() / threshold).powi(2);
         let blend = amount / (1.0 + 4.0 * edge);
         for c in 0..3 {
@@ -163,7 +154,7 @@ fn dehaze_px(rgb: &mut [f32; 3], amount: f32) {
             *v = (*v - black) / (1.0 - black).max(1e-4);
             *v = (*v - 0.5) * contrast + 0.5;
         }
-        let l = luma(rgb[0], rgb[1], rgb[2]);
+        let l = luma709(*rgb);
         for v in rgb.iter_mut() {
             *v = l + (*v - l) * saturation;
         }

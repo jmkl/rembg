@@ -8,6 +8,7 @@
 
 use crate::{
     ops::effects::{self, Fx},
+    ops::math::{byte_to_unit, unit_to_u8_round},
     params::{self, Params},
 };
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
@@ -21,17 +22,17 @@ const FAMILIES: &[(&str, &str, &[u8])] = &[
     (
         "unisans-italic",
         "Unisans-italic",
-        include_bytes!("../../assets/fonts/Uni Sans Heavy Italic.otf"),
+        include_bytes!("../../../assets/fonts/Uni Sans Heavy Italic.otf"),
     ),
     (
         "unisans",
         "Unisans",
-        include_bytes!("../../assets/fonts/Uni Sans Heavy.otf"),
+        include_bytes!("../../../assets/fonts/Uni Sans Heavy.otf"),
     ),
     (
         "anton",
         "Anton",
-        include_bytes!("../../assets/fonts/Anton-Regular.ttf"),
+        include_bytes!("../../../assets/fonts/Anton-Regular.ttf"),
     ),
 ];
 
@@ -115,18 +116,18 @@ fn blend(pixel: &mut Rgba<u8>, color: [u8; 3], coverage: f32) {
         return;
     }
     let src_a = coverage;
-    let dst_a = pixel.0[3] as f32 / 255.0;
+    let dst_a = byte_to_unit(pixel.0[3]);
     let out_a = src_a + dst_a * (1.0 - src_a);
     if out_a <= 0.0 {
         return;
     }
     for channel in 0..3 {
-        let src = color[channel] as f32 / 255.0 * src_a;
-        let dst = pixel.0[channel] as f32 / 255.0 * dst_a;
+        let src = byte_to_unit(color[channel]) * src_a;
+        let dst = byte_to_unit(pixel.0[channel]) * dst_a;
         let value = (src + dst * (1.0 - src_a)) / out_a;
-        pixel.0[channel] = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        pixel.0[channel] = unit_to_u8_round(value);
     }
-    pixel.0[3] = (out_a.clamp(0.0, 1.0) * 255.0).round() as u8;
+    pixel.0[3] = unit_to_u8_round(out_a);
 }
 
 /// Draw one line of text with the pen starting at `pen_x`, `baseline` down.
@@ -358,7 +359,7 @@ fn paint_box(
     for y in y0..y1 {
         for x in x0..x1 {
             let pixel = img.get_pixel_mut(x, y);
-            let alpha = pixel.0[3] as f32 / 255.0;
+            let alpha = byte_to_unit(pixel.0[3]);
             for channel in 0..3 {
                 let src = pixel.0[channel] as f32 * alpha;
                 let dst = color[channel] as f32 * (1.0 - alpha);

@@ -15,6 +15,7 @@ struct Uni {
 @group(0) @binding(3) var<storage, read_write> t0: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> t1: array<vec4<f32>>;
 
+// Keep these Rec. 709 coefficients aligned with ops::math::luma709.
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }

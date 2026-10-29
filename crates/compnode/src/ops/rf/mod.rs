@@ -14,6 +14,7 @@ mod gpu;
 
 use image::RgbaImage;
 
+use crate::ops::math::luma709;
 use crate::params::{self, Params};
 
 /// Below this pixel count the upload/readback overhead beats the GPU win.
@@ -85,7 +86,7 @@ impl Settings {
             (1.0 - 0.25 * tint).max(0.01),
             (1.0 - 0.35 * temp + 0.10 * tint).max(0.01),
         ];
-        let norm = (0.2126 * g[0] + 0.7152 * g[1] + 0.0722 * g[2]).max(0.01);
+        let norm = luma709(g).max(0.01);
         [g[0] / norm, g[1] / norm, g[2] / norm]
     }
 

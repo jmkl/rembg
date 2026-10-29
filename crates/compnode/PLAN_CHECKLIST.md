@@ -43,15 +43,15 @@ Tracks progress on the overarching refactoring roadmap outlined in [PLAN.md](./P
 - [x] Ensure 100% backward compatibility for `.rembg.json` session files
 
 ### 1.2 Operations Module Reorganization (`src/ops/`)
-- [ ] Create domain-focused directory structure:
-  - [ ] `src/ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
-  - [ ] `src/ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
-  - [ ] `src/ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
-  - [ ] `src/ops/rf/`: Maintain dual CPU/GPU Raw Filter pipeline
-- [ ] Consolidate shared math & color utilities:
-  - [ ] Standardize luma calculations across modules (Rec. 709 vs Rec. 601)
-  - [ ] Standardize color clamping and integer-float conversions
-  - [ ] Shared bilinear/bicubic sampling helpers
+- [x] Create domain-focused directory structure:
+  - [x] `src/ops/color/`: HSV, Curves LUT, Exposure, Color Balance, Gradient Map, Invert
+  - [x] `src/ops/composite/`: 16 CSS blend modes, layer stacking, bilinear transforms, alpha masks
+  - [x] `src/ops/generators/`: Gradients, Perlin/Simplex/FBM noise, text renderer
+  - [x] `src/ops/rf/`: Maintain dual CPU/GPU Raw Filter pipeline
+- [x] Consolidate shared math & color utilities in `src/ops/math.rs`:
+  - [x] Name Rec. 709, Rec. 601, and CSS blend luminosity calculations explicitly
+  - [x] Share normalized color clamping and byte/float conversion helpers
+  - [x] Share bilinear and bicubic RGBA sampling helpers
 
 ### 1.3 Core Node Trait Abstraction (Optional / Next Milestone)
 - [ ] Define `NodeTrait` for dynamic node dispatch:

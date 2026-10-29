@@ -4,11 +4,8 @@ use std::cmp::Ordering;
 
 use image::RgbaImage;
 
+use crate::ops::math::{byte_to_unit, clamp01, unit_to_u8_round};
 use crate::params::{self, CurvePoint, Params};
-
-fn clamp01(value: f32) -> f32 {
-    value.clamp(0.0, 1.0)
-}
 
 fn percent(params: &Params, key: &str, default: f32) -> f32 {
     params::f32(params, key, default) / 100.0
@@ -245,9 +242,9 @@ pub(crate) fn hsv(src: &RgbaImage, params: &Params) -> RgbaImage {
     let mut out = src.clone();
     for pixel in out.pixels_mut() {
         let mut rgb = [
-            pixel[0] as f32 / 255.0,
-            pixel[1] as f32 / 255.0,
-            pixel[2] as f32 / 255.0,
+            byte_to_unit(pixel[0]),
+            byte_to_unit(pixel[1]),
+            byte_to_unit(pixel[2]),
         ];
 
         rgb = multiply_matrix(&hue_matrix, rgb);
@@ -257,7 +254,7 @@ pub(crate) fn hsv(src: &RgbaImage, params: &Params) -> RgbaImage {
         }
 
         for channel in 0..3 {
-            pixel[channel] = (rgb[channel] * 255.0).round().clamp(0.0, 255.0) as u8;
+            pixel[channel] = unit_to_u8_round(rgb[channel]);
         }
     }
     out
@@ -304,9 +301,9 @@ pub(crate) fn color_balance(src: &RgbaImage, params: &Params) -> RgbaImage {
             }
         }
 
-        pixel[0] = (clamp01(nr) * 255.0).round() as u8;
-        pixel[1] = (clamp01(ng) * 255.0).round() as u8;
-        pixel[2] = (clamp01(nb) * 255.0).round() as u8;
+        pixel[0] = unit_to_u8_round(nr);
+        pixel[1] = unit_to_u8_round(ng);
+        pixel[2] = unit_to_u8_round(nb);
     }
     out
 }

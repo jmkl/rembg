@@ -514,6 +514,14 @@ const NOISE_KINDS: &[SelectOption] = &[
         value: "fbm",
     },
     SelectOption {
+        label: "Perlin",
+        value: "perlin",
+    },
+    SelectOption {
+        label: "Simplex",
+        value: "simplex",
+    },
+    SelectOption {
         label: "Multifractal",
         value: "multifractal",
     },
@@ -791,7 +799,7 @@ pub(crate) static NODE_SPECS: &[NodeSpec] = &[
             "noise reduction",
         ],
         RAW_FILTER_FIELDS,
-        |inputs, params, _| Ok(ops::rawfilter::raw_filter(ops::primary_input(inputs)?, params)),
+        |inputs, params, _| Ok(ops::rf::raw_filter(ops::primary_input(inputs)?, params)),
     ),
     NodeSpec::generator(
         FilterKind::Gradient,

@@ -3,20 +3,24 @@
 //! Every function takes pixels in and returns pixels out, with no egui or graph
 //! dependencies. Evaluation and caching live in [`crate::eval`].
 
-pub(crate) mod adjust;
+pub(crate) mod color;
 pub(crate) mod composite;
 pub(crate) mod effects;
-pub(crate) mod generate;
-pub(crate) mod rawfilter;
+pub(crate) mod generators;
+pub(crate) mod math;
 pub(crate) mod rf;
-pub(crate) mod texts;
+
+// Keep established internal paths stable while callers migrate to domains.
+pub(crate) use color::adjust;
+pub(crate) use generators::generate;
+pub(crate) use generators::text as texts;
 use image::RgbaImage;
 
 use crate::catalog;
 use crate::model::{FilterKind, Kind};
 use crate::params::Params;
 
-pub(crate) use adjust::curve_lut;
+pub(crate) use color::adjust::curve_lut;
 
 pub(crate) const EVAL_MAX_EDGE: u32 = 256;
 

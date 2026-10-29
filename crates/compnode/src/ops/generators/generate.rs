@@ -2,6 +2,7 @@
 
 use image::{Rgba, RgbaImage};
 
+use crate::ops::math::unit_to_u8_round;
 use crate::params::{self, Params};
 
 fn sample_stops(stops: &[(f32, [u8; 3])], t: f32) -> [u8; 3] {
@@ -112,6 +113,51 @@ fn value_noise(x: f32, y: f32, seed: i32) -> f32 {
     a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
 }
 
+fn gradient_noise(x: f32, y: f32, seed: i32) -> f32 {
+    let (ix, iy) = (x.floor() as i32, y.floor() as i32);
+    let (xf, yf) = (x - x.floor(), y - y.floor());
+    let fade = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let dot = |gx: i32, gy: i32, dx: f32, dy: f32| {
+        let angle = hash2(gx, gy, seed) * std::f32::consts::TAU;
+        angle.cos() * dx + angle.sin() * dy
+    };
+    let u = fade(xf);
+    let v = fade(yf);
+    let a = dot(ix, iy, xf, yf);
+    let b = dot(ix + 1, iy, xf - 1.0, yf);
+    let c = dot(ix, iy + 1, xf, yf - 1.0);
+    let d = dot(ix + 1, iy + 1, xf - 1.0, yf - 1.0);
+    let top = a + (b - a) * u;
+    let bottom = c + (d - c) * u;
+    ((top + (bottom - top) * v) * 0.7071 + 0.5).clamp(0.0, 1.0)
+}
+
+fn simplex_noise(x: f32, y: f32, seed: i32) -> f32 {
+    const F2: f32 = 0.366_025_4;
+    const G2: f32 = 0.211_324_87;
+    let skew = (x + y) * F2;
+    let (i, j) = ((x + skew).floor() as i32, (y + skew).floor() as i32);
+    let unskew = (i + j) as f32 * G2;
+    let (x0, y0) = (x - (i as f32 - unskew), y - (j as f32 - unskew));
+    let (i1, j1) = if x0 > y0 { (1, 0) } else { (0, 1) };
+    let (x1, y1) = (x0 - i1 as f32 + G2, y0 - j1 as f32 + G2);
+    let (x2, y2) = (x0 - 1.0 + 2.0 * G2, y0 - 1.0 + 2.0 * G2);
+    let contribution = |gx: i32, gy: i32, dx: f32, dy: f32| {
+        let attenuation = 0.5 - dx * dx - dy * dy;
+        if attenuation <= 0.0 {
+            return 0.0;
+        }
+        let angle = hash2(gx, gy, seed) * std::f32::consts::TAU;
+        let gradient = angle.cos() * dx + angle.sin() * dy;
+        attenuation.powi(4) * gradient
+    };
+    let value = 70.0
+        * (contribution(i, j, x0, y0)
+            + contribution(i + i1, j + j1, x1, y1)
+            + contribution(i + 1, j + 1, x2, y2));
+    (value * 0.5 + 0.5).clamp(0.0, 1.0)
+}
+
 pub(crate) fn noise(params: &Params, canvas: (u32, u32)) -> RgbaImage {
     let width = canvas.0.max(1);
     let height = canvas.1.max(1);
@@ -143,7 +189,16 @@ pub(crate) fn noise(params: &Params, canvas: (u32, u32)) -> RgbaImage {
         let mut frequency = 1.0;
         let mut norm = 0.0;
         for octave in 0..octaves {
-            let mut n = value_noise(nx * frequency, ny * frequency, seed + octave as i32 * 173);
+            let sample = match kind {
+                "perlin" => {
+                    gradient_noise(nx * frequency, ny * frequency, seed + octave as i32 * 173)
+                }
+                "simplex" => {
+                    simplex_noise(nx * frequency, ny * frequency, seed + octave as i32 * 173)
+                }
+                _ => value_noise(nx * frequency, ny * frequency, seed + octave as i32 * 173),
+            };
+            let mut n = sample;
             if kind == "ridged" {
                 n = 1.0 - (n * 2.0 - 1.0).abs();
             } else if kind == "multifractal" {
@@ -157,7 +212,7 @@ pub(crate) fn noise(params: &Params, canvas: (u32, u32)) -> RgbaImage {
 
         let mut value = if norm > 0.0 { sum / norm } else { 0.0 };
         value = value * value * (3.0 - 2.0 * value);
-        let gray = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let gray = unit_to_u8_round(value);
         *pixel = Rgba([gray, gray, gray, 255]);
     }
     out

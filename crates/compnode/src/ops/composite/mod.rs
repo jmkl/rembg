@@ -4,6 +4,7 @@ use image::{RgbaImage, imageops::FilterType};
 use rayon::prelude::*;
 
 use crate::model::ViewerLayer;
+use crate::ops::math::{byte_to_unit, css_blend_luma, sample_bilinear_rgba8};
 use crate::params::{self, Params};
 
 type Rgb = [f32; 3];
@@ -92,11 +93,7 @@ impl BlendOp {
                 dodge(cb[1], cs[1]),
                 dodge(cb[2], cs[2]),
             ],
-            Self::ColorBurn => [
-                burn(cb[0], cs[0]),
-                burn(cb[1], cs[1]),
-                burn(cb[2], cs[2]),
-            ],
+            Self::ColorBurn => [burn(cb[0], cs[0]), burn(cb[1], cs[1]), burn(cb[2], cs[2])],
             Self::Hue => set_luminosity(set_saturation(cs, saturation(cb)), luminosity(cb)),
             Self::Saturation => set_luminosity(set_saturation(cb, saturation(cs)), luminosity(cb)),
             Self::Color => set_luminosity(cs, luminosity(cb)),
@@ -116,9 +113,9 @@ fn resize_to(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
 #[inline(always)]
 fn rgb_of(pixel: [u8; 4]) -> Rgb {
     [
-        pixel[0] as f32 * (1.0 / 255.0),
-        pixel[1] as f32 * (1.0 / 255.0),
-        pixel[2] as f32 * (1.0 / 255.0),
+        byte_to_unit(pixel[0]),
+        byte_to_unit(pixel[1]),
+        byte_to_unit(pixel[2]),
     ]
 }
 
@@ -271,12 +268,7 @@ pub(crate) fn apply_mask(
 
 /// W3C source-over compositing with an RGB blend function.
 #[inline(always)]
-fn composite_pixel(
-    base: [u8; 4],
-    source: [u8; 4],
-    opacity: f32,
-    op: BlendOp,
-) -> [u8; 4] {
+fn composite_pixel(base: [u8; 4], source: [u8; 4], opacity: f32, op: BlendOp) -> [u8; 4] {
     let alpha_s = (source[3] as f32 * (1.0 / 255.0)) * opacity;
     if alpha_s <= 0.0 {
         return base;
@@ -331,7 +323,7 @@ fn burn(cb: f32, cs: f32) -> f32 {
 
 #[inline(always)]
 fn luminosity(color: Rgb) -> f32 {
-    0.3 * color[0] + 0.59 * color[1] + 0.11 * color[2]
+    css_blend_luma(color)
 }
 
 #[inline(always)]
@@ -460,7 +452,12 @@ pub(crate) fn composite_layers_with(
                 (layer.size.y * scale).max(1.0),
             )
         } else {
-            let fit = fit_size(src_w as f64, src_h as f64, cw.max(1) as f64, ch.max(1) as f64);
+            let fit = fit_size(
+                src_w as f64,
+                src_h as f64,
+                cw.max(1) as f64,
+                ch.max(1) as f64,
+            );
             (
                 cw.max(1) as f32 * scale / 2.0,
                 ch.max(1) as f32 * scale / 2.0,
@@ -469,11 +466,7 @@ pub(crate) fn composite_layers_with(
             )
         };
 
-        let layer_op = if index == 0 {
-            BlendOp::SourceOver
-        } else {
-            op
-        };
+        let layer_op = if index == 0 { BlendOp::SourceOver } else { op };
         let layer_opacity = if index == 0 { 1.0 } else { opacity };
         if layer_opacity <= 0.0 {
             continue;
@@ -512,7 +505,7 @@ pub(crate) fn composite_layers_with(
                         if sx < 0.0 || sx >= src_w {
                             continue;
                         }
-                        let rgba = sample_bilinear_fast(src_raw, src_w_u32, src_h_u32, sx, sy);
+                        let rgba = sample_bilinear_rgba8(src_raw, src_w_u32, src_h_u32, sx, sy);
                         let offset = ox * 4;
                         let base = [
                             row[offset],
@@ -533,7 +526,7 @@ pub(crate) fn composite_layers_with(
                         if sx < 0.0 || sy < 0.0 || sx >= src_w || sy >= src_h {
                             continue;
                         }
-                        let rgba = sample_bilinear_fast(src_raw, src_w_u32, src_h_u32, sx, sy);
+                        let rgba = sample_bilinear_rgba8(src_raw, src_w_u32, src_h_u32, sx, sy);
                         let offset = ox * 4;
                         let base = [
                             row[offset],
@@ -557,36 +550,4 @@ fn fit_size(src_w: f64, src_h: f64, canvas_w: f64, canvas_h: f64) -> (f64, f64) 
     }
     let factor = (canvas_w / src_w).min(canvas_h / src_h);
     ((src_w * factor).max(1.0), (src_h * factor).max(1.0))
-}
-
-/// Bilinear sample of `src` at (possibly fractional) source coordinates.
-#[inline(always)]
-fn sample_bilinear_fast(raw: &[u8], src_w: u32, src_h: u32, sx: f32, sy: f32) -> [u8; 4] {
-    let x0 = (sx.floor() as u32).min(src_w.saturating_sub(1));
-    let y0 = (sy.floor() as u32).min(src_h.saturating_sub(1));
-    let x1 = (x0 + 1).min(src_w.saturating_sub(1));
-    let y1 = (y0 + 1).min(src_h.saturating_sub(1));
-    let fx = sx - x0 as f32;
-    let fy = sy - y0 as f32;
-
-    let stride = src_w as usize * 4;
-    let r0 = y0 as usize * stride;
-    let r1 = y1 as usize * stride;
-
-    let i00 = r0 + x0 as usize * 4;
-    let i10 = r0 + x1 as usize * 4;
-    let i01 = r1 + x0 as usize * 4;
-    let i11 = r1 + x1 as usize * 4;
-
-    let w00 = (1.0 - fx) * (1.0 - fy);
-    let w10 = fx * (1.0 - fy);
-    let w01 = (1.0 - fx) * fy;
-    let w11 = fx * fy;
-
-    [
-        (raw[i00] as f32 * w00 + raw[i10] as f32 * w10 + raw[i01] as f32 * w01 + raw[i11] as f32 * w11 + 0.5) as u8,
-        (raw[i00 + 1] as f32 * w00 + raw[i10 + 1] as f32 * w10 + raw[i01 + 1] as f32 * w01 + raw[i11 + 1] as f32 * w11 + 0.5) as u8,
-        (raw[i00 + 2] as f32 * w00 + raw[i10 + 2] as f32 * w10 + raw[i01 + 2] as f32 * w01 + raw[i11 + 2] as f32 * w11 + 0.5) as u8,
-        (raw[i00 + 3] as f32 * w00 + raw[i10 + 3] as f32 * w10 + raw[i01 + 3] as f32 * w01 + raw[i11 + 3] as f32 * w11 + 0.5) as u8,
-    ]
 }
