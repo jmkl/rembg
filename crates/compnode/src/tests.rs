@@ -341,6 +341,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         (egui::vec2(9.0, 9.0), egui::vec2(50.0, 50.0), 0.5),
         false,
         None,
+        None,
     )];
     loaded.image_canvas.sync_layers(&ctx, &stale_layers);
     assert_eq!(loaded.image_canvas.layers().count(), 1);
@@ -383,6 +384,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         Some(output_path.clone()),
         (egui::vec2(40.0, 60.0), egui::vec2(640.0, 480.0), 0.0),
         false,
+        None,
         None,
     )];
     again.image_canvas.sync_layers(&ctx, &moved_layers);
@@ -434,6 +436,7 @@ fn filter_rerender_keeps_user_canvas_transform() {
                 None,
                 (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
                 true,
+                None,
                 None,
             )],
         );
@@ -532,6 +535,7 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
             (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
             true,
             Some((1024, 1024)),
+            None,
         )],
     );
 
@@ -555,6 +559,7 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
             (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
             false,
             Some((1024, 1024)),
+            None,
         )],
     );
     let full_size = app.image_canvas.layers().next().unwrap().size;
@@ -572,6 +577,7 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
             (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
             true,
             Some((1024, 1024)),
+            None,
         )],
     );
     let scrubbing_size = app.image_canvas.layers().next().unwrap().size;
@@ -1549,4 +1555,55 @@ fn delete_selected_invalidates_downstream_and_avoids_panic() {
     // Both eval and refresh_viewer succeed cleanly.
     crate::eval::ensure_all(&mut snarl, &ctx);
     refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
+}
+
+#[test]
+fn texts_layer_computes_content_bounds_crop() {
+    let ctx = egui::Context::default();
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let text_node = snarl.insert_node(egui::pos2(0.0, 0.0), Node::texts());
+
+    // Evaluate preview on UI thread
+    crate::eval::ensure_all(&mut snarl, &ctx);
+
+    let node = &snarl[text_node];
+    let preview_cpu = node.cpu().cloned();
+    assert!(preview_cpu.is_some(), "TextsNode should generate preview CPU image");
+
+    let cpu_img = preview_cpu.as_ref().unwrap();
+    let non_transparent_count = cpu_img.pixels().filter(|p| p[3] > 0).count();
+    assert!(non_transparent_count > 0, "Default text should render some text pixels");
+
+    // Test ImageCanvas sync_layers with preview_cpu provides content_uv immediately
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut canvas = ImageCanvas::new(GPasTeApp::new(tx, rx));
+
+    let layers = [(
+        text_node,
+        Kind::Texts,
+        "Texts".to_string(),
+        node.texture().cloned(),
+        node.output_path().map(std::path::Path::to_path_buf),
+        (egui::Vec2::ZERO, egui::Vec2::ZERO, 0.0),
+        false,
+        None,
+        preview_cpu,
+    )];
+
+    canvas.sync_layers(&ctx, &layers);
+    let layer = canvas.layers().next().expect("layer present");
+    assert!(layer.content_uv.is_some(), "content_uv must be computed from preview_cpu");
+    let [u0, v0, u1, v1] = layer.content_uv.unwrap();
+    // Default text does not fill the entire canvas, so content_uv shouldn't be full [0, 0, 1, 1]
+    assert!(u0 > 0.0 || v0 > 0.0 || u1 < 1.0 || v1 < 1.0);
+
+    // Verify TextsNode can render full res and start_filter_render dispatches job
+    assert!(snarl[text_node].can_render_full_res(), "TextsNode must be eligible for full-res render");
+    let (job_tx, job_rx) = mpsc::channel();
+    let mut editor = GraphEditor::new(job_tx);
+    assert!(editor.start_filter_render(&mut snarl, text_node, 1234, &ctx));
+    assert!(snarl[text_node].job().is_some());
+    assert_eq!(snarl[text_node].rendered(), Some(1234));
+    let req = job_rx.try_recv().expect("job received");
+    assert!(matches!(req, WorkerRequest::Job(crate::worker::Job::Texts { node, .. }) if node == text_node));
 }

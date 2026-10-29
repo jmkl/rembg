@@ -197,6 +197,7 @@ impl CompNodeApp {
                 let sig = match node {
                     crate::model::Node::Filter(f) => f.signature,
                     crate::model::Node::Group(g) | crate::model::Node::Blend(g) => g.signature,
+                    crate::model::Node::Texts(t) => t.signature,
                     _ => None,
                 };
                 (
@@ -975,6 +976,7 @@ impl CompNodeApp {
                 (egui::Vec2, egui::Vec2, f32),
                 bool,
                 Option<(u32, u32)>,
+                Option<image::RgbaImage>,
             )> = if let Some(gid) = selected_layers {
                 self.snarl[gid]
                     .layers()
@@ -994,6 +996,7 @@ impl CompNodeApp {
                                         l.source,
                                         &self.editor.assets,
                                     ),
+                                    self.snarl.get_node(l.source).and_then(|n| n.cpu()).cloned(),
                                 )
                             })
                             .collect()
@@ -1021,6 +1024,7 @@ impl CompNodeApp {
                                 l.source,
                                 &self.editor.assets,
                             ),
+                            self.snarl.get_node(l.source).and_then(|n| n.cpu()).cloned(),
                         )
                     })
                     .collect()
@@ -1412,7 +1416,10 @@ fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
     let Some(node) = snarl.get_node(source) else {
         return false;
     };
-    matches!(node, crate::model::Node::Filter(_)) && node.output_path().is_none()
+    matches!(
+        node,
+        crate::model::Node::Filter(_) | crate::model::Node::Texts(_)
+    ) && node.output_path().is_none()
 }
 
 /// Node ids that can reach an Output node through input wires, plus the layers

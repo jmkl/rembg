@@ -366,6 +366,7 @@ pub struct LayerInfo<'a> {
     pub size: Vec2,
     /// Radians, clockwise.
     pub angle: f32,
+    pub content_uv: Option<[f32; 4]>,
 }
 
 #[allow(dead_code)]
@@ -576,6 +577,7 @@ impl ImageCanvas {
             center: i.center,
             size: i.size,
             angle: i.angle,
+            content_uv: i.content_uv,
         })
     }
 
@@ -653,11 +655,12 @@ impl ImageCanvas {
             (egui::Vec2, egui::Vec2, f32),
             bool,
             Option<(u32, u32)>,
+            Option<image::RgbaImage>,
         )],
     ) {
         let in_use: HashSet<PathBuf> = layers
             .iter()
-            .filter_map(|(_, _, _, _, p, _, _, _)| p.clone())
+            .filter_map(|(_, _, _, _, p, _, _, _, _)| p.clone())
             .collect();
 
         self.cache.forget_unused_failures(&in_use);
@@ -698,7 +701,17 @@ impl ImageCanvas {
         }
 
         let canvas_size = self.canvas_size;
-        for (source_id, source_kind, source_name, preview, path, saved, use_preview, effective_dims) in layers {
+        for (
+            source_id,
+            source_kind,
+            source_name,
+            preview,
+            path,
+            saved,
+            use_preview,
+            effective_dims,
+            preview_cpu,
+        ) in layers {
             let use_preview = *use_preview;
             let effective_dims = *effective_dims;
             let is_text = *source_kind == Kind::Texts;
@@ -814,8 +827,8 @@ impl ImageCanvas {
             // run every 750 ms and must not rescan the bitmap.
             if is_text {
                 if tex_changed {
-                    it.content_uv = cached_cpu
-                        .as_deref()
+                    let cpu_source = cached_cpu.as_deref().or(preview_cpu.as_ref());
+                    it.content_uv = cpu_source
                         .and_then(|img| alpha_content_uv(img, CONTENT_ALPHA));
                 }
             } else {

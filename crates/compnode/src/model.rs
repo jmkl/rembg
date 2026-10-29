@@ -173,6 +173,10 @@ pub(crate) struct TextsNode {
     pub preview: Preview,
     pub signature: Option<u64>,
     pub preview_enabled: bool,
+    pub job: Option<u64>,
+    pub output_path: Option<PathBuf>,
+    pub render_state: Option<RenderState>,
+    pub rendered: Option<u64>,
 }
 
 impl TextsNode {
@@ -207,6 +211,10 @@ impl TextsNode {
             preview: Preview::default(),
             signature: None,
             preview_enabled: true,
+            job: None,
+            output_path: None,
+            render_state: None,
+            rendered: None,
         }
     }
 }
@@ -546,7 +554,10 @@ impl Node {
     }
 
     pub(crate) fn can_render_full_res(&self) -> bool {
-        matches!(self, Self::Filter(_) | Self::Group(_) | Self::Blend(_))
+        matches!(
+            self,
+            Self::Filter(_) | Self::Group(_) | Self::Blend(_) | Self::Texts(_)
+        )
     }
 
     #[allow(dead_code)]
@@ -821,6 +832,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.job,
             Self::Group(node) | Self::Blend(node) => node.job,
+            Self::Texts(node) => node.job,
             _ => self.process().and_then(|process| process.job),
         }
     }
@@ -830,6 +842,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.job = job,
             Self::Group(node) | Self::Blend(node) => node.job = job,
+            Self::Texts(node) => node.job = job,
             _ => {
                 if let Some(process) = self.process_mut() {
                     process.job = job;
@@ -842,6 +855,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.render_state,
             Self::Group(node) | Self::Blend(node) => node.render_state,
+            Self::Texts(node) => node.render_state,
             _ => None,
         }
     }
@@ -850,6 +864,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.render_state = state,
             Self::Group(node) | Self::Blend(node) => node.render_state = state,
+            Self::Texts(node) => node.render_state = state,
             _ => {}
         }
     }
@@ -858,6 +873,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.rendered,
             Self::Group(node) | Self::Blend(node) => node.rendered,
+            Self::Texts(node) => node.rendered,
             _ => None,
         }
     }
@@ -867,6 +883,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.rendered = rendered,
             Self::Group(node) | Self::Blend(node) => node.rendered = rendered,
+            Self::Texts(node) => node.rendered = rendered,
             _ => {}
         }
     }
@@ -885,6 +902,7 @@ impl Node {
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
             Self::Group(node) | Self::Blend(node) => node.output_path.as_deref(),
+            Self::Texts(node) => node.output_path.as_deref(),
             _ => None,
         }
     }
@@ -893,6 +911,7 @@ impl Node {
         match self {
             Self::Filter(node) => node.output_path = path,
             Self::Group(node) | Self::Blend(node) => node.output_path = path,
+            Self::Texts(node) => node.output_path = path,
             _ => {
                 if let Some(process) = self.process_mut() {
                     process.output_path = path;
@@ -968,6 +987,21 @@ impl Node {
             }
             return;
         }
+        if let Self::Texts(node) = self {
+            if node.job != Some(token) {
+                return;
+            }
+            node.job = None;
+            node.render_state = None;
+            match outcome {
+                Ok((texture, output)) => {
+                    node.preview = Preview::with_image(texture, output.image);
+                    node.output_path = output.path;
+                }
+                Err(message) => node.preview.error = Some(message),
+            }
+            return;
+        }
         let Some(process) = self.process_mut() else {
             return;
         };
@@ -1004,6 +1038,9 @@ impl Node {
                 node.signature = None;
             }
             Self::Texts(node) => {
+                node.job = None;
+                node.render_state = None;
+                node.rendered = None;
                 node.signature = None;
             }
             _ => {
@@ -1052,6 +1089,12 @@ impl Node {
             }
             Self::Texts(node) => {
                 node.signature = None;
+                node.job = None;
+                node.render_state = None;
+                node.rendered = None;
+                if node.output_path.take().is_some() {
+                    node.preview.clear();
+                }
                 true
             }
             Self::Filter(node) => {

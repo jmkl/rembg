@@ -14,7 +14,7 @@ use crate::assets::AssetStore;
 use crate::catalog;
 use crate::graph::{connect_input, full_res_source_path, invalidate_downstream, invalidate_node};
 use crate::memory::ImageMemory;
-use crate::model::{Node, ViewerLayer};
+use crate::model::{Kind, Node, ViewerLayer};
 use crate::style::controls::{MenuItem, muted};
 use crate::style::{self, BODY_MARGIN, font, icons, pal};
 use crate::widgets::socket;
@@ -586,6 +586,9 @@ impl GraphEditor {
         if snarl[node].kind().is_layer_kind() {
             return self.start_group_render(snarl, node, signature, ctx);
         }
+        if snarl[node].kind() == Kind::Texts {
+            return self.start_texts_render(snarl, node, signature, ctx);
+        }
         let Some(filter) = snarl[node].filter_node() else {
             return false;
         };
@@ -628,6 +631,43 @@ impl GraphEditor {
                 filter.render_state = None;
                 filter.rendered = Some(signature);
                 filter.preview.error = None;
+            }
+            ctx.request_repaint();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn start_texts_render(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+        signature: u64,
+        ctx: &egui::Context,
+    ) -> bool {
+        let Some(texts) = snarl[node].texts_node() else {
+            return false;
+        };
+        let params = texts.params.clone();
+        let canvas = crate::eval::canvas_size(snarl);
+
+        let token = self.next_token;
+        self.next_token += 1;
+        let source_name = crate::graph::source_name(snarl, node);
+        let job = Job::Texts {
+            token,
+            node,
+            params,
+            canvas,
+            source_name,
+        };
+        if self.jobs.send(WorkerRequest::Job(job)).is_ok() {
+            if let Some(texts) = snarl[node].texts_node_mut() {
+                texts.job = Some(token);
+                texts.render_state = None;
+                texts.rendered = Some(signature);
+                texts.preview.error = None;
             }
             ctx.request_repaint();
             true

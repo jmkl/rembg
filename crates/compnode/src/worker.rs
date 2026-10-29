@@ -65,6 +65,14 @@ pub(crate) enum Job {
         canvas: (u32, u32),
         source_name: String,
     },
+    /// Full-resolution render of a Texts typography node.
+    Texts {
+        token: u64,
+        node: NodeId,
+        params: Params,
+        canvas: (u32, u32),
+        source_name: String,
+    },
 }
 
 /// One full-resolution input to a filter render. Paths and encoded assets are
@@ -286,6 +294,55 @@ fn filter_full(
     })
 }
 
+fn texts_full(
+    cache: &OutputCache,
+    params: &Params,
+    canvas: (u32, u32),
+    source_name: &str,
+) -> Result<JobOutput, String> {
+    let started = Instant::now();
+    let mut params_bytes = serde_json::to_vec(params).unwrap_or_default();
+    params_bytes.extend_from_slice(&canvas.0.to_le_bytes());
+    params_bytes.extend_from_slice(&canvas.1.to_le_bytes());
+    let domain = "compnode-filter-v1:texts";
+    let key = cache_key_refs(domain, std::iter::empty::<&image::RgbaImage>(), &params_bytes);
+
+    let cached_path = cache.path_for(&key);
+    if cached_path.is_file()
+        && let Ok(image) = image::open(&cached_path).map(|image| image.to_rgba8())
+    {
+        return Ok(JobOutput {
+            image,
+            path: Some(cached_path),
+            timing: RunTiming {
+                total: started.elapsed(),
+                load: Duration::ZERO,
+                infer: Duration::ZERO,
+                cache_models: false,
+            },
+        });
+    }
+
+    let image = crate::ops::texts::texts(params, canvas)?;
+    let path = match cache.store_named(&key, source_name, "texts", &image) {
+        Ok(path) => Some(path),
+        Err(err) => {
+            eprintln!("compnode: {err}");
+            None
+        }
+    };
+    Ok(JobOutput {
+        image,
+        path,
+        timing: RunTiming {
+            total: started.elapsed(),
+            load: Duration::ZERO,
+            infer: Duration::ZERO,
+            cache_models: false,
+        },
+    })
+}
+
 pub(crate) fn spawn_worker(
     ctx: egui::Context,
     mut cache: OutputCache,
@@ -451,6 +508,17 @@ pub(crate) fn spawn_worker(
                     }) => {
                         let result =
                             filter_full(&cache, kind, &params, inputs, canvas, &source_name);
+                        (token, node, result)
+                    }
+                    WorkerRequest::Job(Job::Texts {
+                        token,
+                        node,
+                        params,
+                        canvas,
+                        source_name,
+                    }) => {
+                        let result =
+                            texts_full(&cache, &params, canvas, &source_name);
                         (token, node, result)
                     }
                 };
