@@ -32,3 +32,5 @@ autosave*
 
 test_images/
 test_output*
+*.token
+out*.png

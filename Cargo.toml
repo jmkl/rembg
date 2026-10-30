@@ -6,6 +6,9 @@ members = [
   "crates/wgpu-playground",
   "crates/cmd-craft",
   "crates/gpaste",
+  "crates/gpt",
+  "crates/craftnailizer",
+  "crates/egui_nerdfonts",
 
 ]
 resolver = "2"
@@ -14,6 +17,8 @@ resolver = "2"
 [workspace.dependencies]
 image = "0.25"
 anyhow = "1"
+eframe = "0.36"
+egui = "0.36"
 ort = { version = "2.0.0-rc.12", features = ["cuda"] }
 winit = "0.30.13"
 wry = "0.57.0"
@@ -26,6 +31,6 @@ ureq = "3"
 sha2 = "0.10"
 tiny_http = "0.12"
 ndarray = "0.17.2"
-
+ab_glyph = "0.2"
 [profile.dev]
 opt-level = 2

@@ -252,10 +252,12 @@ impl Widget for Button {
 pub(crate) struct MenuItem<'a> {
     label: &'a str,
     icon: Option<char>,
+    trailing_icon: Option<char>,
     shortcut: Option<&'a str>,
     checked: bool,
     danger: bool,
     enabled: bool,
+    highlighted: bool,
 }
 
 impl<'a> MenuItem<'a> {
@@ -263,14 +265,27 @@ impl<'a> MenuItem<'a> {
         Self {
             label,
             icon: None,
+            trailing_icon: None,
             shortcut: None,
             checked: false,
             danger: false,
             enabled: true,
+            highlighted: false,
         }
     }
     pub fn icon(mut self, icon: char) -> Self {
         self.icon = Some(icon);
+        self
+    }
+    /// Draw a small icon on the right edge, e.g. a chevron for submenus.
+    pub fn trailing_icon(mut self, icon: char) -> Self {
+        self.trailing_icon = Some(icon);
+        self
+    }
+    /// Highlight the row even when the pointer is elsewhere, e.g. while its
+    /// submenu is open.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
     pub fn shortcut(mut self, shortcut: &'a str) -> Self {
@@ -314,6 +329,9 @@ impl Widget for MenuItem<'_> {
         if let Some(shortcut) = &shortcut {
             desired += 24.0 + shortcut.size().x;
         }
+        if self.trailing_icon.is_some() {
+            desired += 24.0;
+        }
         let width = if ui.is_sizing_pass() {
             desired
         } else {
@@ -328,8 +346,13 @@ impl Widget for MenuItem<'_> {
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
-            if self.enabled && response.hovered() {
-                painter.rect_filled(rect, CornerRadius::same(4), pal::hover(pal::PANEL));
+            if self.enabled && (response.hovered() || self.highlighted) {
+                let fill = if self.highlighted {
+                    pal::ACTIVE_FILL
+                } else {
+                    pal::hover(pal::PANEL)
+                };
+                painter.rect_filled(rect, CornerRadius::same(4), fill);
             }
             let icon = if self.checked {
                 Some(icons::CHECK)
@@ -358,6 +381,15 @@ impl Widget for MenuItem<'_> {
                         rect.center().y - shortcut.size().y * 0.5,
                     ),
                     shortcut,
+                    hint_color,
+                );
+            }
+            if let Some(icon) = self.trailing_icon {
+                painter.text(
+                    pos2(rect.right() - pad - icon_col * 0.5, rect.center().y),
+                    Align2::CENTER_CENTER,
+                    icon,
+                    icons::font(font::ICON),
                     hint_color,
                 );
             }

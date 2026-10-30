@@ -44,6 +44,8 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         autosave_due: None,
         node_filter: String::new(),
         recent_node_kinds: Vec::new(),
+        menu_nav: crate::graph_menu::MenuNav::default(),
+        menu_anchor: None,
         settings_draft: settings.clone(),
         settings_open: false,
         settings,

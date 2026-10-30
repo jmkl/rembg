@@ -1,0 +1,11 @@
+[package]
+name = "gpt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+winit.workspace = true
+wry.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+base64.workspace = true

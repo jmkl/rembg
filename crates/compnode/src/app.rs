@@ -49,6 +49,8 @@ pub struct CompNodeApp {
     pub(crate) autosave_due: Option<Instant>,
     pub(crate) node_filter: String,
     pub(crate) recent_node_kinds: Vec<Kind>,
+    pub(crate) menu_nav: graph_menu::MenuNav,
+    pub(crate) menu_anchor: Option<egui::Pos2>,
     pub(crate) settings: Settings,
     pub(crate) settings_draft: Settings,
     pub(crate) settings_open: bool,
@@ -106,6 +108,8 @@ impl CompNodeApp {
             autosave_due: None,
             node_filter: String::new(),
             recent_node_kinds: Vec::new(),
+            menu_nav: graph_menu::MenuNav::default(),
+            menu_anchor: None,
             settings_draft: settings.clone(),
             settings_open: false,
             settings,
@@ -919,7 +923,7 @@ impl CompNodeApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
         if actions.about {
-            self.set_notice("Right-click the canvas to add a node · Ctrl+S saves", false);
+            self.set_notice("Right-click or Shift+A to add a node · Ctrl+S saves", false);
         }
         if actions.quit {
             self.autosave_now();
@@ -1380,6 +1384,10 @@ impl App for CompNodeApp {
                 ui,
             )
         });
+        // `snarl_response.rect` is in the snarl layer's transformed coordinate
+        // space. The central panel rect is the screen-space area the graph
+        // occupies, which is what popup anchoring needs.
+        let graph_rect = central.response.rect;
         let snarl_response = central.inner;
         let graph_background_clicked =
             self.editor
@@ -1395,26 +1403,65 @@ impl App for CompNodeApp {
         // `PopupCloseBehavior::CloseOnClick`, so clicking the filter input
         // immediately dismissed it. `CloseOnClickOutside` keeps the menu open
         // for text entry while still closing it on outside clicks and Escape.
-        let menu = egui::Popup::context_menu(&snarl_response)
-            .id(egui::Id::new("graph_node_menu"))
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                let graph_pos = self.editor.to_global.inverse() * ui.cursor().min;
-                let before = self.editor.graph_snapshot(&self.snarl);
-                let old_count = self.snarl.node_ids().count();
-                graph_menu::show(
-                    ui,
-                    &mut self.snarl,
-                    &mut self.node_filter,
-                    &mut self.recent_node_kinds,
-                    graph_pos,
-                );
-                if self.snarl.node_ids().count() != old_count {
-                    self.editor.record_graph_change(before, &self.snarl);
-                }
+        //
+        // The menu is anchored at a stored screen position instead of following
+        // the pointer so Shift+A can open it from the keyboard as well.
+        let menu_id = egui::Id::new("graph_node_menu");
+        let menu_was_open = egui::Popup::is_id_open(&ctx, menu_id);
+        let open_add_menu = !menu_was_open
+            && !text_edit_focused
+            && !self.settings_open
+            && !self.url_open
+            && ctx.input(|input| {
+                input.modifiers.shift && !input.modifiers.command && input.key_pressed(egui::Key::A)
             });
+        let open_menu = if open_add_menu || snarl_response.secondary_clicked() {
+            Some(true)
+        } else if snarl_response.clicked() {
+            Some(false)
+        } else {
+            None
+        };
+        if open_menu == Some(true) {
+            // Anchor at the pointer's screen position so right-click and
+            // Shift+A both open the menu where the cursor is. If there is no
+            // pointer (e.g. keyboard focus without a mouse), fall back to the
+            // middle of the graph.
+            self.menu_anchor = Some(
+                ctx.pointer_hover_pos()
+                    .unwrap_or_else(|| graph_rect.center()),
+            );
+        }
+        let menu_anchor = self.menu_anchor.unwrap_or_else(|| graph_rect.center());
+
+        let mut popup = egui::Popup::menu(&snarl_response)
+            .id(menu_id)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .at_position(menu_anchor);
+        popup = match open_menu {
+            Some(open) => popup.open_memory(Some(egui::containers::SetOpenCommand::Bool(open))),
+            None => popup.open_memory(None),
+        };
+        let menu = popup.show(|ui| {
+            let graph_pos = self.editor.to_global.inverse() * ui.cursor().min;
+            let before = self.editor.graph_snapshot(&self.snarl);
+            let old_count = self.snarl.node_ids().count();
+            graph_menu::show(
+                ui,
+                &mut self.snarl,
+                &mut self.node_filter,
+                &mut self.recent_node_kinds,
+                graph_pos,
+                &mut self.menu_nav,
+            );
+            if self.snarl.node_ids().count() != old_count {
+                self.editor.record_graph_change(before, &self.snarl);
+            }
+        });
         if menu.is_none() {
             self.node_filter.clear();
+            self.menu_nav.reset();
+            self.menu_anchor = None;
         }
 
         self.show_asset_dialogs(&ctx);
