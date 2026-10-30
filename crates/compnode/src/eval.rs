@@ -332,27 +332,30 @@ fn node_signature(
     if !stack.insert(id) {
         return 0;
     }
-    let Some(node) = snarl.node(id).cloned() else {
+    // Never clone the whole `Node` here: it owns pixel buffers and this runs
+    // for every upstream node on every frame. Copy out only the parameters.
+    let layered = match snarl.node(id) {
+        None => {
+            stack.remove(&id);
+            return 0;
+        }
+        Some(Node::Filter(filter)) => Some((Kind::Filter(filter.kind), filter.params.clone())),
+        Some(Node::Group(group)) => Some((Kind::Group, group.params.clone())),
+        Some(Node::Blend(blend)) => Some((Kind::Blend, blend.params.clone())),
+        Some(Node::Texts(texts)) => Some((Kind::Texts, texts.params.clone())),
+        Some(_) => None,
+    };
+    if let Some((kind, params)) = layered {
+        let signature = filter_signature(snarl, id, kind, &params, stack, quality);
+        stack.remove(&id);
+        return signature;
+    }
+    let Some(node) = snarl.node(id) else {
+        stack.remove(&id);
         return 0;
     };
-    let signature = match &node {
-        Node::Filter(filter) => filter_signature(
-            snarl,
-            id,
-            Kind::Filter(filter.kind),
-            &filter.params,
-            stack,
-            quality,
-        ),
-        Node::Group(group) => {
-            filter_signature(snarl, id, Kind::Group, &group.params, stack, quality)
-        }
-        Node::Blend(blend) => {
-            filter_signature(snarl, id, Kind::Blend, &blend.params, stack, quality)
-        }
-        Node::Texts(texts) => {
-            filter_signature(snarl, id, Kind::Texts, &texts.params, stack, quality)
-        }
+    let signature = match node {
+        Node::Filter(_) | Node::Group(_) | Node::Blend(_) | Node::Texts(_) => 0,
         Node::Image(image) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             image.asset_id.hash(&mut hasher);
@@ -428,10 +431,9 @@ fn resolve_image(
 ) -> Option<RgbaImage> {
     // A Route passes its input straight through, with no image of its own.
     let id = snarl.resolve_route(id);
-    let Some(node) = snarl.node(id).cloned() else {
-        return None;
-    };
-    if node.is_evaluable() {
+    // Borrow instead of cloning the node (a clone would copy its pixel data).
+    let evaluable = snarl.node(id)?.is_evaluable();
+    if evaluable {
         ensure_filter(snarl, id, ctx, stack, quality);
         return snarl
             .node(id)
@@ -439,13 +441,15 @@ fn resolve_image(
             .map(|image| bound_image(image, quality));
     }
 
+    let node = snarl.node(id)?;
     if let Some(cpu) = node.cpu() {
         return Some(bound_image(cpu, quality));
     }
     if let Some(eval) = node.eval_image() {
         return Some(bound_image(eval, quality));
     }
-    if let Some(path) = node.reload_path()
+    let reload_path = node.reload_path().map(|path| path.to_path_buf());
+    if let Some(path) = reload_path
         && let Ok(image) = image::open(path)
     {
         let rgba = image.to_rgba8();

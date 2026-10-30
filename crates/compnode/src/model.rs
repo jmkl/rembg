@@ -7,6 +7,7 @@
 //! 4. Add its session mapping in [`crate::session`] if it has persistent data.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use egui::TextureHandle;
@@ -261,11 +262,13 @@ impl FilterNode {
 #[derive(Clone, Default)]
 pub(crate) struct Preview {
     pub texture: Option<TextureHandle>,
-    pub cpu: Option<RgbaImage>,
+    /// Shared so cloning a node (undo snapshots, per-frame change checks)
+    /// never deep-copies full-resolution pixels.
+    pub cpu: Option<Arc<RgbaImage>>,
     /// Evaluation-resolution copy (at most the normal preview tier on the longest
     /// side). Filter evaluation uses this instead of repeatedly downscaling
     /// `cpu`, which is expensive for full-resolution sources.
-    pub eval: Option<RgbaImage>,
+    pub eval: Option<Arc<RgbaImage>>,
     pub error: Option<String>,
 }
 
@@ -274,15 +277,15 @@ impl Preview {
         let eval = eval_copy(&cpu);
         Self {
             texture: Some(texture),
-            cpu: Some(cpu),
-            eval: Some(eval),
+            cpu: Some(Arc::new(cpu)),
+            eval: Some(Arc::new(eval)),
             error: None,
         }
     }
 
     pub(crate) fn set_cpu(&mut self, image: RgbaImage) {
-        self.eval = Some(eval_copy(&image));
-        self.cpu = Some(image);
+        self.eval = Some(Arc::new(eval_copy(&image)));
+        self.cpu = Some(Arc::new(image));
     }
 
     pub(crate) fn clear(&mut self) {
@@ -293,7 +296,7 @@ impl Preview {
     }
 
     pub(crate) fn eval_image(&self) -> Option<&RgbaImage> {
-        self.eval.as_ref().or(self.cpu.as_ref())
+        self.eval.as_deref().or(self.cpu.as_deref())
     }
 }
 
@@ -1031,14 +1034,14 @@ impl Node {
 
     pub(crate) fn cpu(&self) -> Option<&RgbaImage> {
         match self {
-            Self::Image(node) => node.preview.cpu.as_ref(),
+            Self::Image(node) => node.preview.cpu.as_deref(),
             Self::RemoveBg(process)
             | Self::RemoveBgV2(process)
-            | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview.cpu.as_ref(),
+            | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview.cpu.as_deref(),
             Self::Output(_) | Self::Route(_) => None,
-            Self::Group(group) | Self::Blend(group) => group.preview.cpu.as_ref(),
-            Self::Texts(texts) => texts.preview.cpu.as_ref(),
-            Self::Filter(node) => node.preview.cpu.as_ref(),
+            Self::Group(group) | Self::Blend(group) => group.preview.cpu.as_deref(),
+            Self::Texts(texts) => texts.preview.cpu.as_deref(),
+            Self::Filter(node) => node.preview.cpu.as_deref(),
         }
     }
 
@@ -1117,6 +1120,17 @@ impl Node {
         self.preview_mut()
             .and_then(|preview| preview.cpu.take())
             .is_some()
+    }
+
+    /// Like [`Node::release_cpu`], but only when the full-resolution image can
+    /// be recreated (asset bytes or an existing result file). Used for undo
+    /// snapshots so history does not pin full-resolution bitmaps in memory.
+    pub(crate) fn release_cpu_if_reloadable(&mut self) -> bool {
+        let reloadable = match self.image_node() {
+            Some(image) => image.asset_id.is_some() || self.can_reload_image(),
+            None => self.can_reload_image(),
+        };
+        reloadable && self.release_cpu()
     }
 
     pub(crate) fn job(&self) -> Option<u64> {

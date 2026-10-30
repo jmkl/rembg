@@ -1480,8 +1480,11 @@ impl App for CompNodeApp {
         }
 
         // Keep inference status and notices fresh while the worker is busy.
+        // The worker requests a repaint when a job finishes, so a slow timer is
+        // enough here; repainting every frame would spin the UI thread and
+        // compete with the worker's rayon threads.
         if busy > 0 || self.notice.is_some() {
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(150));
         }
     }
 }
@@ -1586,6 +1589,8 @@ fn start_bridge_server(
                 Ok(connection) => connection,
                 Err(error) => {
                     eprintln!("TCP accept failed: {error}");
+                    // Avoid a hot loop if accept keeps failing.
+                    thread::sleep(Duration::from_millis(200));
                     continue;
                 }
             };

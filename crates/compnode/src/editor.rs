@@ -265,9 +265,17 @@ impl GraphEditor {
         GraphSnapshot::capture(snarl, &self.assets)
     }
 
-    pub(crate) fn record_node_change(&mut self, id: NodeId, before: Node, snarl: &Snarl<Node>) {
+    pub(crate) fn record_node_change(
+        &mut self,
+        id: NodeId,
+        mut before: Node,
+        snarl: &Snarl<Node>,
+    ) {
         if let Some(after) = snarl.get_node(id) {
-            self.history.record_node(id, before, after.clone());
+            let mut after = after.clone();
+            before.release_cpu_if_reloadable();
+            after.release_cpu_if_reloadable();
+            self.history.record_node(id, before, after);
         }
     }
 
@@ -1415,7 +1423,7 @@ fn filter_input(snarl: &Snarl<Node>, node: NodeId, assets: &AssetStore) -> Optio
                 return image
                     .preview
                     .cpu
-                    .as_ref()
+                    .as_deref()
                     .map(|cpu| FilterInput::Pixels(cpu.clone()));
             }
             _ => {

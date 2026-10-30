@@ -18,8 +18,12 @@ pub(crate) struct GraphSnapshot {
 
 impl GraphSnapshot {
     pub(crate) fn capture(snarl: &Snarl<Node>, assets: &AssetStore) -> Self {
+        let mut snarl = snarl.clone();
+        for (_, node) in snarl.nodes_ids_mut() {
+            node.release_cpu_if_reloadable();
+        }
         Self {
-            snarl: snarl.clone(),
+            snarl,
             assets: assets.clone(),
         }
     }
@@ -59,7 +63,7 @@ pub(crate) struct GraphHistory {
 impl GraphHistory {
     pub(crate) fn record_graph(&mut self, before: GraphSnapshot, after: GraphSnapshot) {
         self.undo.push(Change::Graph { before, after });
-        self.undo.truncate(HISTORY_LIMIT);
+        cap_oldest(&mut self.undo);
         self.redo.clear();
     }
 
@@ -83,7 +87,7 @@ impl GraphHistory {
                 after,
                 changed_at: now,
             });
-            self.undo.truncate(HISTORY_LIMIT);
+            cap_oldest(&mut self.undo);
         }
         self.redo.clear();
     }
@@ -124,6 +128,15 @@ impl GraphHistory {
     }
 }
 
+/// Keep the newest `HISTORY_LIMIT` entries. (`Vec::truncate` would keep the
+/// oldest ones and drop the newest edit instead.)
+fn cap_oldest(stack: &mut Vec<Change>) {
+    if stack.len() > HISTORY_LIMIT {
+        let excess = stack.len() - HISTORY_LIMIT;
+        stack.drain(..excess);
+    }
+}
+
 fn restore_node(snarl: &mut Snarl<Node>, id: NodeId, mut node: Node, assets: &mut AssetStore) {
     node.reset_transient_state();
     if let Some(current) = snarl.get_node_mut(id) {
@@ -154,6 +167,22 @@ mod tests {
         assert_eq!(snarl.node_ids().count(), 0);
         assert!(history.redo(&mut snarl, &mut assets));
         assert_eq!(snarl.node_ids().count(), 1);
+    }
+
+    #[test]
+    fn history_drops_oldest_entries_when_full() {
+        let mut snarl = Snarl::new();
+        let mut assets = AssetStore::default();
+        let mut history = GraphHistory::default();
+        for _ in 0..(super::HISTORY_LIMIT + 5) {
+            let before = GraphSnapshot::capture(&snarl, &assets);
+            snarl.insert_node(egui::Pos2::ZERO, Node::new_filter(FilterKind::Hsv));
+            history.record_graph(before, GraphSnapshot::capture(&snarl, &assets));
+        }
+        assert_eq!(history.undo.len(), super::HISTORY_LIMIT);
+        // The newest edit must still be undoable.
+        assert!(history.undo(&mut snarl, &mut assets));
+        assert_eq!(snarl.node_ids().count(), super::HISTORY_LIMIT + 4);
     }
 
     #[test]
