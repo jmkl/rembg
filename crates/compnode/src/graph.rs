@@ -70,11 +70,18 @@ pub(crate) fn first_input(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
 ///
 /// Route is a pass-through: `image -> Route -> curve` must resolve exactly like
 /// `image -> curve`. Non-Route nodes and unconnected Routes resolve to
-/// themselves. Cycles are cut off at the first repeated Route.
+/// themselves. When a Route is toggled off, it acts as a disconnect/open circuit.
+/// Cycles are cut off at the first repeated Route.
 pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
-    while snarl.get_node(current).is_some_and(|n| n.is_route()) {
+    while let Some(node_ref) = snarl.get_node(current) {
+        if !node_ref.is_route() {
+            break;
+        }
+        if !node_ref.route_enabled() {
+            return current;
+        }
         if !seen.insert(current) {
             return current;
         }
@@ -88,8 +95,18 @@ pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
 
 /// Source of `node`'s primary input, with any Route chain resolved away.
 pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
+    if snarl
+        .get_node(node)
+        .is_some_and(|n| n.is_route() && !n.route_enabled())
+    {
+        return None;
+    }
     let remote = first_input(snarl, node)?;
-    Some(resolve_route(snarl, remote))
+    let resolved = resolve_route(snarl, remote);
+    if snarl.get_node(resolved).is_some_and(|n| n.is_route()) {
+        return None;
+    }
+    Some(resolved)
 }
 
 /// Return every connected source feeding `node`, resolving pass-through Route
@@ -104,7 +121,8 @@ pub(crate) fn upstream_sources(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId>
     for input in 0..input_count {
         for remote in &snarl.in_pin(InPinId { node, input }).remotes {
             let source = resolve_route(snarl, remote.node);
-            if snarl.get_node(source).is_some() && !sources.contains(&source) {
+            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source)
+            {
                 sources.push(source);
             }
         }
@@ -241,6 +259,9 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
         // A Route has no output file of its own; downstream consumers must
         // read the pass-through input exactly as if Route were not there.
         if node_ref.is_route() {
+            if !node_ref.route_enabled() {
+                return None;
+            }
             match upstream(snarl, current) {
                 Some(next) => {
                     current = next;
@@ -495,7 +516,8 @@ pub(crate) fn refresh_viewer(
         let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
         for remote in remotes {
             let source = resolve_route(snarl, remote.node);
-            if snarl.get_node(source).is_some() && !sources.contains(&source) {
+            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source)
+            {
                 sources.push(source);
             }
         }
@@ -688,7 +710,7 @@ pub(crate) fn effective_dimensions(
                 }
                 return None;
             }
-            Node::Route => {
+            Node::Route(_) => {
                 if let Some(up) = upstream(snarl, current) {
                     current = resolve_route(snarl, up);
                     continue;

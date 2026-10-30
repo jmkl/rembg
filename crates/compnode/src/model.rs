@@ -466,6 +466,17 @@ pub(crate) struct ViewerNode {
     pub preview_enabled: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RouteNode {
+    pub enabled: bool,
+}
+
+impl Default for RouteNode {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum Node {
     Image(ImageNode),
@@ -473,7 +484,7 @@ pub(crate) enum Node {
     RemoveBgV2(Process),
     FaceRestore(FaceRestoreNode),
     Output(ViewerNode),
-    Route,
+    Route(RouteNode),
     Group(GroupNode),
     Blend(GroupNode),
     Texts(TextsNode),
@@ -693,6 +704,9 @@ impl Node {
             Self::Filter(_) | Self::Group(_) | Self::Blend(_) | Self::Texts(_) => {
                 self.serialize_parameters().unwrap_or(Value::Null)
             }
+            Self::Route(route) => {
+                serde_json::json!({"enabled": route.enabled})
+            }
             _ => Value::Null,
         }
     }
@@ -743,7 +757,12 @@ impl Node {
 
     #[allow(dead_code)]
     pub(crate) fn route() -> Self {
-        Self::Route
+        Self::Route(RouteNode::default())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn route_with_enabled(enabled: bool) -> Self {
+        Self::Route(RouteNode { enabled })
     }
 
     pub(crate) fn group() -> Self {
@@ -770,7 +789,7 @@ impl Node {
             Self::RemoveBgV2(_) => Kind::RemoveBgV2,
             Self::FaceRestore(_) => Kind::FaceRestore,
             Self::Output(_) => Kind::Output,
-            Self::Route => Kind::Route,
+            Self::Route(_) => Kind::Route,
             Self::Group(_) => Kind::Group,
             Self::Blend(_) => Kind::Blend,
             Self::Texts(_) => Kind::Texts,
@@ -778,10 +797,23 @@ impl Node {
         }
     }
 
-    /// A Route node is a pure pass-through: downstream nodes resolve its
-    /// upstream wire as if the Route were not in the graph.
+    /// A Route node is a pass-through: downstream nodes resolve its
+    /// upstream wire as if the Route were not in the graph when enabled.
     pub(crate) fn is_route(&self) -> bool {
-        matches!(self, Self::Route)
+        matches!(self, Self::Route(_))
+    }
+
+    pub(crate) fn route_enabled(&self) -> bool {
+        match self {
+            Self::Route(route) => route.enabled,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn set_route_enabled(&mut self, enabled: bool) {
+        if let Self::Route(route) = self {
+            route.enabled = enabled;
+        }
     }
 
     pub(crate) fn is_blend(&self) -> bool {
@@ -959,7 +991,7 @@ impl Node {
                 .layers
                 .last()
                 .and_then(|layer| layer.texture.as_ref()),
-            Self::Route => None,
+            Self::Route(_) => None,
             Self::Group(group) | Self::Blend(group) => group.preview.texture.as_ref(),
             Self::Texts(texts) => texts.preview.texture.as_ref(),
             Self::Filter(node) => node.preview.texture.as_ref(),
@@ -974,7 +1006,7 @@ impl Node {
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview_enabled,
             Self::Output(viewer) => viewer.preview_enabled,
-            Self::Route => false,
+            Self::Route(_) => false,
             Self::Group(group) | Self::Blend(group) => group.preview_enabled,
             Self::Texts(texts) => texts.preview_enabled,
             Self::Filter(node) => node.preview_enabled,
@@ -990,7 +1022,7 @@ impl Node {
                 process.preview_enabled = enabled
             }
             Self::Output(viewer) => viewer.preview_enabled = enabled,
-            Self::Route => {}
+            Self::Route(_) => {}
             Self::Group(group) | Self::Blend(group) => group.preview_enabled = enabled,
             Self::Texts(texts) => texts.preview_enabled = enabled,
             Self::Filter(node) => node.preview_enabled = enabled,
@@ -1003,7 +1035,7 @@ impl Node {
             Self::RemoveBg(process)
             | Self::RemoveBgV2(process)
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => process.preview.cpu.as_ref(),
-            Self::Output(_) | Self::Route => None,
+            Self::Output(_) | Self::Route(_) => None,
             Self::Group(group) | Self::Blend(group) => group.preview.cpu.as_ref(),
             Self::Texts(texts) => texts.preview.cpu.as_ref(),
             Self::Filter(node) => node.preview.cpu.as_ref(),
@@ -1024,7 +1056,7 @@ impl Node {
             Self::FaceRestore(node) => node.process.output_path.as_deref(),
             Self::Filter(node) => node.output_path.as_deref(),
             Self::Group(node) | Self::Blend(node) => node.output_path.as_deref(),
-            Self::Image(_) | Self::Output(_) | Self::Route | Self::Texts(_) => None,
+            Self::Image(_) | Self::Output(_) | Self::Route(_) | Self::Texts(_) => None,
         }
     }
 
@@ -1038,7 +1070,7 @@ impl Node {
             Self::Image(node) => Some(&node.preview),
             Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&process.preview),
             Self::FaceRestore(node) => Some(&node.process.preview),
-            Self::Output(_) | Self::Route => None,
+            Self::Output(_) | Self::Route(_) => None,
             Self::Group(group) | Self::Blend(group) => Some(&group.preview),
             Self::Texts(texts) => Some(&texts.preview),
             Self::Filter(node) => Some(&node.preview),
@@ -1050,7 +1082,7 @@ impl Node {
             Self::Image(node) => Some(&mut node.preview),
             Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(&mut process.preview),
             Self::FaceRestore(node) => Some(&mut node.process.preview),
-            Self::Output(_) | Self::Route => None,
+            Self::Output(_) | Self::Route(_) => None,
             Self::Group(group) | Self::Blend(group) => Some(&mut group.preview),
             Self::Texts(texts) => Some(&mut texts.preview),
             Self::Filter(node) => Some(&mut node.preview),
@@ -1201,7 +1233,7 @@ impl Node {
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error.as_deref()
             }
-            Self::Output(_) | Self::Route => None,
+            Self::Output(_) | Self::Route(_) => None,
             Self::Group(group) | Self::Blend(group) => group.preview.error.as_deref(),
             Self::Texts(texts) => texts.preview.error.as_deref(),
             Self::Filter(node) => node.preview.error.as_deref(),
@@ -1217,7 +1249,7 @@ impl Node {
             | Self::FaceRestore(FaceRestoreNode { process, .. }) => {
                 process.preview.error = Some(msg);
             }
-            Self::Output(_) | Self::Route => {}
+            Self::Output(_) | Self::Route(_) => {}
             Self::Group(group) | Self::Blend(group) => group.preview.error = Some(msg),
             Self::Texts(texts) => texts.preview.error = Some(msg),
             Self::Filter(node) => node.preview.error = Some(msg),
@@ -1339,7 +1371,7 @@ impl Node {
             // An Image is a pass-through: downstream consumers must refresh
             // when either its selected asset or its upstream input changes.
             Self::Image(_) => true,
-            Self::Route => true,
+            Self::Route(_) => true,
             Self::RemoveBg(process) => {
                 process.clear_outputs();
                 true

@@ -220,11 +220,13 @@ pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile 
                 layers: viewer.layers.iter().map(|layer| layer.source.0).collect(),
                 transforms: layer_transforms(&viewer.layers),
             },
-            Node::Route => SessionNodeData::Filter {
+            Node::Route(route) => SessionNodeData::Filter {
                 filter_kind: "route".to_owned(),
-                params: node_definition
-                    .serialize_parameters()
-                    .unwrap_or_else(|| Value::Object(Default::default())),
+                params: {
+                    let mut map = serde_json::Map::new();
+                    map.insert("enabled".to_owned(), serde_json::Value::Bool(route.enabled));
+                    Value::Object(map)
+                },
                 layers: Vec::new(),
                 transforms: Vec::new(),
             },
@@ -421,7 +423,13 @@ pub(crate) fn load(
                 layers,
                 transforms,
             } => match filter_kind.as_str() {
-                "route" => Node::Route,
+                "route" => {
+                    let enabled = params
+                        .get("enabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    Node::route_with_enabled(enabled)
+                }
                 "mix" | "group" => {
                     pending_layers = Some((layers, transforms));
                     let mut node = Node::Group(GroupNode::new(false));

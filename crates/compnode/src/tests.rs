@@ -1862,3 +1862,110 @@ fn texts_layer_computes_content_bounds_crop() {
         matches!(req, WorkerRequest::Render(request) if matches!(request.job, crate::worker::RenderJob::Texts { node, .. } if node == text_node))
     );
 }
+
+#[test]
+fn route_toggle_disconnects_upstream_and_downstream() {
+    let mut snarl: Snarl<Node> = Snarl::new();
+    let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/test/source.png"));
+    let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
+    let filter = snarl.insert_node(
+        egui::pos2(400.0, 0.0),
+        Node::new_filter(crate::model::FilterKind::Curves),
+    );
+
+    for (from, to) in [(source, route), (route, filter)] {
+        snarl.connect(
+            snarl
+                .out_pin(egui_snarl::OutPinId {
+                    node: from,
+                    output: 0,
+                })
+                .id,
+            snarl
+                .in_pin(egui_snarl::InPinId {
+                    node: to,
+                    input: 0,
+                })
+                .id,
+        );
+    }
+
+    // Default route is enabled (pass-through).
+    assert!(snarl[route].route_enabled());
+    assert_eq!(crate::graph::resolve_route(&snarl, route), source);
+    assert_eq!(crate::graph::upstream(&snarl, filter), Some(source));
+
+    // When route is toggled OFF (disconnected):
+    snarl[route].set_route_enabled(false);
+    assert!(!snarl[route].route_enabled());
+
+    // Route itself resolves to itself and upstream returns None (disconnected!).
+    assert_eq!(crate::graph::resolve_route(&snarl, route), route);
+    assert_eq!(crate::graph::upstream(&snarl, filter), None);
+    assert_eq!(crate::graph::upstream(&snarl, route), None);
+
+    // Multi-hop test: source -> route_a -> route_b (OFF) -> route_c -> filter
+    let route_b = snarl.insert_node(egui::pos2(250.0, 0.0), Node::route_with_enabled(false));
+    let route_c = snarl.insert_node(egui::pos2(300.0, 0.0), Node::route());
+
+    snarl.disconnect(
+        snarl
+            .out_pin(egui_snarl::OutPinId {
+                node: route,
+                output: 0,
+            })
+            .id,
+        snarl
+            .in_pin(egui_snarl::InPinId {
+                node: filter,
+                input: 0,
+            })
+            .id,
+    );
+    // Re-enable first route
+    snarl[route].set_route_enabled(true);
+    for (from, to) in [(route, route_b), (route_b, route_c), (route_c, filter)] {
+        snarl.connect(
+            snarl
+                .out_pin(egui_snarl::OutPinId {
+                    node: from,
+                    output: 0,
+                })
+                .id,
+            snarl
+                .in_pin(egui_snarl::InPinId {
+                    node: to,
+                    input: 0,
+                })
+                .id,
+        );
+    }
+
+    // Since route_b in the middle is disabled, downstream filter is disconnected!
+    assert_eq!(crate::graph::upstream(&snarl, filter), None);
+    assert_eq!(crate::graph::resolve_route(&snarl, route_c), route_b);
+
+    // Re-enabling route_b restores full connectivity through the entire chain!
+    snarl[route_b].set_route_enabled(true);
+    assert_eq!(crate::graph::upstream(&snarl, filter), Some(source));
+    assert_eq!(crate::graph::resolve_route(&snarl, route_c), source);
+}
+
+#[test]
+fn route_toggle_session_roundtrips_enabled_state() {
+    let route_on = Node::route();
+    let route_off = Node::route_with_enabled(false);
+
+    assert!(route_on.route_enabled());
+    assert!(!route_off.route_enabled());
+
+    // History state tracks toggle
+    assert_eq!(
+        route_on.history_state(),
+        serde_json::json!({"enabled": true})
+    );
+    assert_eq!(
+        route_off.history_state(),
+        serde_json::json!({"enabled": false})
+    );
+}

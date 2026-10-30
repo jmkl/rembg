@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use egui::{Align2, FontId, Frame, Stroke, vec2};
+use egui::{Align2, CornerRadius, FontId, Frame, Stroke, vec2};
 use egui_snarl::{
     InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
     ui::{
@@ -901,6 +901,75 @@ impl SnarlViewer<Node> for GraphEditor {
         ui.set_min_width(width);
         let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), egui::Sense::hover());
 
+        if snarl[node].is_route() {
+            let enabled = snarl[node].route_enabled();
+            let status_color = if enabled { pal::SUCCESS } else { pal::DANGER };
+            let dot_x = rect.left() + PAD + 4.0;
+            ui.painter().circle_filled(
+                egui::pos2(dot_x, rect.center().y),
+                3.0,
+                status_color,
+            );
+
+            let toggle_w = 34.0;
+            let toggle_h = 16.0;
+            let toggle_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - PAD - toggle_w, rect.center().y - toggle_h / 2.0),
+                vec2(toggle_w, toggle_h),
+            );
+
+            let title_color = if enabled { pal::HEADER_TEXT } else { pal::MUTED };
+            let title_text = if enabled {
+                format!("Route #{}", node.0)
+            } else {
+                format!("Route #{} (off)", node.0)
+            };
+            let title_area = egui::Rect::from_min_max(
+                egui::pos2(dot_x + 8.0, rect.top()),
+                egui::pos2(toggle_rect.left() - 4.0, rect.bottom()),
+            );
+            ui.painter().text(
+                title_area.center(),
+                Align2::CENTER_CENTER,
+                title_text,
+                FontId::proportional(font::BUTTON),
+                title_color,
+            );
+
+            let response = ui.interact(
+                toggle_rect,
+                ui.id().with(("route_toggle", node)),
+                egui::Sense::click(),
+            );
+            let (bg, text_color, label) = if enabled {
+                (pal::SUCCESS.gamma_multiply(0.25), pal::SUCCESS, "ON")
+            } else {
+                (pal::hover(pal::PANEL), pal::MUTED, "OFF")
+            };
+            ui.painter().rect_filled(toggle_rect, CornerRadius::same(3), bg);
+            ui.painter().text(
+                toggle_rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                FontId::proportional(font::TINY),
+                text_color,
+            );
+            if response
+                .on_hover_text(if enabled {
+                    "Route active (pass-through) · Click to disconnect"
+                } else {
+                    "Route disconnected · Click to connect pass-through"
+                })
+                .clicked()
+            {
+                let before = snarl[node].clone();
+                snarl[node].set_route_enabled(!enabled);
+                invalidate_node(snarl, node);
+                self.record_node_change(node, before, snarl);
+            }
+            return;
+        }
+
         let left = egui::Rect::from_min_size(
             egui::pos2(rect.left() + PAD, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
@@ -1048,10 +1117,17 @@ impl SnarlViewer<Node> for GraphEditor {
         &mut self,
         pin: &OutPin,
         ui: &mut egui::Ui,
-        _snarl: &mut Snarl<Node>,
+        snarl: &mut Snarl<Node>,
     ) -> impl SnarlPin + 'static {
         self.output_pin_y.insert(pin.id, pin_screen_y(ui));
-        socket(ui, "")
+        if snarl[pin.id.node].is_route() && !snarl[pin.id.node].route_enabled() {
+            PinInfo::circle()
+                .with_fill(pal::MUTED)
+                .with_stroke(Stroke::new(1.0, pal::MUTED))
+                .with_wire_color(pal::MUTED)
+        } else {
+            socket(ui, "")
+        }
     }
 
     fn show_body(

@@ -390,7 +390,7 @@ fn node_signature(
             }
             hasher.finish()
         }
-        Node::Output(_) | Node::Route => 0,
+        Node::Output(_) | Node::Route(_) => 0,
     };
     stack.remove(&id);
     signature
