@@ -35,3 +35,5 @@ test_output*
 *.token
 out*.png
 *.patch
+
+crates/*.zip

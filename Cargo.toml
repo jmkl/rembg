@@ -8,7 +8,7 @@ members = [
   "crates/gpaste",
   "crates/gpt",
   "crates/craftnailizer",
-  "crates/egui_nerdfonts",
+  "crates/egui_nerdfonts", "crates/linkrouter",
 
 ]
 resolver = "2"
