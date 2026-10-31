@@ -45,6 +45,14 @@ pub(crate) struct GraphEditor {
     /// is loaded or cleared so pan/zoom and selection cannot leak across files.
     view_id: egui::Id,
     view_generation: u64,
+    /// View transform to re-apply after the widget ID changed.
+    ///
+    /// egui-snarl keeps pan/zoom in context storage keyed by the widget ID, so
+    /// a new ID makes it fall back to a fit-to-graph transform. Undo/redo
+    /// needs a new ID (the graph is replaced, so the old selection must not
+    /// survive), but the user's zoom and pan should. The transform is stashed
+    /// here and restored on the next frame.
+    pending_view: Option<egui::emath::TSTransform>,
     /// App-level node selection. egui-snarl 0.12 only updates its own selection
     /// for Shift/Ctrl-click and rectangle selection, so a normal click would
     /// otherwise leave Delete with nothing to act on.
@@ -80,6 +88,7 @@ impl GraphEditor {
             next_token: 1,
             view_id: egui::Id::new("snarl"),
             view_generation: 0,
+            pending_view: None,
             selected: Vec::new(),
             snarl_selection: Vec::new(),
             node_pressed: false,
@@ -102,6 +111,7 @@ impl GraphEditor {
     pub(crate) fn reset_view(&mut self) {
         self.view_generation += 1;
         self.view_id = egui::Id::new(("snarl", self.view_generation));
+        self.pending_view = None;
         self.selected.clear();
         self.snarl_selection.clear();
         self.node_pressed = false;
@@ -110,6 +120,19 @@ impl GraphEditor {
         self.input_pin_y.clear();
         self.output_pin_y.clear();
         self.cut_drag = None;
+    }
+
+    /// Drop the view state but keep the current zoom and pan.
+    ///
+    /// Undo/redo replaces the whole graph, so the widget ID has to change:
+    /// egui-snarl's stored selection refers to node IDs, and a restored graph
+    /// can map those IDs to different nodes. The ID change also drops the
+    /// stored pan/zoom, so stash the current transform and re-apply it on
+    /// the next frame.
+    fn reset_view_keeping_transform(&mut self) {
+        let saved = self.to_global;
+        self.reset_view();
+        self.pending_view = Some(saved);
     }
 
     /// Start a Blender-style wire cut when Ctrl+primary is pressed on empty
@@ -239,7 +262,10 @@ impl GraphEditor {
     pub(crate) fn undo(&mut self, snarl: &mut Snarl<Node>) -> bool {
         let changed = self.history.undo(snarl, &mut self.assets);
         if changed {
-            self.reset_view();
+            // The graph is replaced by a snapshot, so node ids can now point
+            // at different nodes and the old selection must not survive. The
+            // zoom and pan, however, belong to the user and stay.
+            self.reset_view_keeping_transform();
         }
         changed
     }
@@ -247,7 +273,7 @@ impl GraphEditor {
     pub(crate) fn redo(&mut self, snarl: &mut Snarl<Node>) -> bool {
         let changed = self.history.redo(snarl, &mut self.assets);
         if changed {
-            self.reset_view();
+            self.reset_view_keeping_transform();
         }
         changed
     }
@@ -1324,6 +1350,13 @@ impl SnarlViewer<Node> for GraphEditor {
             to_global.translation = self.to_global.translation;
         }
 
+        // Undo/redo swapped the graph for a snapshot and gave the widget a new
+        // id, so egui-snarl came up with a fit-to-graph transform. Put the
+        // user's own zoom and pan back.
+        if let Some(saved) = self.pending_view.take() {
+            *to_global = saved;
+        }
+
         self.to_global = *to_global;
         self.zoom = to_global.scaling.max(0.05);
     }
@@ -1515,5 +1548,57 @@ mod tests {
         // A swipe across the wire cuts it.
         editor.cut_wires(&mut snarl, egui::pos2(250.0, 20.0), egui::pos2(250.0, 80.0));
         assert_eq!(snarl.wires().count(), 0);
+    }
+
+    /// Zoom + pan the user had before an undo/redo.
+    fn zoomed_view() -> egui::emath::TSTransform {
+        egui::emath::TSTransform {
+            scaling: 2.5,
+            translation: egui::vec2(120.0, -40.0),
+        }
+    }
+
+    #[test]
+    fn undo_and_redo_keep_the_canvas_zoom_and_pan() {
+        let (jobs, _jobs_rx) = std::sync::mpsc::channel();
+        let mut editor = GraphEditor::new(jobs);
+        let mut snarl = Snarl::new();
+
+        // Something to undo.
+        let before = editor.graph_snapshot(&snarl);
+        snarl.insert_node(egui::pos2(0.0, 0.0), Node::remove_bg());
+        editor.record_graph_change(before, &snarl);
+
+        let view = zoomed_view();
+        editor.to_global = view;
+
+        assert!(editor.undo(&mut snarl));
+
+        // The graph was replaced, so the widget id changed and egui-snarl
+        // would fit-to-graph on the next frame. The saved transform wins.
+        let mut to_global = egui::emath::TSTransform::IDENTITY;
+        editor.current_transform(&mut to_global, &mut snarl);
+        assert_eq!(to_global, view);
+        assert_eq!(editor.zoom, view.scaling);
+
+        // Redo keeps it too.
+        editor.to_global = view;
+        assert!(editor.redo(&mut snarl));
+        let mut to_global = egui::emath::TSTransform::IDENTITY;
+        editor.current_transform(&mut to_global, &mut snarl);
+        assert_eq!(to_global, view);
+        assert_eq!(editor.zoom, view.scaling);
+    }
+
+    #[test]
+    fn loading_another_file_drops_the_pending_view() {
+        let (jobs, _jobs_rx) = std::sync::mpsc::channel();
+        let mut editor = GraphEditor::new(jobs);
+        editor.to_global = zoomed_view();
+
+        // A new document must start from a fit-to-graph view, not from the
+        // zoom the previous document had.
+        editor.reset_view();
+        assert!(editor.pending_view.is_none());
     }
 }

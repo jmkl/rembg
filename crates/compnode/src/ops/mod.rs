@@ -3,13 +3,13 @@
 //! Every function takes pixels in and returns pixels out, with no egui or graph
 //! dependencies. Evaluation and caching live in [`crate::eval`].
 
+pub(crate) mod blur;
 pub(crate) mod color;
 pub(crate) mod composite;
 pub(crate) mod effects;
 pub(crate) mod generators;
 pub(crate) mod math;
 pub(crate) mod rf;
-
 // Keep established internal paths stable while callers migrate to domains.
 pub(crate) use color::adjust;
 pub(crate) use generators::generate;
