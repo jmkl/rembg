@@ -3,9 +3,16 @@
   <head>
     <script src="index.js"></script>
   </head>
-  <style></style>
+  <style>
+    body { font-family: sans-serif; padding: 6px; }
+    button { display: block; width: 100%; margin: 4px 0; }
+    #status { font-size: 11px; margin-top: 6px; word-break: break-word; }
+  </style>
   <body>
     <sp-body>
+      <button id="connectBtn">Connect</button>
+      <button id="processBtn">Process Selection</button>
+      <button id="copyBtn">Copy Canvas to Clipboard</button>
       <sp-label id="status"></sp-label>
     </sp-body>
   </body>

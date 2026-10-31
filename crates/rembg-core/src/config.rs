@@ -20,6 +20,23 @@ pub const MODEL_SAM2_DECODER_FILE: &str = "sam2.1_hiera_small.decoder.onnx";
 pub const MODEL_YOLO_FILE: &str = "yolo11n.onnx";
 
 pub const MODEL_GFPGAN: &str = "models/GFPGANv1.4.onnx";
+
+/// Resolve a model root directory, defaulting to "models" when None/empty.
+pub fn model_root(root: Option<&str>) -> String {
+    root.map(|s| s.trim_end_matches(['/', '\\']).to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "models".to_string())
+}
+
+/// Join a model root directory with a model file name.
+pub fn model_path(root: Option<&str>, file: &str) -> String {
+    format!("{}/{}", model_root(root), file)
+}
+
+/// Alias for `model_root`, matching the requested name.
+pub fn load_model_path_root(root: Option<&str>) -> String {
+    model_root(root)
+}
 pub const MODEL_BIREFNET: &str = "models/birefnet.onnx";
 pub const MODEL_RMBG: &str = "models/rmbg-1.4.onnx";
 pub const MODEL_SCRFD: &str = "models/det_10g.onnx";

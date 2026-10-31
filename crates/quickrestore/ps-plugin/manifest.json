@@ -10,14 +10,20 @@
     }
   ],
   "manifestVersion": 5,
+  "requiredPermissions": {
+    "network": {
+      "domains": ["ws://localhost:9001", "http://localhost:9001"]
+    },
+    "clipboard": "readAndWrite"
+  },
   "entrypoints": [
     {
       "type": "panel",
       "id": "quick",
-      "minimumSize": { "width": 40, "height": 40 },
+      "minimumSize": { "width": 100, "height": 100 },
       "maximumSize": { "width": 200, "height": 200 },
-      "preferredDockedSize": { "width": 40, "height": 40 },
-      "preferredFloatingSize": { "width": 40, "height": 40 },
+      "preferredDockedSize": { "width": 150, "height": 150 },
+      "preferredFloatingSize": { "width": 150, "height": 150 },
       "label": { "default": "QuixRstr" },
       "icons": [
         {
