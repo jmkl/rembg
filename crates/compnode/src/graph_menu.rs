@@ -38,6 +38,10 @@ pub(crate) struct MenuNav {
     /// scroll animation (and its repaints) alive forever, which shows up as
     /// high CPU, navigation lag and a flickering list edge.
     scrolled_to: Option<(Option<NodeCategory>, usize)>,
+    /// The filter field has been given keyboard focus for this menu opening.
+    /// Cleared by `reset` when the menu closes, so every opening focuses the
+    /// field once and the user can type immediately.
+    filter_focused_once: bool,
 }
 
 impl MenuNav {
@@ -187,12 +191,16 @@ pub(crate) fn show(
         }
     }
 
-    ui.add(
+    let filter_response = ui.add(
         egui::TextEdit::singleline(filter)
             .hint_text("Filter nodes…")
             .desired_width(220.0)
             .id(filter_id),
     );
+    if !nav.filter_focused_once {
+        nav.filter_focused_once = true;
+        filter_response.request_focus();
+    }
     ui.add_space(3.0);
 
     let query = filter.trim();

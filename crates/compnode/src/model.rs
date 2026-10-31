@@ -939,7 +939,7 @@ impl Node {
     /// Shared processing-state accessor for Remove Background and Face Restore.
     pub(crate) fn process(&self) -> Option<&Process> {
         match self {
-            Self::RemoveBg(process) => Some(process),
+            Self::RemoveBg(process) | Self::RemoveBgV2(process) => Some(process),
             Self::FaceRestore(node) => Some(&node.process),
             _ => None,
         }

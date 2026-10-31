@@ -415,6 +415,9 @@ pub struct ImageCanvas {
     guides: Vec<Guide>,
     keep_aspect_ratio: bool,
     blend_preview: Option<TextureHandle>,
+    /// Screen rect of the floating canvas window from the last frame. Used to
+    /// tell whether the user is working in the canvas or in the node graph.
+    canvas_rect: Option<Rect>,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -449,6 +452,7 @@ impl ImageCanvas {
             guides: Vec::new(),
             keep_aspect_ratio: true,
             blend_preview: None,
+            canvas_rect: None,
         }
     }
 
@@ -848,6 +852,38 @@ impl ImageCanvas {
     /// Cached CPU image for a layer path, if it has been converted already.
     pub fn cpu_image(&self, path: &Path) -> Option<std::sync::Arc<image::RgbaImage>> {
         self.cache.get(path).map(|c| c.cpu.clone())
+    }
+
+    /// Apply transform changes from `LayerInfo` back to matching items by id.
+    /// Screen rect of the floating canvas window as of the last frame.
+    pub(crate) fn canvas_rect(&self) -> Option<Rect> {
+        self.canvas_rect
+    }
+
+    /// Mirror an undo/redo of the canvas history: set the transforms and the
+    /// stacking order of the items to `state` without counting it as a new
+    /// user edit.
+    pub(crate) fn apply_layer_state(&mut self, state: &[crate::history::LayerPose]) {
+        self.drag = Drag::None;
+        self.group_start.clear();
+        self.marquee = None;
+        self.list_drag = None;
+        self.guides.clear();
+        for (id, center, size, angle) in state {
+            if let Some(it) = self.items.iter_mut().find(|i| i.id == *id) {
+                it.center = *center;
+                it.size = *size;
+                it.angle = *angle;
+            }
+        }
+        self.items.sort_by_key(|it| {
+            state
+                .iter()
+                .position(|(id, ..)| *id == it.id)
+                .unwrap_or(usize::MAX)
+        });
+        // The node already holds this state, so there is nothing to commit.
+        self.committed_activity = Some(self.last_activity);
     }
 
     /// Apply transform changes from `LayerInfo` back to matching items by id.
@@ -1553,6 +1589,7 @@ impl ImageCanvas {
             .fixed_size(vec2(w, h)) // we control the size; egui's resize is off
             .show(ctx, |ui| {
                 self.canvas_ui(ui, scale);
+                self.canvas_rect = Some(ui.min_rect());
 
                 // Resize grip on the left edge (drawn after the canvas so it wins hit-testing).
                 let r = ui.min_rect();

@@ -34,6 +34,17 @@ pub(crate) struct Notice {
     until: Instant,
 }
 
+/// Which undo history Ctrl+Z / Ctrl+Y act on. The node graph and the layer
+/// canvas keep separate histories so an edit in one is never undone from the
+/// other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum UndoScope {
+    /// The Snarl node graph.
+    Graph,
+    /// The layer canvas of the active node.
+    Canvas,
+}
+
 pub struct CompNodeApp {
     pub(crate) snarl: Snarl<Node>,
     pub(crate) style: egui_snarl::ui::SnarlStyle,
@@ -70,6 +81,15 @@ pub struct CompNodeApp {
     pub(crate) image_canvas: ImageCanvas,
     #[allow(dead_code)]
     pub(crate) sidebar_restore: bool,
+    /// Context the last pointer press happened in; decides what undo/redo do.
+    pub(crate) undo_scope: UndoScope,
+    /// Screen rects of the sidebar and the graph from the last frame.
+    sidebar_rect: Option<egui::Rect>,
+    graph_rect: Option<egui::Rect>,
+    /// Layer state of a node from before the canvas edit in progress. The
+    /// per-frame sync during a drag only updates the node; one history entry
+    /// from this baseline is recorded when the edit settles.
+    canvas_edit_base: Option<(egui_snarl::NodeId, crate::history::LayerState)>,
 }
 impl CompNodeApp {
     pub(crate) fn new(
@@ -126,6 +146,10 @@ impl CompNodeApp {
             images_need_load: true,
             image_canvas: ImageCanvas::new(gpaste_app),
             sidebar_restore: false,
+            undo_scope: UndoScope::Graph,
+            sidebar_rect: None,
+            graph_rect: None,
+            canvas_edit_base: None,
         };
         app.image_canvas
             .set_canvas_size(app.settings.canvas_width, app.settings.canvas_height);
@@ -295,7 +319,10 @@ impl CompNodeApp {
             .filter(|(_, node)| {
                 node.cpu().is_some()
                     && node.output_path().is_none_or(|path| !path.exists())
-                    && matches!(node.kind(), Kind::RemoveBg | Kind::FaceRestore)
+                    && matches!(
+                        node.kind(),
+                        Kind::RemoveBg | Kind::RemoveBgV2 | Kind::FaceRestore
+                    )
             })
             .map(|(id, _)| id)
             .collect();
@@ -306,6 +333,7 @@ impl CompNodeApp {
             let key = output_cache_key(&image);
             let suffix = match self.snarl[id].kind() {
                 Kind::RemoveBg => "remove-bg",
+                Kind::RemoveBgV2 => "remove-bg-v2",
                 Kind::FaceRestore => "face-restore",
                 _ => "result",
             };
@@ -474,6 +502,7 @@ impl CompNodeApp {
         let snarl = session::load(path, &self.cache, ctx, &mut assets)?;
         self.editor.assets = assets;
         self.editor.clear_history();
+        self.canvas_edit_base = None;
         self.images_need_load = true;
         self.snarl = snarl;
         // Drop canvas items left over from the previous document so they can't
@@ -779,6 +808,7 @@ impl CompNodeApp {
     fn clear(&mut self) {
         self.snarl = Snarl::default();
         self.editor.clear_history();
+        self.canvas_edit_base = None;
         crate::graph::ensure_output_node(&mut self.snarl);
         self.image_canvas.reset_graph();
         self.editor.reset_view();
@@ -904,10 +934,10 @@ impl CompNodeApp {
             self.editor.delete_selected(&mut self.snarl);
         }
         if actions.undo {
-            self.editor.undo(&mut self.snarl);
+            self.undo_active_context(false);
         }
         if actions.redo {
-            self.editor.redo(&mut self.snarl);
+            self.undo_active_context(true);
         }
         if actions.settings {
             self.settings_draft = self.settings.clone();
@@ -1062,6 +1092,7 @@ impl CompNodeApp {
         // after the canvas has been idle for 3s (not every frame).
         if self.image_canvas.take_stable_commit(0.3) {
             self.commit_canvas_layers();
+            self.flush_canvas_history();
             // A canvas transform is session state even when no node changed.
             // `autosave_tick` only re-checks the graph after an edit, and this
             // commit happens with no input activity, so schedule the save here.
@@ -1089,6 +1120,78 @@ impl CompNodeApp {
         self.image_canvas.show(ui, &self.settings);
     }
 
+    /// Remember which context (node graph or layer canvas) the user is working
+    /// in, from where the last primary press landed. Presses elsewhere, such as
+    /// the title bar menu, keep the previous context.
+    fn update_undo_scope(&mut self, ctx: &egui::Context) {
+        let Some(pos) = ctx.input(|input| {
+            input
+                .pointer
+                .primary_pressed()
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        }) else {
+            return;
+        };
+        let in_canvas = self
+            .image_canvas
+            .canvas_rect()
+            .is_some_and(|rect| rect.contains(pos))
+            || self.sidebar_rect.is_some_and(|rect| rect.contains(pos));
+        if in_canvas {
+            self.undo_scope = UndoScope::Canvas;
+        } else if self.graph_rect.is_some_and(|rect| rect.contains(pos)) {
+            self.undo_scope = UndoScope::Graph;
+        }
+    }
+
+    /// Node whose layers the canvas is editing: the selected layer node, or
+    /// the viewer node when nothing else is selected.
+    fn canvas_target_id(&self) -> Option<egui_snarl::NodeId> {
+        let edited = self.editor.selected_nodes().first().copied().filter(|id| {
+            self.snarl.get_node_info(*id).is_some() && self.snarl[*id].kind().is_layer_kind()
+        });
+        edited.or_else(|| {
+            self.snarl
+                .node_ids()
+                .find(|(_, n)| n.viewer_node().is_some())
+                .map(|(id, _)| id)
+        })
+    }
+
+    /// Undo or redo in the context the user is working in. The canvas history
+    /// belongs to the active node and never touches the graph history.
+    fn undo_active_context(&mut self, redo: bool) {
+        // Flush a canvas edit that is still waiting for its idle commit so it
+        // is part of the history before anything is undone.
+        self.commit_canvas_layers();
+        self.flush_canvas_history();
+        match self.undo_scope {
+            UndoScope::Graph => {
+                if redo {
+                    self.editor.redo(&mut self.snarl);
+                } else {
+                    self.editor.undo(&mut self.snarl);
+                }
+            }
+            UndoScope::Canvas => {
+                let Some(target) = self.canvas_target_id() else {
+                    return;
+                };
+                let state = if redo {
+                    self.editor.redo_canvas(&mut self.snarl, target)
+                } else {
+                    self.editor.undo_canvas(&mut self.snarl, target)
+                };
+                if let Some(state) = state {
+                    self.image_canvas.apply_layer_state(&state);
+                    self.autosave_due
+                        .get_or_insert_with(|| Instant::now() + Duration::from_millis(700));
+                }
+            }
+        }
+    }
+
     /// Copy the canvas item transforms/order into the edited Group or Output
     /// node. Also called before saving so a session never captures a stale
     /// transform that is still waiting for the idle timer.
@@ -1104,25 +1207,11 @@ impl CompNodeApp {
         let canvas_layer_order: Vec<egui_snarl::NodeId> =
             self.image_canvas.layers().map(|l| l.id).collect();
 
-        let edited_id = self.editor.selected_nodes().first().copied().filter(|id| {
-            self.snarl.get_node_info(*id).is_some() && self.snarl[*id].kind().is_layer_kind()
-        });
-        // fallback: single output node
-        let target_id = edited_id.or_else(|| {
-            self.snarl
-                .node_ids()
-                .find(|(_, n)| n.viewer_node().is_some())
-                .map(|(id, _)| id)
-        });
-
-        if let Some(tid) = target_id {
-            let before = self.snarl[tid].clone();
-            let old_state = before.layers().map(|layers| {
-                layers
-                    .iter()
-                    .map(|l| (l.source, l.center, l.size, l.angle))
-                    .collect::<Vec<_>>()
-            });
+        if let Some(tid) = self.canvas_target_id() {
+            if self.canvas_edit_base.as_ref().is_some_and(|(id, _)| *id != tid) {
+                self.flush_canvas_history();
+            }
+            let old_state = crate::history::layer_state(&self.snarl[tid]);
             if let Some(layers) = self.snarl[tid].layers_mut() {
                 for layer in layers.iter_mut() {
                     if let Some((center, size, angle)) = canvas_transforms.get(&layer.source) {
@@ -1138,15 +1227,31 @@ impl CompNodeApp {
                         .unwrap_or(usize::MAX)
                 });
             }
-            let new_state = self.snarl[tid].layers().map(|layers| {
-                layers
-                    .iter()
-                    .map(|l| (l.source, l.center, l.size, l.angle))
-                    .collect::<Vec<_>>()
-            });
-            if old_state != new_state {
-                self.editor.record_node_change(tid, before, &self.snarl);
+            let new_state = crate::history::layer_state(&self.snarl[tid]);
+            if let (Some(before), Some(after)) = (old_state, new_state)
+                && before != after
+                && self.canvas_edit_base.is_none()
+            {
+                // First change of this edit: remember where it started.
+                self.canvas_edit_base = Some((tid, before));
             }
+        }
+    }
+
+    /// Record the finished canvas edit as a single history entry (start of the
+    /// edit -> current state), instead of one entry per frame of a drag.
+    fn flush_canvas_history(&mut self) {
+        let Some((tid, before)) = self.canvas_edit_base.take() else {
+            return;
+        };
+        let after = self
+            .snarl
+            .get_node(tid)
+            .and_then(crate::history::layer_state);
+        if let Some(after) = after
+            && after != before
+        {
+            self.editor.record_canvas_edit(tid, before, after);
         }
     }
 }
@@ -1188,6 +1293,7 @@ impl App for CompNodeApp {
                     .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
         });
 
+        self.update_undo_scope(&ctx);
         self.poll_jobs(&ctx);
         self.poll_urls(&ctx);
         let has_unloaded_images = self
@@ -1367,13 +1473,14 @@ impl App for CompNodeApp {
         }
         let screen_w = ctx.content_rect().width();
 
-        egui::Panel::right("root_sidebar")
+        let sidebar = egui::Panel::right("root_sidebar")
             .min_size(300.0)
             .max_size(screen_w * 0.8)
             .frame(sidebar_frame())
             .show(ui, |ui| {
                 self.show_sidebar_contents(ui, &ctx);
             });
+        self.sidebar_rect = Some(sidebar.response.rect);
 
         let central = egui::CentralPanel::default().show(ui, |ui| {
             let view_id = self.editor.view_id();
@@ -1388,6 +1495,7 @@ impl App for CompNodeApp {
         // space. The central panel rect is the screen-space area the graph
         // occupies, which is what popup anchoring needs.
         let graph_rect = central.response.rect;
+        self.graph_rect = Some(graph_rect);
         let snarl_response = central.inner;
         let graph_background_clicked =
             self.editor
@@ -1415,6 +1523,15 @@ impl App for CompNodeApp {
             && ctx.input(|input| {
                 input.modifiers.shift && !input.modifiers.command && input.key_pressed(egui::Key::A)
             });
+        if open_add_menu {
+            // The filter field takes focus as soon as the menu opens; drop the
+            // text of the Shift+A press so it is not typed into the field.
+            ctx.input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Text(_)));
+            });
+        }
         let open_menu = if open_add_menu || snarl_response.secondary_clicked() {
             Some(true)
         } else if snarl_response.clicked() {

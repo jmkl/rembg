@@ -1,0 +1,50 @@
+{
+  "id": "hello.dcsms.quickrestore",
+  "name": "Quick Restore",
+  "version": "1.0.0",
+  "main": "index.html",
+  "host": [
+    {
+      "app": "PS",
+      "minVersion": "23.0.0"
+    }
+  ],
+  "manifestVersion": 5,
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "quick",
+      "minimumSize": { "width": 40, "height": 40 },
+      "maximumSize": { "width": 200, "height": 200 },
+      "preferredDockedSize": { "width": 40, "height": 40 },
+      "preferredFloatingSize": { "width": 40, "height": 40 },
+      "label": { "default": "QuixRstr" },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/icon.png",
+          "scale": [1, 2],
+          "theme": ["darkest", "dark", "medium"]
+        },
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/icon.png",
+          "scale": [1, 2],
+          "theme": ["lightest", "light"]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 48,
+      "height": 48,
+      "path": "icons/icon.png",
+      "scale": [1, 2],
+      "theme": ["darkest", "dark", "medium", "lightest", "light", "all"],
+      "species": ["pluginList"]
+    }
+  ]
+}
