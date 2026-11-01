@@ -2,17 +2,52 @@
 <html>
   <head>
     <script src="index.js"></script>
+    <style></style>
   </head>
   <style>
-    body { font-family: sans-serif; padding: 6px; }
-    button { display: block; width: 100%; margin: 4px 0; }
-    #status { font-size: 11px; margin-top: 6px; word-break: break-word; }
+    body {
+      font-family: sans-serif;
+      padding: 6px;
+    }
+    sp-action-button {
+      cursor: pointer;
+      display: block;
+      width: 100%;
+      margin: 4px 0;
+      text-align: center;
+    }
+    #status {
+      font-size: 11px;
+      margin-top: 6px;
+      word-break: break-word;
+    }
+    .btn-root {
+      display: flex;
+      width: 100%;
+      flex-direction: row;
+      justify-content: center;
+    }
+    .btn {
+      cursor: pointer;
+      background: #222;
+      padding: 2px 8px;
+      font-size: 14px;
+      margin: 0px 2px;
+      font-weight: 800;
+    }
+    .btn:hover {
+      background: #999;
+    }
+    .btn:active {
+      background: #000;
+    }
   </style>
   <body>
     <sp-body>
-      <button id="connectBtn">Connect</button>
-      <button id="processBtn">Process Selection</button>
-      <button id="copyBtn">Copy Canvas to Clipboard</button>
+      <div class="btn-root">
+        <div class="btn" id="processBtn">Process</div>
+        <div class="btn" id="copyBtn">Copy</div>
+      </div>
       <sp-label id="status"></sp-label>
     </sp-body>
   </body>

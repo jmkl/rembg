@@ -46,9 +46,9 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         recent_node_kinds: Vec::new(),
         menu_nav: crate::graph_menu::MenuNav::default(),
         menu_anchor: None,
+        settings,
         settings_draft: settings.clone(),
         settings_open: false,
-        settings,
         worker,
         url_tx: {
             let (tx, _rx) = mpsc::channel::<crate::assets::FetchedImage>();
@@ -58,14 +58,14 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
             let (_tx, rx) = mpsc::channel::<crate::assets::FetchedImage>();
             rx
         },
-        url_open: false,
-        url_text: String::new(),
-        input_folder_open: false,
         paste_pending: false,
         ctrl_v_was_down: false,
         sidebar_width: None,
         sidebar_maximized: false,
         images_need_load: true,
+        url_open: false,
+        url_text: String::new(),
+        input_folder_open: false,
         image_canvas: ImageCanvas::new(GPasTeApp::new(tx, rx)),
         sidebar_restore: false,
     }
@@ -1881,12 +1881,7 @@ fn route_toggle_disconnects_upstream_and_downstream() {
                     output: 0,
                 })
                 .id,
-            snarl
-                .in_pin(egui_snarl::InPinId {
-                    node: to,
-                    input: 0,
-                })
-                .id,
+            snarl.in_pin(egui_snarl::InPinId { node: to, input: 0 }).id,
         );
     }
 
@@ -1932,12 +1927,7 @@ fn route_toggle_disconnects_upstream_and_downstream() {
                     output: 0,
                 })
                 .id,
-            snarl
-                .in_pin(egui_snarl::InPinId {
-                    node: to,
-                    input: 0,
-                })
-                .id,
+            snarl.in_pin(egui_snarl::InPinId { node: to, input: 0 }).id,
         );
     }
 

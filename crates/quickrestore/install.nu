@@ -1,0 +1,1 @@
+ouch decompress hello.dcsms.quickrestore_PS.ccx --dir C:/Users/jmkl/AppData/Roaming/Adobe/UXP/Plugins/External/hello.dcsms.quickrestore_1.0.0/ -y

@@ -1,0 +1,13 @@
+[package]
+name = "nodeforge"
+version = "0.1.0"
+edition = "2024"
+description = "Headless, renderer-agnostic node-graph engine built for large graphs: generational arena, spatial indexing, culling, cached wire geometry."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"

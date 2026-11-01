@@ -1,18 +1,272 @@
-use base64::Engine;
-use futures_util::{SinkExt, StreamExt};
-use rembg_core::{FaceDetector, Gfpgan, RemoveBg};
-use serde_json::Value;
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use tokio_tungstenite::accept_async;
-use tokio_tungstenite::tungstenite::Message;
+mod consts;
+mod model;
 
-enum Cmd {
-    SendText(String),
+mod server;
+mod tray;
+mod widget;
+use consts::*;
+use eframe::egui::{
+    self, CentralPanel, CornerRadius, Frame, Panel, Pos2, Sense, Stroke, StrokeKind,
+    ViewportCommand, Visuals, vec2,
+};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+use crate::model::{Cmd, ProgressStatus, Status};
+use crate::tray::{Tray, TrayAction};
+use crate::widget::Btn;
+
+/// eframe has no native frame-rate cap (`NativeOptions::max_fps` is web-only),
+/// and every pointer move over the window triggers a paint.
+const FRAME_BUDGET: Duration = Duration::from_micros(1_000_000 / MAX_FPS as u64);
+
+struct QuickRestoreApp {
+    compact_mode: bool,
+    cmd_tx: mpsc::SyncSender<Cmd>,
+    status: ProgressStatus,
+    status_rx: mpsc::Receiver<ProgressStatus>,
+    config_path: String,
+    last_frame: Instant,
+    tray_rx: mpsc::Receiver<TrayAction>,
+    /// Set while the window lives only in the notification area.
+    hidden: bool,
+    /// Dropping the tray removes the notification-area icon.
+    _tray: Option<Tray>,
+    /// One-shot: drop the Windows drop shadow / 1 px top line.
+    shadow_removed: bool,
 }
 
-fn main() {
+impl std::ops::Deref for QuickRestoreApp {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.config_path
+    }
+}
+
+impl QuickRestoreApp {
+    fn send(&self, v: serde_json::Value) {
+        let _ = self.cmd_tx.try_send(Cmd::SendText(v.to_string()));
+    }
+}
+
+impl eframe::App for QuickRestoreApp {
+    fn clear_color(&self, _visuals: &Visuals) -> [f32; 4] {
+        // Opaque window: clear to the app background so no black frame /
+        // compositor-default pixels show through around the pill.
+        egui::Rgba::from(BG).to_array()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Notification-area menu: bring the window back or quit for real.
+        for action in self.tray_rx.try_iter() {
+            match action {
+                TrayAction::Show => {
+                    self.hidden = false;
+                    ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
+                    ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
+                }
+                TrayAction::Quit => {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                }
+            }
+        }
+
+        // A hidden window receives no input, so nothing would run this handler.
+        // Poll slowly while hidden: that is what turns menu clicks into frames.
+        if self.hidden {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+            return;
+        }
+
+        // Drop the Windows drop shadow / 1 px top line that winit draws for
+        // undecorated windows (one-shot; the call is idempotent but touches
+        // window styles, so don't repeat it every frame).
+        if !self.shadow_removed {
+            if let Some(w) = _frame.winit_window() {
+                #[cfg(windows)]
+                {
+                    use winit::platform::windows::WindowExtWindows;
+                    w.set_undecorated_shadow(false);
+                    // Match the border to the app background so the 1 px DWM
+                    // frame line blends in instead of showing as a dark edge.
+                    w.set_border_color(Some(winit::platform::windows::Color::from_rgb(18, 20, 26)));
+
+                    // Disable DWM non-client rendering entirely: this removes the
+                    // remaining 1 px frame line that Win11 draws for windows that
+                    // still carry WS_CAPTION (winit keeps it for snap support).
+                    #[link(name = "dwmapi")]
+                    unsafe extern "system" {
+                        fn DwmSetWindowAttribute(
+                            hwnd: isize,
+                            attr: u32,
+                            value: *const core::ffi::c_void,
+                            size: u32,
+                        ) -> i32;
+                    }
+                    // DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 2
+                    let hwnd = {
+                        use winit::raw_window_handle::HasWindowHandle;
+                        match w.window_handle() {
+                            Ok(h) => match h.as_raw() {
+                                winit::raw_window_handle::RawWindowHandle::Win32(w32) => {
+                                    w32.hwnd.get()
+                                }
+                                _ => 0,
+                            },
+                            Err(_) => 0,
+                        }
+                    };
+                    let policy: i32 = 2;
+                    if hwnd != 0 {
+                        unsafe {
+                            DwmSetWindowAttribute(
+                                hwnd,
+                                2,
+                                &policy as *const _ as *const core::ffi::c_void,
+                                4,
+                            );
+                        }
+                    }
+                }
+                self.shadow_removed = true;
+            }
+        }
+
+        // Stretch each frame to the budget so mouse-move bursts cannot paint faster
+        // than MAX_FPS. The budget is measured from the previous frame's *start*, so
+        // when painting is already slower than the budget (vsync on a 60 Hz panel, a
+        // slow present) this sleeps for zero instead of halving the rate.
+        if let Some(remaining) =
+            (self.last_frame + FRAME_BUDGET).checked_duration_since(Instant::now())
+        {
+            std::thread::sleep(remaining);
+        }
+        self.last_frame = Instant::now();
+
+        // The server pushes one-way status updates; keep the newest one.
+        if let Some(latest) = self.status_rx.try_iter().last() {
+            self.status = latest;
+        }
+
+        // While a pipeline runs, poll at 10 Hz so the dot and text stay live
+        // even when the pointer is idle (frames otherwise only come from input).
+        match self.status.is_processing {
+            Status::Processing => ui.ctx().request_repaint_after(Duration::from_millis(100)),
+            _ => {}
+        }
+        // One panel type for both modes: in compact mode the strip is as tall as
+        // the whole window, so it covers it the way a `CentralPanel` would.
+        let panel = Panel::top("top-panel")
+            .frame(Frame::NONE)
+            .exact_size(if self.compact_mode {
+                WIN_H_COMPACT
+            } else {
+                BTN_H
+            });
+
+        panel.show(ui, |ui| {
+            let full = ui.max_rect();
+
+            // drag area (added first so buttons sit on top of it)
+            let drag = ui.interact(full, ui.id().with("drag"), Sense::click_and_drag());
+            if drag.drag_started_by(egui::PointerButton::Primary) {
+                ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+            }
+
+            // pill background
+            let pill = full.shrink(1.0);
+            ui.painter().rect(
+                pill,
+                CornerRadius::same(0),
+                // CornerRadius::same((pill.height() / 2.0) as u8),
+                BG,
+                Stroke::new(1.0, BORDER),
+                StrokeKind::Inside,
+            );
+
+            // three actions hug the left edge, close hugs the right edge
+            let cy = pill.center().y;
+            let at = |x: f32| Pos2::new(x + BTN_W / 2.0, cy);
+
+            let left = pill.left() + GAP;
+            let right = pill.right() - GAP; // right edge of the close button
+
+            let x1 = left;
+            let x2 = left + BTN_W + GAP;
+            let x3 = left + 2.0 * (BTN_W + GAP);
+            let x4 = right - BTN_W;
+
+            // Action buttons are muted while a pipeline is running.
+            let busy = matches!(self.status.is_processing, Status::Processing);
+            if Btn::click(ui, at(x1), "sel-tool", "\u{f019f}", "Get selection", false, busy) {
+                self.status = ps!(Status::Processing, "Processing");
+                self.send(serde_json::json!({ "type": "selection_tool", "value": true }));
+            }
+            if Btn::click(ui, at(x2), "sel", "\u{f1077}", "Get selection", false, busy) {
+                self.status = ps!(Status::Processing, "Processing");
+                self.send(serde_json::json!({ "type": "get_selection", "value": true }));
+            }
+            if Btn::click(ui, at(x3), "copy", "\u{f0100}", "Copy", false, busy) {
+                self.status = ps!(Status::Processing, "Requesting copy layer");
+                self.send(serde_json::json!({ "type": "copy", "value": true }));
+            }
+            if self.compact_mode {
+                let color = match self.status.is_processing {
+                    Status::Processing => INFO,
+                    Status::Idle => SUCCESS,
+                    Status::Error => DANGER,
+                };
+                ui.painter().circle_filled(at(x4), 6.0 / 2.0, color);
+            }
+            if Btn::click(ui, at(x4), "compact", "\u{f4c3}", "Hide to tray", true, false) {
+                // Keep the app (and the pipeline) alive; quit lives in the tray menu.
+                //self.hidden = true;
+                self.compact_mode = !self.compact_mode;
+                let size = match self.compact_mode {
+                    true => vec2(WIN_W_COMPACT, WIN_H_COMPACT),
+                    false => vec2(WIN_W, WIN_H),
+                };
+                ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
+            }
+        });
+        if !self.compact_mode {
+            Panel::bottom("status-panel")
+                .frame(Frame::NONE.inner_margin(egui::Margin::symmetric(6, 2)))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                        // tiny status pill: green while processing, red when idle
+                        let d = 6.0;
+                        let (dot, _) = ui.allocate_exact_size(egui::vec2(d, d), Sense::hover());
+                        let color = match self.status.is_processing {
+                            Status::Processing => INFO,
+                            Status::Idle => SUCCESS,
+                            Status::Error => DANGER,
+                        };
+
+                        ui.painter().circle_filled(dot.center(), d / 2.0, color);
+
+                        // keep the bar one line tall: clamp with an ellipsis
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&self.status.status)
+                                    .color(TEXT)
+                                    .size(10.),
+                            )
+                            .truncate(),
+                        );
+                    });
+                });
+            CentralPanel::default()
+                .frame(Frame::NONE)
+                .show(ui, |ui| ui.label("Content"));
+        }
+    }
+}
+
+fn main() -> eframe::Result {
     // Locate quickrestore.json next to the executable
     let exe_dir = std::env::current_exe()
         .ok()
@@ -20,7 +274,6 @@ fn main() {
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let config_path = exe_dir.join("quickrestore.json");
 
-    // Create default config if missing
     if !config_path.exists() {
         let default = serde_json::json!({ "model": "E:\\_CODE\\rust\\rembg\\models" });
         if let Ok(s) = serde_json::to_string_pretty(&default) {
@@ -28,7 +281,6 @@ fn main() {
         }
     }
 
-    // Read model from config
     let mut model_root: Option<String> = None;
     if let Ok(content) = std::fs::read_to_string(&config_path) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -38,7 +290,6 @@ fn main() {
         }
     }
 
-    // Optional --model override
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--model" {
@@ -51,285 +302,60 @@ fn main() {
     }
 
     let model_root = rembg_core::config::model_root(model_root.as_deref());
-    println!("Using model root: {}", model_root);
-    println!("Config: {}", config_path.display());
+    let (status_tx, status_rx) = mpsc::channel::<ProgressStatus>();
+    let _ = status_tx.send(ps!(format!("Using model root: {}", model_root)));
 
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    rt.block_on(async_main(model_root));
-}
-
-async fn async_main(model_root: String) {
-    let (tx, rx) = mpsc::channel::<Cmd>(32);
-    run_server(tx, rx, model_root).await;
-}
-
-async fn run_server(cmd_tx: mpsc::Sender<Cmd>, mut cmd_rx: mpsc::Receiver<Cmd>, model_root: String) {
-    let listener = match TcpListener::bind("127.0.0.1:9001").await {
-        Ok(l) => l,
-        Err(e) => {
-            println!("Bind failed: {}", e);
-            return;
-        }
-    };
-    println!("QuickRestore listening on ws://localhost:9001");
-
-    type Sink = futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-        Message,
-    >;
-    let sink_lock: Arc<tokio::sync::Mutex<Option<Sink>>> = Arc::new(tokio::sync::Mutex::new(None));
-
-    // Command forwarder
-    let sink_for_cmd = sink_lock.clone();
-    tokio::spawn(async move {
-        while let Some(cmd) = cmd_rx.recv().await {
-            let text = match cmd {
-                Cmd::SendText(t) => t,
-            };
-            if let Some(sink) = sink_for_cmd.lock().await.as_mut() {
-                let _ = sink.send(Message::Text(text.into())).await;
-            }
-        }
+    let (tx, rx) = mpsc::sync_channel::<Cmd>(32);
+    let cmd_tx = tx.clone();
+    let mr = model_root.clone();
+    std::thread::spawn(move || {
+        server::Server::run(tx, rx, mr, status_tx);
     });
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                match accept_async(stream).await {
-                    Ok(ws) => {
-                        let (write, mut read) = ws.split();
-                        *sink_lock.lock().await = Some(write);
-                        println!("PS connected");
-                        while let Some(Ok(msg)) = read.next().await {
-                            if msg.is_text() {
-                                handle_message(&cmd_tx, &model_root, msg.to_text().unwrap_or(""));
-                            }
-                        }
-                        *sink_lock.lock().await = None;
-                        println!("PS disconnected");
-                    }
-                    Err(e) => {
-                        println!("WS accept error: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Accept error: {}", e);
-            }
-        }
-    }
-}
-
-fn handle_message(cmd_tx: &mpsc::Sender<Cmd>, model_root: &str, text: &str) {
-    let v: Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => {
-            println!("raw: {}", text);
-            return;
-        }
+    let native_options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size(egui::vec2(WIN_W, WIN_H))
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_always_on_top()
+            // Tool window: no taskbar button, no Alt-Tab entry. The tray is the
+            // only place where the app can be found (and restored) from.
+            .with_taskbar(false)
+            .with_transparent(false),
+        ..Default::default()
     };
-    match v.get("type").and_then(|x| x.as_str()) {
-        Some("hello") => {
-            println!("PS hello");
-        }
-        Some("selection") => {
-            let w = v.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-            let h = v.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-            let components = v.get("components").and_then(|x| x.as_u64()).unwrap_or(3) as u8;
-            let x = v.get("x").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-            let y = v.get("y").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-            let data_b64 = v.get("data").and_then(|x| x.as_str()).unwrap_or("");
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .unwrap_or_default();
+    eframe::run_native(
+        "QuickRestore",
+        native_options,
+        Box::new(|cc| {
+            cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+            cc.egui_ctx
+                .set_visuals_of(egui::Theme::Dark, consts::visuals());
 
-            let path = save_png(w, h, components, &bytes);
-            println!("Received selection {}x{} ({} bytes) saved {:?}", w, h, bytes.len(), path);
+            let mut fonts = egui::FontDefinitions::default();
+            egui_nerdfonts::add_to_fonts(&mut fonts, egui_nerdfonts::Variant::Regular);
+            cc.egui_ctx.set_fonts(fonts);
 
-            let cmd_tx2 = cmd_tx.clone();
-            let model_root2 = model_root.to_string();
-            std::thread::spawn(move || {
-                process_pipeline(cmd_tx2, &model_root2, x, y, w, h, components, bytes);
-            });
-        }
-        Some("clipboard") => {
-            let w = v.get("width").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-            let h = v.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-            let components = v.get("components").and_then(|x| x.as_u64()).unwrap_or(3) as u8;
-            let data_b64 = v.get("data").and_then(|x| x.as_str()).unwrap_or("");
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .unwrap_or_default();
-            // Convert to RGBA
-            let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-            if components >= 4 {
-                rgba = bytes.clone();
-            } else if components == 3 {
-                for i in 0..(w * h) as usize {
-                    let idx = i * 3;
-                    rgba.push(bytes.get(idx).copied().unwrap_or(0));
-                    rgba.push(bytes.get(idx + 1).copied().unwrap_or(0));
-                    rgba.push(bytes.get(idx + 2).copied().unwrap_or(0));
-                    rgba.push(255);
+            let (tray_tx, tray_rx) = mpsc::channel();
+            let tray = match Tray::new(&cc.egui_ctx, tray_tx) {
+                Ok(tray) => Some(tray),
+                Err(err) => {
+                    eprintln!("notification-area icon unavailable: {err}");
+                    None
                 }
-            } else {
-                for i in 0..(w * h) as usize {
-                    let g = bytes.get(i).copied().unwrap_or(0);
-                    rgba.push(g); rgba.push(g); rgba.push(g); rgba.push(255);
-                }
-            }
-            // Set clipboard
-            match arboard::Clipboard::new() {
-                Ok(mut cb) => {
-                    let img = arboard::ImageData {
-                        width: w as usize,
-                        height: h as usize,
-                        bytes: std::borrow::Cow::from(rgba),
-                    };
-                    match cb.set_image(img) {
-                        Ok(_) => println!("Copied {}x{} image to clipboard", w, h),
-                        Err(e) => println!("Clipboard set_image failed: {}", e),
-                    }
-                }
-                Err(e) => println!("Clipboard init failed: {}", e),
-            }
-        }
-        Some("error") => {
-            let msg = v.get("message").and_then(|x| x.as_str()).unwrap_or("unknown");
-            println!("PS error: {}", msg);
-        }
-        _ => {
-            println!("msg: {}", text);
-        }
-    }
-}
+            };
 
-fn process_pipeline(
-    cmd_tx: mpsc::Sender<Cmd>,
-    model_root: &str,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
-    components: u8,
-    bytes: Vec<u8>,
-) {
-    let mut rgb = image::RgbImage::new(w.max(1), h.max(1));
-    if components >= 3 {
-        for yy in 0..h {
-            for xx in 0..w {
-                let idx = ((yy * w + xx) as usize) * (components as usize);
-                if idx + 2 < bytes.len() {
-                    rgb.put_pixel(xx, yy, image::Rgb([bytes[idx], bytes[idx + 1], bytes[idx + 2]]));
-                }
-            }
-        }
-    } else {
-        for yy in 0..h {
-            for xx in 0..w {
-                let idx = ((yy * w + xx) as usize) * (components.max(1) as usize);
-                let g = bytes.get(idx).copied().unwrap_or(0);
-                rgb.put_pixel(xx, yy, image::Rgb([g, g, g]));
-            }
-        }
-    }
-
-    println!("Processing face restore...");
-    let restored_rgb = match (
-        FaceDetector::load_from(rembg_core::config::model_path(Some(model_root), rembg_core::config::MODEL_SCRFD_FILE)),
-        Gfpgan::load_from(rembg_core::config::model_path(Some(model_root), rembg_core::config::MODEL_GFPGAN_FILE)),
-    ) {
-        (Ok(det), Ok(gfpgan)) => {
-            let faces = det.detect(&rgb, 0.5, 0.4).unwrap_or_default();
-            let lms: Vec<rembg_core::Landmarks> = faces.iter().map(|f| f.landmarks).collect();
-            if lms.is_empty() {
-                println!("No faces detected");
-                rgb.clone()
-            } else {
-                println!("Detected {} face(s)", lms.len());
-                gfpgan.restore_faces(&rgb, &lms, 1.0).unwrap_or_else(|_| rgb.clone())
-            }
-        }
-        (Err(e), _) => { println!("FaceDetector load failed: {}", e); rgb.clone() }
-        (_, Err(e)) => { println!("Gfpgan load failed: {}", e); rgb.clone() }
-    };
-
-    let fr_avg: u64 = restored_rgb
-        .pixels()
-        .map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3)
-        .sum();
-    let fr_avg = fr_avg / (restored_rgb.width() as u64 * restored_rgb.height() as u64).max(1);
-    let _ = restored_rgb.save(std::env::temp_dir().join("quickrestore_face_restore.png"));
-    send_image(&cmd_tx, "face_restore", restored_rgb.width(), restored_rgb.height(), 3, x, y, restored_rgb.as_raw());
-    println!("Face restore sent (avg {})", fr_avg);
-
-    // Remove background
-    println!("Removing background...");
-    let rgba = match RemoveBg::load_from(rembg_core::config::model_path(Some(model_root), rembg_core::config::MODEL_RMBG_FILE)) {
-        Ok(rb) => {
-            let dyn_img = image::DynamicImage::ImageRgb8(restored_rgb.clone());
-            rb.process_image(&dyn_img).unwrap_or_else(|e| {
-                println!("RemoveBg process failed: {}", e);
-                let mut r = image::RgbaImage::new(restored_rgb.width(), restored_rgb.height());
-                for (p, src) in r.pixels_mut().zip(restored_rgb.pixels()) {
-                    *p = image::Rgba([src[0], src[1], src[2], 255]);
-                }
-                r
-            })
-        }
-        Err(e) => {
-            println!("RemoveBg load failed: {}", e);
-            let mut r = image::RgbaImage::new(restored_rgb.width(), restored_rgb.height());
-            for (p, src) in r.pixels_mut().zip(restored_rgb.pixels()) {
-                *p = image::Rgba([src[0], src[1], src[2], 255]);
-            }
-            r
-        }
-    };
-
-    let rb_avg: u64 = rgba
-        .pixels()
-        .map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3)
-        .sum();
-    let rb_avg = rb_avg / (rgba.width() as u64 * rgba.height() as u64).max(1);
-    let _ = rgba.save(std::env::temp_dir().join("quickrestore_remove_bg.png"));
-    send_image(&cmd_tx, "remove_bg", rgba.width(), rgba.height(), 4, x, y, rgba.as_raw());
-    println!("Remove bg sent (avg {})", rb_avg);
-}
-
-fn send_image(cmd_tx: &mpsc::Sender<Cmd>, name: &str, w: u32, h: u32, components: u8, x: i32, y: i32, bytes: &[u8]) {
-    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-    let msg = serde_json::json!({
-        "type": "image",
-        "name": name,
-        "width": w,
-        "height": h,
-        "components": components,
-        "colorSpace": "RGB",
-        "x": x,
-        "y": y,
-        "data": b64
-    })
-    .to_string();
-    let _ = cmd_tx.blocking_send(Cmd::SendText(msg));
-}
-
-fn save_png(w: u32, h: u32, components: u8, bytes: &[u8]) -> Option<String> {
-    if w == 0 || h == 0 {
-        return None;
-    }
-    let path = std::env::temp_dir().join("quickrestore_selection.png");
-    let img = match components {
-        3 => {
-            let buf = image::RgbImage::from_raw(w, h, bytes.to_vec())?;
-            image::DynamicImage::ImageRgb8(buf)
-        }
-        4 => {
-            let buf = image::RgbaImage::from_raw(w, h, bytes.to_vec())?;
-            image::DynamicImage::ImageRgba8(buf)
-        }
-        _ => return None,
-    };
-    img.save(&path).ok()?;
-    Some(path.to_string_lossy().to_string())
+            Ok(Box::new(QuickRestoreApp {
+                compact_mode: false,
+                status: ps!("Initiating..."),
+                status_rx,
+                cmd_tx,
+                config_path: config_path.to_string_lossy().to_string(),
+                last_frame: Instant::now(),
+                tray_rx,
+                hidden: false,
+                _tray: tray,
+                shadow_removed: false,
+            }))
+        }),
+    )
 }

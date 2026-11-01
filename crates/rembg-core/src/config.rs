@@ -17,7 +17,9 @@ pub const MODEL_RMBG_FILE: &str = "rmbg-1.4.onnx";
 pub const MODEL_SCRFD_FILE: &str = "det_10g.onnx";
 pub const MODEL_SAM2_ENCODER_FILE: &str = "sam2.1_hiera_small.encoder.onnx";
 pub const MODEL_SAM2_DECODER_FILE: &str = "sam2.1_hiera_small.decoder.onnx";
-pub const MODEL_YOLO_FILE: &str = "yolo11n.onnx";
+pub const MODEL_REALESRGAN_FILE: &str = "RealESRGAN_x2plus.onnx";
+pub const MODEL_REALESRGAN: &str = "models/RealESRGAN_x2plus.onnx";
+pub const VRAM_LIMIT_REALESRGAN_MB: usize = 0;
 
 pub const MODEL_GFPGAN: &str = "models/GFPGANv1.4.onnx";
 

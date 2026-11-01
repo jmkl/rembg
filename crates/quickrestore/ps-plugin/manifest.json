@@ -14,13 +14,14 @@
     "network": {
       "domains": ["ws://localhost:9001", "http://localhost:9001"]
     },
-    "clipboard": "readAndWrite"
+    "clipboard": "readAndWrite",
+    "localFileSystem": "fullAccess"
   },
   "entrypoints": [
     {
       "type": "panel",
       "id": "quick",
-      "minimumSize": { "width": 100, "height": 100 },
+      "minimumSize": { "width": 50, "height": 50 },
       "maximumSize": { "width": 200, "height": 200 },
       "preferredDockedSize": { "width": 150, "height": 150 },
       "preferredFloatingSize": { "width": 150, "height": 150 },
