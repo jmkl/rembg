@@ -71,7 +71,10 @@ impl Yolo {
         nms_thr: f32,
     ) -> Result<Vec<Detection>> {
         let all = self.detect(img, score_thr, nms_thr)?;
-        Ok(all.into_iter().filter(|d| d.class_id == COCO_PERSON_CLASS_ID).collect())
+        Ok(all
+            .into_iter()
+            .filter(|d| d.class_id == COCO_PERSON_CLASS_ID)
+            .collect())
     }
 
     /// Detect all objects. Sorted by score descending.
@@ -145,12 +148,17 @@ fn parse_outputs(
     orig_h: u32,
     score_thr: f32,
 ) -> Result<Vec<Detection>> {
-    let first = outputs.iter().next().ok_or_else(|| anyhow!("YOLO model produced no outputs"))?;
+    let first = outputs
+        .iter()
+        .next()
+        .ok_or_else(|| anyhow!("YOLO model produced no outputs"))?;
 
     // Try extracting as f16, otherwise as f32
     if let Ok((shape, data)) = first.1.try_extract_tensor::<f16>() {
         let f32_vec: Vec<f32> = data.iter().map(|v| v.to_f32()).collect();
-        parse_tensor_data(&shape, &f32_vec, scale, pad_x, pad_y, orig_w, orig_h, score_thr)
+        parse_tensor_data(
+            &shape, &f32_vec, scale, pad_x, pad_y, orig_w, orig_h, score_thr,
+        )
     } else if let Ok((shape, data)) = first.1.try_extract_tensor::<f32>() {
         parse_tensor_data(&shape, data, scale, pad_x, pad_y, orig_w, orig_h, score_thr)
     } else {

@@ -70,20 +70,11 @@ pub enum PointLabel {
 #[derive(Debug, Clone)]
 pub enum Prompt {
     /// A single clicked point in **original-image pixel coordinates**.
-    Point {
-        x: f32,
-        y: f32,
-        label: PointLabel,
-    },
+    Point { x: f32, y: f32, label: PointLabel },
     /// An axis-aligned bounding box in **original-image pixel coordinates**.
     /// Encoded internally as two corner points with decoder labels 2 (top-left)
     /// and 3 (bottom-right), as expected by the SAM 2 ONNX decoder.
-    Box {
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-    },
+    Box { x1: f32, y1: f32, x2: f32, y2: f32 },
 }
 
 /// Image embeddings produced by the SAM 2 encoder.
@@ -149,10 +140,7 @@ impl Sam2 {
     /// - `models/sam2.encoder.onnx`
     /// - `models/sam2.decoder.onnx`
     pub fn load() -> Result<Self> {
-        Self::load_from(
-            config::MODEL_SAM2_ENCODER,
-            config::MODEL_SAM2_DECODER,
-        )
+        Self::load_from(config::MODEL_SAM2_ENCODER, config::MODEL_SAM2_DECODER)
     }
 
     /// Load SAM 2 models from explicit file paths.
@@ -226,10 +214,8 @@ impl Sam2 {
             data[n + i] = (px[1] as f32 - MEAN_SAM2[1]) / STD_SAM2[1];
             data[2 * n + i] = (px[2] as f32 - MEAN_SAM2[2]) / STD_SAM2[2];
         }
-        let input = Tensor::from_array((
-            [1usize, 3, SIZE_SAM2 as usize, SIZE_SAM2 as usize],
-            data,
-        ))?;
+        let input =
+            Tensor::from_array(([1usize, 3, SIZE_SAM2 as usize, SIZE_SAM2 as usize], data))?;
 
         let mut encoder = self.encoder.lock().map_err(config::lock_err)?;
         let outputs = encoder.run(ort::inputs![input])?;
@@ -263,7 +249,7 @@ impl Sam2 {
             cb.cmp(&ca)
         });
 
-        let (image_embed_shape, image_embed) = tensors.remove(0);       // C=256
+        let (image_embed_shape, image_embed) = tensors.remove(0); // C=256
         let (high_res_feats_1_shape, high_res_feats_1) = tensors.remove(0); // C=64
         let (high_res_feats_0_shape, high_res_feats_0) = tensors.remove(0); // C=32
 
@@ -323,15 +309,15 @@ impl Sam2 {
 
         let num_points = labels.len();
 
-        let point_coords =
-            Tensor::from_array(([1usize, num_points, 2], coords))?;
-        let point_labels =
-            Tensor::from_array(([1usize, num_points], labels))?;
+        let point_coords = Tensor::from_array(([1usize, num_points, 2], coords))?;
+        let point_labels = Tensor::from_array(([1usize, num_points], labels))?;
 
         // No prior mask → zero-fill mask_input and has_mask_input.
         let mask_size = SIZE_SAM2_MASK_LOW as usize;
-        let mask_input =
-            Tensor::from_array(([1usize, 1, mask_size, mask_size], vec![0.0f32; mask_size * mask_size]))?;
+        let mask_input = Tensor::from_array((
+            [1usize, 1, mask_size, mask_size],
+            vec![0.0f32; mask_size * mask_size],
+        ))?;
         let has_mask_input = Tensor::from_array(([1usize], vec![0.0f32]))?;
 
         // Reconstruct encoder feature tensors.
@@ -372,7 +358,10 @@ impl Sam2 {
 
         // mask_shape: [1, num_candidates, H, W]
         if mask_shape.len() != 4 {
-            bail!("SAM2 decoder: unexpected mask tensor rank {}", mask_shape.len());
+            bail!(
+                "SAM2 decoder: unexpected mask tensor rank {}",
+                mask_shape.len()
+            );
         }
         let num_candidates = mask_shape[1];
         let mask_h = mask_shape[2];
@@ -400,9 +389,8 @@ impl Sam2 {
             })
             .collect();
 
-        let mask_small =
-            GrayImage::from_raw(mask_w as u32, mask_h as u32, raw)
-                .ok_or_else(|| anyhow!("SAM2: failed to construct mask image from decoder output"))?;
+        let mask_small = GrayImage::from_raw(mask_w as u32, mask_h as u32, raw)
+            .ok_or_else(|| anyhow!("SAM2: failed to construct mask image from decoder output"))?;
 
         // Upscale mask back to original image dimensions.
         let mask = image::imageops::resize(
@@ -421,9 +409,7 @@ impl Sam2 {
 // ---------------------------------------------------------------------------
 
 /// Extract a tensor from an ORT output value, returning `(shape, flat_data)`.
-fn extract_tensor(
-    value: &ort::value::Value,
-) -> Result<(Vec<usize>, Vec<f32>)> {
+fn extract_tensor(value: &ort::value::Value) -> Result<(Vec<usize>, Vec<f32>)> {
     let (shape, data) = value.try_extract_tensor::<f32>()?;
     let shape: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
     Ok((shape, data.to_vec()))

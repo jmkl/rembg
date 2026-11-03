@@ -129,10 +129,10 @@ fn prompt_card(ui: &mut egui::Ui, index: usize, prompt: &str) -> CardAction {
     let weak_col = v.weak_text_color();
 
     let p = ui.painter();
-    p.rect_filled(rect, egui::CornerRadius::same(8), bg);
+    p.rect_filled(rect, egui::CornerRadius::same(4), bg);
     p.rect_stroke(
         rect,
-        egui::CornerRadius::same(8),
+        egui::CornerRadius::same(4),
         egui::Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );

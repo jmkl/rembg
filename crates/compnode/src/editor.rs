@@ -1077,8 +1077,8 @@ impl SnarlViewer<Node> for GraphEditor {
         // Title (centre). Match the sidebar layer list naming so the node a
         // layer comes from is identifiable at a glance: `{type} #{node id}`.
         ui.painter().text(
-            title.center(),
-            Align2::CENTER_CENTER,
+            egui::pos2(title.left() + 16.0, title.center().y),
+            Align2::LEFT_CENTER,
             format!("{} #{}", spec.title, node.0),
             FontId::proportional(font::BUTTON),
             pal::HEADER_TEXT,

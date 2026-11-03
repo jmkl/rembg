@@ -44,9 +44,9 @@ pub(crate) mod font {
 
 /// Shared geometry.
 pub(crate) mod metrics {
-    pub const R_CONTROL: u8 = 6;
+    pub const R_CONTROL: u8 = 4;
     pub const R_CARD: u8 = 8;
-    pub const R_NODE: u8 = 4;
+    pub const R_NODE: u8 = 6;
 
     pub const BTN_H: f32 = 28.0;
     pub const BTN_H_SMALL: f32 = 22.0;
@@ -54,8 +54,8 @@ pub(crate) mod metrics {
     pub const MENU_PAD_X: f32 = 8.0;
     pub const MENU_ICON_COL: f32 = 16.0;
     pub const CHECK_SIZE: f32 = 16.0;
-    pub const SLIDER_THUMB: f32 = 14.0;
-    pub const SLIDER_TRACK: f32 = 6.0;
+    /// Height of slider / number fields inside nodes.
+    pub const FIELD_H: f32 = 20.0;
     pub const TITLEBAR_H: f32 = 32.0;
 }
 
@@ -187,11 +187,14 @@ fn apply_style(style: &mut egui::Style) {
         stroke: Stroke::new(1.0, pal::ACCENT),
     };
     let border = Stroke::new(1.0, pal::NODE_STROKE);
+    // Number fields, drop-downs and list cards: lighter than the surface, with a
+    // dark hairline, like Blender's property fields.
+    let field_border = Stroke::new(1.0, pal::BLACK.gamma_multiply(0.35));
     v.widgets = Widgets {
         noninteractive: widget(pal::NODE, border, Stroke::new(1.0, pal::TEXT), 0.0),
-        inactive: widget(pal::INPUT_BG, border, Stroke::new(1.0, pal::TEXT), 0.0),
+        inactive: widget(pal::FIELD, field_border, Stroke::new(1.0, pal::TEXT), 0.0),
         hovered: widget(
-            pal::hover(pal::INPUT_BG),
+            pal::hover(pal::FIELD),
             Stroke::new(1.0, pal::MUTED),
             Stroke::new(1.5, pal::TEXT),
             1.0,
@@ -203,7 +206,7 @@ fn apply_style(style: &mut egui::Style) {
             1.0,
         ),
         open: widget(
-            pal::INPUT_BG,
+            pal::FIELD,
             Stroke::new(1.0, pal::ACCENT),
             Stroke::new(1.0, pal::TEXT),
             0.0,
@@ -216,7 +219,7 @@ fn apply_style(style: &mut egui::Style) {
 /// Per-node body frame; the outline turns accent-coloured when selected.
 pub(crate) fn node_frame(default: Frame, selected: bool) -> Frame {
     let stroke = if selected {
-        Stroke::new(2.0, pal::ACCENT)
+        Stroke::new(2.0, pal::NODE_SELECTED)
     } else {
         Stroke::new(1.0, pal::NODE_STROKE)
     };
@@ -254,13 +257,13 @@ pub(crate) fn snarl_style() -> SnarlStyle {
     // and let the layer transform do the zooming.
     style.crisp_magnified_text = Some(false);
 
-    // Wires: Blender-ish smooth curves behind the nodes.
-    style.wire_style = Some(WireStyle::Line);
-    style.wire_width = Some(2.0);
+    // Wires: smooth S-curves behind the nodes, like Blender.
+    style.wire_style = Some(WireStyle::Bezier3);
+    style.wire_width = Some(2.5);
     style.wire_layer = Some(WireLayer::BehindNodes);
 
     // Sockets sit on the node border.
-    style.pin_size = Some(10.0);
+    style.pin_size = Some(9.0);
     style.pin_placement = Some(PinPlacement::Edge);
     style.pin_fill = Some(pal::SOCKET);
     style.pin_stroke = Some(Stroke::new(1.0, pal::SOCKET_STROKE));
@@ -273,10 +276,10 @@ pub(crate) fn snarl_style() -> SnarlStyle {
     // `node_header_frame`); these are the fallbacks.
     style.node_frame = Some(node_frame(
         Frame::new().shadow(Shadow {
-            offset: [0, 5],
-            blur: 12,
+            offset: [0, 3],
+            blur: 8,
             spread: 0,
-            color: Color32::from_black_alpha(50),
+            color: Color32::from_black_alpha(70),
         }),
         false,
     ));

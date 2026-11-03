@@ -44,30 +44,30 @@ pub(crate) mod base {
 
     // Neutral ramp, light -> dark.
     pub const NEUTRAL_50: Color32 = hex(0xfafafa); // light image canvas
-    pub const NEUTRAL_100: Color32 = hex(0xf5f5f5); // header text
-    pub const NEUTRAL_300: Color32 = hex(0xd4d4d4); // body text
-    pub const NEUTRAL_400: Color32 = hex(0xa3a3a3); // muted text
-    pub const NEUTRAL_500: Color32 = hex(0x737373); // faint text, handles
-    pub const NEUTRAL_700: Color32 = hex(0x404040); // borders, neutral header
-    pub const NEUTRAL_800: Color32 = hex(0x262626); // panels, node bodies
-    pub const NEUTRAL_900: Color32 = hex(0x171717); // graph canvas
-    pub const NEUTRAL_950: Color32 = hex(0x0a0a0a); // wells, input fields
+    pub const NEUTRAL_100: Color32 = hex(0xeaeaea); // header text
+    pub const NEUTRAL_300: Color32 = hex(0xcfcfcf); // body text
+    pub const NEUTRAL_400: Color32 = hex(0x9d9d9d); // muted text
+    pub const NEUTRAL_500: Color32 = hex(0x6b6b6b); // faint text, handles
+    pub const NEUTRAL_700: Color32 = hex(0x3d3d3d); // borders, neutral header
+    pub const NEUTRAL_800: Color32 = hex(0x2d2d2d); // panels, node bodies
+    pub const NEUTRAL_900: Color32 = hex(0x151515); // graph canvas
+    pub const NEUTRAL_950: Color32 = hex(0x1b1b1b); // wells, input fields
 
     // Accent / status primaries.
-    pub const BLUE: Color32 = hex(0x3b82f6); // accent, selection, gizmo
+    pub const BLUE: Color32 = hex(0x4772b3); // accent, selection, gizmo
     pub const GREEN: Color32 = hex(0x16a34a); // success
     pub const RED: Color32 = hex(0xef4444); // danger
-    pub const AMBER: Color32 = hex(0xf59e0b); // sockets, warnings
+    pub const AMBER: Color32 = hex(0xc7c729); // sockets, warnings
 
     // Muted node-header hues; node kinds share these (see `pal::node_header`).
-    pub const MOSS: Color32 = hex(0x2e4a38);
-    pub const STEEL_BLUE: Color32 = hex(0x2c3c56);
-    pub const BRONZE: Color32 = hex(0x4a3a28);
-    pub const MAROON: Color32 = hex(0x4a2f33);
-    pub const PLUM: Color32 = hex(0x453049);
-    pub const OLIVE: Color32 = hex(0x45452e);
-    pub const TEAL: Color32 = hex(0x2c4747);
-    pub const SAND: Color32 = hex(0x4a4234);
+    pub const MOSS: Color32 = hex(0x1b6e5d);
+    pub const STEEL_BLUE: Color32 = hex(0x246283);
+    pub const BRONZE: Color32 = hex(0x9a5a1b);
+    pub const MAROON: Color32 = hex(0x8a2f2f);
+    pub const PLUM: Color32 = hex(0x4d4b8f);
+    pub const OLIVE: Color32 = hex(0x6e6e1d);
+    pub const TEAL: Color32 = hex(0x1f6a6a);
+    pub const SAND: Color32 = hex(0x4a4a4a);
 }
 
 /// Alternate theme, kept for a future theme switcher: swap the `use` in `pal`.
@@ -139,19 +139,21 @@ pub(crate) mod photoshop {
 
 /// Semantic tokens (Blender-inspired muted dark palette).
 ///
-/// 21 tokens; everything else in the UI derives from these via [`hover`] or
+/// 24 tokens; everything else in the UI derives from these via [`hover`] or
 /// [`mix`]. Point `base` at another theme module to re-skin the whole app.
 pub(crate) mod pal {
-    use super::{Color32, base, mix};
+    use super::{Color32, base, hex, mix};
 
     // --- Surfaces ---
     pub const BG: Color32 = base::NEUTRAL_900; // graph canvas, layer rows
-    pub const PANEL: Color32 = base::NEUTRAL_800; // title bar, side panels, dialogs
+    pub const PANEL: Color32 = mix(BG, NODE, 35); // title bar, side panels, dialogs
     pub const NODE: Color32 = base::NEUTRAL_800; // node body, popups, cards
     pub const NODE_STROKE: Color32 = base::NEUTRAL_700; // borders and separators
     pub const INPUT_BG: Color32 = base::NEUTRAL_950; // text fields, wells
     pub const FAINT_BG: Color32 = mix(NODE, base::WHITE, 4); // striped rows
+    pub const FIELD: Color32 = mix(NODE, base::WHITE, 12); // slider / number fields
     pub const ACTIVE_FILL: Color32 = mix(NODE, ACCENT, 18); // pressed / selected
+    pub const ROW_SELECTED: Color32 = mix(PANEL, ACCENT, 55); // selected list row
 
     // --- Text ---
     pub const HEADER_TEXT: Color32 = base::NEUTRAL_100;
@@ -171,6 +173,7 @@ pub(crate) mod pal {
     // --- Node graph & canvas ---
     pub const SOCKET: Color32 = base::AMBER;
     pub const SOCKET_STROKE: Color32 = mix(SOCKET, BLACK, 75);
+    pub const NODE_SELECTED: Color32 = hex(0xed5700); // selected node outline
     pub const CANVAS_BG: Color32 = base::NEUTRAL_50; // light image canvas
 
     /// Hover fill for a surface (or a filled button): blend it 8% to white.

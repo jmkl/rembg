@@ -4,7 +4,9 @@ use ort::session::Session;
 use std::env;
 
 fn main() -> Result<()> {
-    let path = env::args().nth(1).expect("Usage: inspect_onnx <model.onnx>");
+    let path = env::args()
+        .nth(1)
+        .expect("Usage: inspect_onnx <model.onnx>");
     let session = Session::builder()?.commit_from_file(&path)?;
 
     println!("=== INPUTS ===");

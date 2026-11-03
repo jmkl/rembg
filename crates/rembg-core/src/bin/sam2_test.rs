@@ -173,10 +173,7 @@ fn main() -> Result<()> {
 // ---------------------------------------------------------------------------
 // Helper: apply a grayscale mask to the alpha channel of an RGBA image.
 // ---------------------------------------------------------------------------
-fn apply_mask(
-    rgba: &image::RgbaImage,
-    mask: &image::GrayImage,
-) -> image::RgbaImage {
+fn apply_mask(rgba: &image::RgbaImage, mask: &image::GrayImage) -> image::RgbaImage {
     assert_eq!(
         rgba.dimensions(),
         mask.dimensions(),

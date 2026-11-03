@@ -30,12 +30,12 @@ const ROT_DIST: f32 = 32.0;
 const MIN_SIZE: f32 = 8.0;
 const SIDEBAR_PADDING: f32 = 8.0;
 const SIDEBAR_GAP: f32 = 8.0;
-const ROW_H: f32 = 30.0;
+const ROW_H: f32 = 24.0;
 #[allow(dead_code)]
 const INPUT_RADIUS: u8 = 8;
 #[allow(dead_code)]
 const CANVAS_RADIUS: u8 = 12;
-const LAYER_RADIUS: u8 = 8;
+const LAYER_RADIUS: u8 = 4;
 const DRAG_HANDLE_DOT: f32 = 4.0;
 const DRAG_HANDLE_GAP: f32 = 3.0;
 const DRAG_HANDLE_SIZE: f32 = 24.0;
@@ -418,6 +418,12 @@ pub struct ImageCanvas {
     /// Screen rect of the floating canvas window from the last frame. Used to
     /// tell whether the user is working in the canvas or in the node graph.
     canvas_rect: Option<Rect>,
+    /// Canvas view zoom (1.0 = whole canvas fits the window) and pan offset in
+    /// screen pixels.
+    view_zoom: f32,
+    view_pan: Vec2,
+    /// True while a middle-button pan that started on the canvas is running.
+    panning: bool,
 }
 
 /// How often a sync is forced even if nothing changed, so files modified on
@@ -453,6 +459,9 @@ impl ImageCanvas {
             keep_aspect_ratio: true,
             blend_preview: None,
             canvas_rect: None,
+            view_zoom: 1.0,
+            view_pan: Vec2::ZERO,
+            panning: false,
         }
     }
 
@@ -1605,11 +1614,81 @@ impl ImageCanvas {
             });
     }
 
+    /// Mouse wheel (or pinch) zooms about the pointer, middle-drag pans, and a
+    /// middle double-click resets the view. `fit_scale` is the scale that fits the
+    /// whole canvas into the window; the view sits on top of it.
+    fn update_view(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect, fit_scale: f32) {
+        const MIN_ZOOM: f32 = 0.2;
+        const MAX_ZOOM: f32 = 40.0;
+        // Never let the canvas be dragged completely out of view.
+        const KEEP_VISIBLE: f32 = 48.0;
+
+        let (scroll, pinch, pointer, delta, pressed, down, reset) = ui.input(|i| {
+            (
+                i.smooth_scroll_delta.y,
+                i.zoom_delta(),
+                i.pointer.hover_pos(),
+                i.pointer.delta(),
+                i.pointer.button_pressed(egui::PointerButton::Middle),
+                i.pointer.button_down(egui::PointerButton::Middle),
+                i.pointer.button_double_clicked(egui::PointerButton::Middle),
+            )
+        });
+
+        if reset && resp.hovered() {
+            self.view_zoom = 1.0;
+            self.view_pan = Vec2::ZERO;
+            self.panning = false;
+            return;
+        }
+
+        // Pan: a middle press that starts on the canvas owns the drag until release.
+        if pressed && resp.hovered() {
+            self.panning = true;
+        }
+        if !down {
+            self.panning = false;
+        }
+        if self.panning {
+            self.view_pan += delta;
+            ui.set_cursor_icon(CursorIcon::Grabbing);
+        }
+
+        // Zoom about the pointer, so the point under it stays put.
+        let factor = (scroll * 0.0015).exp() * pinch;
+        if resp.hovered()
+            && (factor - 1.0).abs() > 1e-4
+            && let Some(p) = pointer
+        {
+            let old = self.view_zoom;
+            let new = (old * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+            if new != old {
+                let anchor = p - rect.min - self.view_pan;
+                self.view_pan = (p - rect.min) - anchor * (new / old);
+                self.view_zoom = new;
+            }
+        }
+
+        let shown = self.canvas_size * fit_scale * self.view_zoom;
+        self.view_pan.x = self
+            .view_pan
+            .x
+            .clamp(KEEP_VISIBLE - shown.x, rect.width() - KEEP_VISIBLE);
+        self.view_pan.y = self
+            .view_pan
+            .y
+            .clamp(KEEP_VISIBLE - shown.y, rect.height() - KEEP_VISIBLE);
+    }
+
     fn canvas_ui(&mut self, ui: &mut egui::Ui, scale: f32) {
+        // `scale` fits the whole canvas into the window; zoom and pan sit on top.
+        let fit_scale = scale;
         let (resp, painter) =
-            ui.allocate_painter(self.canvas_size * scale, Sense::click_and_drag());
+            ui.allocate_painter(self.canvas_size * fit_scale, Sense::click_and_drag());
         let rect = resp.rect;
-        let origin = rect.min.to_vec2();
+        self.update_view(ui, &resp, rect, fit_scale);
+        let scale = fit_scale * self.view_zoom;
+        let origin = rect.min.to_vec2() + self.view_pan;
         let to_screen = move |v: Vec2| (origin + v * scale).to_pos2();
         let to_canvas = move |p: Pos2| (p.to_vec2() - origin) / scale;
 
@@ -1674,42 +1753,52 @@ impl ImageCanvas {
         // Checkerboard background matching the node preview widgets.
         painter.rect_filled(rect, CornerRadius::ZERO, pal::BG);
 
+        // The canvas page in screen space (equals `rect` at zoom 1 with no pan).
+        let page = Rect::from_min_max(to_screen(Vec2::ZERO), to_screen(self.canvas_size));
+        let shown = page.intersect(rect);
         let cell = 8.0;
-        let mut y = rect.top();
-        let mut row = 0;
-        while y < rect.bottom() {
-            let mut x = rect.left() + if row % 2 == 0 { 0.0 } else { cell };
-            while x < rect.right() {
-                let tile = Rect::from_min_max(
-                    pos2(x, y),
-                    pos2((x + cell).min(rect.right()), (y + cell).min(rect.bottom())),
-                );
-                painter.rect_filled(tile, CornerRadius::ZERO, pal::NODE);
-                x += cell * 2.0;
+        if shown.is_positive() {
+            let mut row = ((shown.top() - page.top()) / cell).floor().max(0.0) as i64;
+            let first_col = ((shown.left() - page.left()) / cell).floor().max(0.0) as i64;
+            let mut y = page.top() + row as f32 * cell;
+            while y < shown.bottom() {
+                let mut col = first_col;
+                if (row + col) % 2 != 0 {
+                    col += 1;
+                }
+                let mut x = page.left() + col as f32 * cell;
+                while x < shown.right() {
+                    let tile = Rect::from_min_max(
+                        pos2(x.max(shown.left()), y.max(shown.top())),
+                        pos2((x + cell).min(shown.right()), (y + cell).min(shown.bottom())),
+                    );
+                    painter.rect_filled(tile, CornerRadius::ZERO, pal::NODE);
+                    x += cell * 2.0;
+                }
+                y += cell;
+                row += 1;
             }
-            y += cell;
-            row += 1;
         }
 
         if let Some(tex) = &self.blend_preview {
             let mut mesh = Mesh::with_texture(tex.id());
             mesh.vertices.push(Vertex {
-                pos: rect.left_top(),
+                pos: page.left_top(),
                 uv: pos2(0.0, 0.0),
                 color: pal::WHITE,
             });
             mesh.vertices.push(Vertex {
-                pos: rect.right_top(),
+                pos: page.right_top(),
                 uv: pos2(1.0, 0.0),
                 color: pal::WHITE,
             });
             mesh.vertices.push(Vertex {
-                pos: rect.right_bottom(),
+                pos: page.right_bottom(),
                 uv: pos2(1.0, 1.0),
                 color: pal::WHITE,
             });
             mesh.vertices.push(Vertex {
-                pos: rect.left_bottom(),
+                pos: page.left_bottom(),
                 uv: pos2(0.0, 1.0),
                 color: pal::WHITE,
             });
@@ -1744,11 +1833,20 @@ impl ImageCanvas {
             }
         }
         painter.rect_stroke(
-            rect,
+            page,
             CornerRadius::ZERO,
             Stroke::new(1.0, pal::MUTED),
             StrokeKind::Inside,
         );
+        if (self.view_zoom - 1.0).abs() > 0.005 {
+            painter.text(
+                rect.left_bottom() + vec2(6.0, -6.0),
+                Align2::LEFT_BOTTOM,
+                format!("{:.0}%", self.view_zoom * 100.0),
+                FontId::proportional(font::SMALL),
+                pal::MUTED,
+            );
+        }
 
         // --- snap guides ---
         let guide_stroke = Stroke::new(1.0, Color32::from_rgb(255, 64, 160));
@@ -1873,7 +1971,7 @@ impl ImageCanvas {
         }
 
         // Layer list without scroll - just render the rows
-        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().item_spacing.y = 2.0;
         self.layer_rows(ui, inner_width);
     }
 
@@ -1917,30 +2015,17 @@ impl ImageCanvas {
             let is_sel = self.selected == Some(id) || self.extra.contains(&id);
             let is_dragged = self.list_drag == Some(id);
 
+            // Outliner-style row: flat, no outline; a solid blue bar when selected.
             let bg = if is_sel {
-                pal::ACTIVE_FILL
-            } else if is_dragged {
-                pal::hover(pal::BG)
-            } else if resp.hovered() {
-                pal::hover(pal::BG)
+                pal::ROW_SELECTED
+            } else if is_dragged || resp.hovered() {
+                pal::hover(pal::PANEL)
             } else {
                 Color32::TRANSPARENT
             };
 
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(LAYER_RADIUS), bg);
-
-            let border_color = if is_sel {
-                pal::ACCENT
-            } else {
-                pal::NODE_STROKE
-            };
-            ui.painter().rect_stroke(
-                rect,
-                CornerRadius::same(LAYER_RADIUS),
-                Stroke::new(1.0, border_color),
-                StrokeKind::Inside,
-            );
 
             // Six-dot drag handle on the left
             let handle_rect = Rect::from_min_size(
@@ -1957,14 +2042,20 @@ impl ImageCanvas {
                 ),
                 Align2::LEFT_CENTER,
                 name,
-                FontId::proportional(9.0),
-                if visible { pal::TEXT } else { pal::MUTED },
+                FontId::proportional(font::LABEL),
+                if is_sel {
+                    pal::HEADER_TEXT
+                } else if visible {
+                    pal::TEXT
+                } else {
+                    pal::MUTED
+                },
             );
 
             // Eye toggle (right-aligned, 16×16)
             let eye_pos = rect.right() - 5.0;
             let eye_rect = Rect::from_min_size(
-                egui::pos2(eye_pos - 16.0, rect.center().y - 6.0),
+                egui::pos2(eye_pos - 16.0, rect.center().y - 8.0),
                 vec2(16.0, 16.0),
             );
             let eye_id = egui::Id::new(format!("eye_{}", id.0));
@@ -1978,7 +2069,7 @@ impl ImageCanvas {
                 Align2::CENTER_CENTER,
                 if visible { icons::EYE } else { icons::EYE_OFF },
                 icons::font(font::ICON),
-                pal::TEXT,
+                if visible { pal::TEXT } else { pal::MUTED },
             );
 
             // Update stored visibility

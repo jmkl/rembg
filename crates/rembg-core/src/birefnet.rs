@@ -15,8 +15,7 @@ impl BirefNet {
     }
 
     pub fn load_from(path: impl AsRef<Path>) -> Result<Self> {
-        let mut session =
-            config::load_session(path, config::VRAM_LIMIT_BIREFNET_MB)?;
+        let mut session = config::load_session(path, config::VRAM_LIMIT_BIREFNET_MB)?;
         if config::WARMUP {
             config::warmup(&mut session, config::SIZE_BIREFNET)?;
         }

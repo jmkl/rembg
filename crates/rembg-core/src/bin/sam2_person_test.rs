@@ -103,11 +103,12 @@ fn main() -> Result<()> {
         let cutout_path = images_dir.join(&cutout_file);
         cutout.save(&cutout_path)?;
 
-        println!(
-            "  ✓ Person [{i}] decoded in {decode_time:.2?} -> {mask_file} & {cutout_file}"
-        );
+        println!("  ✓ Person [{i}] decoded in {decode_time:.2?} -> {mask_file} & {cutout_file}");
     }
 
-    println!("\n=== Done! All results saved in {} ===", images_dir.display());
+    println!(
+        "\n=== Done! All results saved in {} ===",
+        images_dir.display()
+    );
     Ok(())
 }

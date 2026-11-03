@@ -9,7 +9,7 @@ use std::ops::RangeInclusive;
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Frame, Id, Margin, Pos2, Rect, Response, RichText,
-    Sense, Shadow, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType,
+    Sense, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType,
     pos2, vec2,
 };
 
@@ -55,12 +55,7 @@ pub(crate) fn sidebar_frame() -> Frame {
 }
 
 pub(crate) fn canvas_frame() -> Frame {
-    Frame::new().fill(pal::BG).shadow(Shadow {
-        offset: [10, 10],
-        blur: 12,
-        spread: 2,
-        color: Color32::from_black_alpha(100),
-    })
+    Frame::new().fill(pal::BG)
 }
 
 // ---------------------------------------------------------------- button ----
@@ -474,7 +469,8 @@ impl Widget for Checkbox<'_> {
 
 // ---------------------------------------------------------------- slider ----
 
-/// Horizontal slider: label and value above a pill track.
+/// Blender-style slider: one rounded field with the label on the left and the
+/// value on the right; the blue part of the bar shows where the value sits.
 pub(crate) struct Slider<'a> {
     value: &'a mut f32,
     range: RangeInclusive<f32>,
@@ -524,28 +520,15 @@ impl Widget for Slider<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let (lo, hi) = (*self.range.start(), *self.range.end());
         let width = ui.available_width();
-        let thumb_r = metrics::SLIDER_THUMB * 0.5;
+        let (rect, mut response) =
+            ui.allocate_exact_size(vec2(width, metrics::FIELD_H), Sense::click_and_drag());
 
-        let (head, mut response) = ui
-            .scope(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                let (head, _) = ui.allocate_exact_size(vec2(width, 14.0), Sense::hover());
-                let response = ui.allocate_response(
-                    vec2(width, metrics::SLIDER_THUMB + 2.0),
-                    Sense::click_and_drag(),
-                );
-                (head, response)
-            })
-            .inner;
-
-        let track_x = (response.rect.left() + thumb_r)..=(response.rect.right() - thumb_r);
-        let (x0, x1) = (*track_x.start(), *track_x.end());
         let before = *self.value;
         if let Some(pos) = response.interact_pointer_pos()
             && (response.dragged() || response.is_pointer_button_down_on())
-            && x1 > x0
+            && rect.width() > 0.0
         {
-            let frac = ((pos.x - x0) / (x1 - x0)).clamp(0.0, 1.0);
+            let frac = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
             let mut v = lo as f64 + frac as f64 * (hi - lo) as f64;
             if let Some(step) = self.step.filter(|s| *s > 0.0) {
                 v = lo as f64 + ((v - lo as f64) / step).round() * step;
@@ -566,62 +549,55 @@ impl Widget for Slider<'_> {
         response
             .widget_info(|| WidgetInfo::slider(true, value as f64, self.label.unwrap_or_default()));
 
-        if ui.is_rect_visible(response.rect) {
+        if ui.is_rect_visible(rect) {
             let painter = ui.painter();
-            if let Some(label) = self.label {
-                painter.text(
-                    head.left_center(),
-                    Align2::LEFT_CENTER,
-                    label,
-                    FontId::proportional(font::LABEL),
-                    pal::MUTED,
-                );
-            }
-            painter.text(
-                head.right_center(),
-                Align2::RIGHT_CENTER,
-                format!("{:.*}{}", self.decimals, value, self.suffix),
-                FontId::proportional(font::LABEL),
-                pal::TEXT,
-            );
-
-            let cy = response.rect.center().y;
-            let track = Rect::from_min_max(
-                pos2(
-                    response.rect.left() + thumb_r,
-                    cy - metrics::SLIDER_TRACK * 0.5,
-                ),
-                pos2(
-                    response.rect.right() - thumb_r,
-                    cy + metrics::SLIDER_TRACK * 0.5,
-                ),
-            );
-            let radius = CornerRadius::same((metrics::SLIDER_TRACK * 0.5) as u8);
-            painter.rect(
-                track,
+            let radius = CornerRadius::same(metrics::R_CONTROL);
+            let lit = response.hovered() || response.dragged();
+            painter.rect_filled(
+                rect,
                 radius,
-                pal::INPUT_BG,
-                Stroke::new(1.0, pal::NODE_STROKE),
-                StrokeKind::Inside,
+                if lit { pal::hover(pal::FIELD) } else { pal::FIELD },
             );
             let frac = if hi > lo {
-                (value - lo) / (hi - lo)
+                ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
             } else {
                 0.0
             };
-            let thumb_x = x0 + frac.clamp(0.0, 1.0) * (x1 - x0);
-            let fill = Rect::from_min_max(track.min, pos2(thumb_x, track.max.y));
-            painter.rect_filled(fill, radius, pal::ACCENT);
-            let thumb = pos2(thumb_x, cy);
-            if response.hovered() || response.dragged() {
-                painter.circle_filled(thumb, thumb_r + 4.0, pal::ACTIVE_FILL);
+            if frac > 0.0 {
+                // Clip the full-width bar so the fill follows its rounded corners.
+                let fill = Rect::from_min_max(rect.min, pos2(rect.left() + frac * rect.width(), rect.max.y));
+                painter.with_clip_rect(fill).rect_filled(rect, radius, pal::ACCENT);
             }
-            painter.circle(
-                thumb,
-                thumb_r,
-                pal::HEADER_TEXT,
-                Stroke::new(2.0, pal::ACCENT),
+            painter.rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.0, pal::BLACK.gamma_multiply(0.35)),
+                StrokeKind::Inside,
             );
+
+            let value_text = format!("{:.*}{}", self.decimals, value, self.suffix);
+            let font = FontId::proportional(font::LABEL);
+            match self.label {
+                Some(label) => {
+                    painter.text(
+                        pos2(rect.left() + 8.0, rect.center().y),
+                        Align2::LEFT_CENTER,
+                        label,
+                        font.clone(),
+                        pal::HEADER_TEXT,
+                    );
+                    painter.text(
+                        pos2(rect.right() - 8.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        value_text,
+                        font,
+                        pal::HEADER_TEXT,
+                    );
+                }
+                None => {
+                    painter.text(rect.center(), Align2::CENTER_CENTER, value_text, font, pal::HEADER_TEXT);
+                }
+            }
         }
         response
     }

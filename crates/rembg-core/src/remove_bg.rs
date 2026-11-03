@@ -65,7 +65,11 @@ impl RemoveBg {
             let (_shape, mask_slice) = outputs[0].try_extract_tensor::<f32>()?;
 
             if mask_slice.len() < plane {
-                anyhow::bail!("Unexpected mask size: got {} values, expected {}", mask_slice.len(), plane);
+                anyhow::bail!(
+                    "Unexpected mask size: got {} values, expected {}",
+                    mask_slice.len(),
+                    plane
+                );
             }
             let mask_slice = &mask_slice[..plane];
 
