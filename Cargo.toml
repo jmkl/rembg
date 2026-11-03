@@ -1,17 +1,10 @@
 [workspace]
 members = [
   "crates/rembg-core",
-  "crates/rembg-winit",
   "crates/compnode",
-  "crates/wgpu-playground",
-  "crates/cmd-craft",
   "crates/gpaste",
-  "crates/gpt",
   "crates/quickrestore",
-  "crates/craftnailizer",
-  "crates/egui_nerdfonts",
   "crates/linkrouter",
-  "crates/nodeforge",
 
 ]
 resolver = "2"

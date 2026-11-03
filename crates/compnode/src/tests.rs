@@ -46,7 +46,7 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         recent_node_kinds: Vec::new(),
         menu_nav: crate::graph_menu::MenuNav::default(),
         menu_anchor: None,
-        settings,
+        settings: settings.clone(),
         settings_draft: settings.clone(),
         settings_open: false,
         worker,
@@ -68,6 +68,10 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
         input_folder_open: false,
         image_canvas: ImageCanvas::new(GPasTeApp::new(tx, rx)),
         sidebar_restore: false,
+        undo_scope: todo!(),
+        sidebar_rect: todo!(),
+        graph_rect: todo!(),
+        canvas_edit_base: todo!(),
     }
 }
 

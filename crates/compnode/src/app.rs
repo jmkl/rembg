@@ -84,12 +84,12 @@ pub struct CompNodeApp {
     /// Context the last pointer press happened in; decides what undo/redo do.
     pub(crate) undo_scope: UndoScope,
     /// Screen rects of the sidebar and the graph from the last frame.
-    sidebar_rect: Option<egui::Rect>,
-    graph_rect: Option<egui::Rect>,
+    pub(crate) sidebar_rect: Option<egui::Rect>,
+    pub(crate) graph_rect: Option<egui::Rect>,
     /// Layer state of a node from before the canvas edit in progress. The
     /// per-frame sync during a drag only updates the node; one history entry
     /// from this baseline is recorded when the edit settles.
-    canvas_edit_base: Option<(egui_snarl::NodeId, crate::history::LayerState)>,
+    pub(crate) canvas_edit_base: Option<(egui_snarl::NodeId, crate::history::LayerState)>,
 }
 impl CompNodeApp {
     pub(crate) fn new(
@@ -1208,7 +1208,11 @@ impl CompNodeApp {
             self.image_canvas.layers().map(|l| l.id).collect();
 
         if let Some(tid) = self.canvas_target_id() {
-            if self.canvas_edit_base.as_ref().is_some_and(|(id, _)| *id != tid) {
+            if self
+                .canvas_edit_base
+                .as_ref()
+                .is_some_and(|(id, _)| *id != tid)
+            {
                 self.flush_canvas_history();
             }
             let old_state = crate::history::layer_state(&self.snarl[tid]);

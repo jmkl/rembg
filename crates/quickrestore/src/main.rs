@@ -9,11 +9,11 @@ mod tray;
 mod widget;
 use consts::*;
 use eframe::egui::{
-    self, Button, CentralPanel, Color32, CornerRadius, Frame, Id, Panel, Pos2, Sense, Stroke,
-    StrokeKind, ViewportCommand, Visuals, vec2,
+    self, Button, CentralPanel, Color32, CornerRadius, FontData, Frame, Id, Panel, Pos2, Sense,
+    Stroke, StrokeKind, ViewportCommand, Visuals, vec2,
 };
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use wry::{
     Rect as WvRect, WebView, WebViewBuilder,
@@ -584,13 +584,23 @@ fn spawn_server(
     std::thread::spawn(move || server::Server::run(tx, rx, model_root, status_tx));
     cmd_tx
 }
+pub fn add_to_fonts(fonts: &mut egui::FontDefinitions, fd: FontData) {
+    fonts.font_data.insert("nerdfonts".into(), Arc::new(fd));
+    if let Some(font_keys) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        font_keys.push("nerdfonts".into());
+    }
+}
 
 fn setup_egui(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_visuals_of(egui::Theme::Dark, consts::visuals());
 
     let mut fonts = egui::FontDefinitions::default();
-    egui_nerdfonts::add_to_fonts(&mut fonts, egui_nerdfonts::Variant::Regular);
+    let mut font_data =
+        egui::FontData::from_static(include_bytes!("assets/font/3270NerdFont-Regular.ttf"));
+    font_data.tweak.y_offset_factor = 0.0;
+
+    add_to_fonts(&mut fonts, font_data);
     ctx.set_fonts(fonts);
 }
 

@@ -13,7 +13,6 @@ serde.workspace = true
 arboard = "3"
 anyhow.workspace = true
 eframe.workspace = true
-egui_nerdfonts = { path = "../egui_nerdfonts" }
 tray-icon = "0.26"
 winit = "0.30"
 wry.workspace = true

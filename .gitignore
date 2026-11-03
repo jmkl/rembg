@@ -18,11 +18,11 @@ Cargo.lock
 workspaces/
 input/
 models/
-
+crates/compnode/*.json
 # Session/autosave
 *.session
 *.autosave
-
+*.zip
 *.onnx
 *.pt
 *.pth
@@ -37,3 +37,5 @@ out*.png
 *.patch
 
 crates/*.zip
+*.ccx
+*.nu
