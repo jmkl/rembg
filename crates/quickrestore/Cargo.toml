@@ -7,14 +7,16 @@ edition = "2024"
 rembg-core = { path = "../rembg-core" }
 tungstenite = "0.30"
 base64 = { workspace = true }
-image = { workspace = true }
+image = { workspace = true, default-features = false, features = ["png"] }
 serde_json.workspace = true
 serde.workspace = true
+arboard = "3"
 anyhow.workspace = true
 eframe.workspace = true
 egui_nerdfonts = { path = "../egui_nerdfonts" }
 tray-icon = "0.26"
 winit = "0.30"
+wry.workspace = true
 
 [[bin]]
 name = "qr"

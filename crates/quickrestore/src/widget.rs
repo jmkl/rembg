@@ -28,7 +28,7 @@ impl Btn {
 
         if muted {
             let p = ui.painter();
-            let galley = p.layout_no_wrap(icon.to_owned(), FontId::proportional(14.0), MUTED);
+            let galley = p.layout_no_wrap(icon.to_owned(), FontId::proportional(14.0), DANGER);
             p.galley(
                 rect.center() - galley.mesh_bounds.center().to_vec2(),
                 galley,

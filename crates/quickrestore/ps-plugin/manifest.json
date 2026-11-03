@@ -23,8 +23,8 @@
       "id": "quick",
       "minimumSize": { "width": 50, "height": 50 },
       "maximumSize": { "width": 200, "height": 200 },
-      "preferredDockedSize": { "width": 150, "height": 150 },
-      "preferredFloatingSize": { "width": 150, "height": 150 },
+      "preferredDockedSize": { "width": 150, "height": 75 },
+      "preferredFloatingSize": { "width": 150, "height": 75 },
       "label": { "default": "QuixRstr" },
       "icons": [
         {

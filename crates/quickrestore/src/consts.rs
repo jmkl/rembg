@@ -9,14 +9,14 @@ use eframe::egui::{Color32, CornerRadius, Shadow, Stroke, Visuals};
 
 pub const WIN_W: f32 = 350.0;
 pub const WIN_H: f32 = 580.0;
-pub const WIN_W_COMPACT: f32 = 200.0;
-pub const WIN_H_COMPACT: f32 = 30.0;
+pub const WIN_W_COMPACT: f32 = 250.0;
+pub const WIN_H_COMPACT: f32 = 40.0;
 
 /// Frame-rate ceiling for the UI, in frames per second.
 pub const MAX_FPS: u32 = 60;
 pub const BTN_W: f32 = 30.0;
 pub const BTN_H: f32 = 30.0;
-pub const GAP: f32 = 4.0;
+pub const GAP: f32 = 0.0;
 
 // --- base palette ---------------------------------------------------------
 

@@ -18,6 +18,7 @@ pub struct ProgressStatus {
     pub is_processing: Status,
     pub status: String,
 }
+
 impl ProgressStatus {
     pub fn new(is_processing: Status, status: impl Into<String>) -> Self {
         Self {

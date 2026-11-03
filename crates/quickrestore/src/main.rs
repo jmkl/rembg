@@ -1,360 +1,671 @@
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod config;
 mod consts;
+mod gpt;
 mod model;
-
+mod platform;
 mod server;
 mod tray;
 mod widget;
 use consts::*;
 use eframe::egui::{
-    self, CentralPanel, CornerRadius, Frame, Panel, Pos2, Sense, Stroke, StrokeKind,
-    ViewportCommand, Visuals, vec2,
+    self, Button, CentralPanel, Color32, CornerRadius, Frame, Id, Panel, Pos2, Sense, Stroke,
+    StrokeKind, ViewportCommand, Visuals, vec2,
 };
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use wry::{
+    Rect as WvRect, WebView, WebViewBuilder,
+    dpi::{LogicalPosition, LogicalSize},
+};
 
+use crate::config::Config;
+use crate::gpt::ABORT_JS;
 use crate::model::{Cmd, ProgressStatus, Status};
+use crate::server::{CanvasImage, Server};
 use crate::tray::{Tray, TrayAction};
 use crate::widget::Btn;
 
 /// eframe has no native frame-rate cap (`NativeOptions::max_fps` is web-only),
 /// and every pointer move over the window triggers a paint.
 const FRAME_BUDGET: Duration = Duration::from_micros(1_000_000 / MAX_FPS as u64);
+/// Poll rate while hidden (menu clicks only become frames through polling).
+const HIDDEN_POLL: Duration = Duration::from_millis(250);
+/// Poll rate while a pipeline runs, so the dot/text stay live with an idle pointer.
+const BUSY_POLL: Duration = Duration::from_millis(100);
+
+const CONFIG_FILE: &str = "quickrestore.json";
+const DEFAULT_MODEL_DIR: &str = "E:\\_CODE\\rust\\rembg\\models";
+const START_URL: &str = "https://chatgpt.com";
+const WEBVIEW_ZOOM: f64 = 0.50;
+/// Vertical space reserved above the webview for the GPT buttons.
+const WEBVIEW_TOP_GAP: f32 = 30.0;
+const STATUS_DOT: f32 = 6.0;
+
+enum ActionType {
+    SelectionTool,
+    RestoreSelection,
+    CopyLayerToClipboard,
+    GPTSend,
+    GPTAbort,
+}
+
+struct Action {
+    id: &'static str,
+    icon: &'static str,
+    tooltip: &'static str,
+    status: &'static str,
+    msg_type: &'static str,
+    action_type: ActionType,
+}
+
+const ACTIONS: [Action; 5] = [
+    Action {
+        id: "sel-tool",
+        icon: "\u{f019f}",
+        tooltip: "Get selection",
+        status: "pic select tool",
+        msg_type: "selection_tool",
+        action_type: ActionType::SelectionTool,
+    },
+    Action {
+        id: "sel",
+        icon: "\u{f1077}",
+        tooltip: "Get selection",
+        status: "Processing",
+        msg_type: "get_selection",
+        action_type: ActionType::RestoreSelection,
+    },
+    Action {
+        id: "copy",
+        icon: "\u{f0328}",
+        tooltip: "Copy PS layer",
+        status: "Requesting copy layer",
+        msg_type: "copy",
+        action_type: ActionType::CopyLayerToClipboard,
+    },
+    Action {
+        id: "gpt-image",
+        icon: "\u{f0b79}",
+        tooltip: "Paste image to GPT",
+        status: "Paste image to GPT",
+        msg_type: "gpt_image",
+        action_type: ActionType::GPTSend,
+    },
+    Action {
+        id: "gpt-abort",
+        icon: "\u{f073a}",
+        tooltip: "Abort GPT ops",
+        status: "Abort gpt operations",
+        msg_type: "gpt_abort",
+        action_type: ActionType::GPTAbort,
+    },
+];
+
+fn status_color(status: &Status) -> Color32 {
+    match status {
+        Status::Processing => INFO,
+        Status::Idle => SUCCESS,
+        Status::Error => DANGER,
+    }
+}
 
 struct QuickRestoreApp {
+    webview: WebView,
+    /// Last bounds pushed to the webview; avoids a native resize every frame.
+    webview_rect: Option<egui::Rect>,
     compact_mode: bool,
     cmd_tx: mpsc::SyncSender<Cmd>,
     status: ProgressStatus,
     status_rx: mpsc::Receiver<ProgressStatus>,
-    config_path: String,
-    last_frame: Instant,
     tray_rx: mpsc::Receiver<TrayAction>,
+    last_frame: Instant,
     /// Set while the window lives only in the notification area.
     hidden: bool,
     /// Dropping the tray removes the notification-area icon.
     _tray: Option<Tray>,
-    /// One-shot: drop the Windows drop shadow / 1 px top line.
-    shadow_removed: bool,
+    /// One-shot: window chrome (shadow / 1 px line) already stripped.
+    chrome_stripped: bool,
+    prompt: String,
+    gpt_rx: mpsc::Receiver<gpt::GptEvent>,
+    setting_mode: bool,
+    config: Config,
+    prompts: Vec<String>,
+    prompt_input: String,
+    prompt_selected: Option<usize>,
 }
 
-impl std::ops::Deref for QuickRestoreApp {
-    type Target = String;
-
-    fn deref(&self) -> &Self::Target {
-        &self.config_path
-    }
-}
+// ---------------------------------------------------------------- helpers --
 
 impl QuickRestoreApp {
-    fn send(&self, v: serde_json::Value) {
-        let _ = self.cmd_tx.try_send(Cmd::SendText(v.to_string()));
+    fn is_busy(&self) -> bool {
+        matches!(self.status.is_processing, Status::Processing)
+    }
+
+    fn send(&self, msg: serde_json::Value) {
+        let _ = self.cmd_tx.try_send(Cmd::SendText(msg.to_string()));
+    }
+
+    /// Runs a generated script in the webview, logging any failure.
+    fn run_js(&self, script: anyhow::Result<String>) {
+        match script {
+            Ok(js) => {
+                if let Err(e) = self.webview.evaluate_script(&js) {
+                    eprintln!("script error: {e}");
+                }
+            }
+            Err(e) => eprintln!("script build error: {e}"),
+        }
+    }
+
+    fn start_action(&mut self, action: &Action) {
+        match action.action_type {
+            ActionType::SelectionTool => {
+                self.status = ps!(Status::Idle, action.status);
+                self.send(serde_json::json!({ "type": action.msg_type, "value": true }));
+            }
+            ActionType::RestoreSelection => {
+                self.status = ps!(Status::Processing, action.status);
+                self.send(serde_json::json!({ "type": action.msg_type, "value": true }));
+            }
+            ActionType::CopyLayerToClipboard => {
+                self.status = ps!(Status::Idle, action.status);
+                self.send(serde_json::json!({ "type": action.msg_type, "value": true }));
+            }
+            ActionType::GPTSend => {
+                self.status = ps!(Status::Idle, action.status);
+                self.send_to_gpt();
+            }
+            ActionType::GPTAbort => {
+                self.status = ps!(Status::Error, action.status);
+                self.run_js(Ok(ABORT_JS.to_string()));
+            }
+        }
+    }
+
+    fn toggle_compact(&mut self, ctx: &egui::Context) {
+        self.compact_mode = !self.compact_mode;
+        let size = if self.compact_mode {
+            vec2(WIN_W_COMPACT, WIN_H_COMPACT)
+        } else {
+            vec2(WIN_W, WIN_H)
+        };
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+    }
+
+    fn sync_webview(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        ui.painter()
+            .rect_filled(rect, 0, Color32::from_rgb(0, 0, 0));
+        let pill = rect.shrink(1.);
+        let cy = WIN_H_COMPACT;
+        let at = |x: f32| Pos2::new(x + BTN_W / 2.0, cy);
+
+        let setting_pos = at(pill.right() - GAP - BTN_W);
+        if Btn::click(
+            ui,
+            setting_pos,
+            "setting_btn",
+            "\u{f013}",
+            "toltip",
+            false,
+            false,
+        ) {
+            self.setting_mode = !self.setting_mode;
+            _ = self.webview.set_visible(!self.setting_mode);
+        }
+        if Btn::click(
+            ui,
+            at(pill.right() - GAP - 2. * (BTN_W + GAP)),
+            "reload_gtp",
+            "\u{f0450}",
+            "reload_gpt",
+            false,
+            false,
+        ) {
+            _ = self.webview.evaluate_script("location.reload()");
+        }
+        if self.setting_mode {
+            self.sync_settingview(ui);
+        }
+        //dont render again
+        if self.webview_rect == Some(rect) {
+            return;
+        }
+        self.webview_rect = Some(rect);
+        let _ = self.webview.set_bounds(WvRect {
+            position: LogicalPosition::new(rect.min.x, rect.min.y + WEBVIEW_TOP_GAP).into(),
+            size: LogicalSize::new(rect.width(), rect.height() - WEBVIEW_TOP_GAP).into(),
+        });
+    }
+    fn sync_settingview(&mut self, ui: &mut egui::Ui) {
+        let mut rect = ui.available_rect_before_wrap();
+        rect.min.y += BTN_H;
+        rect = rect.shrink2(egui::vec2(16.0, 0.0));
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("prompt_input_scroll")
+                .max_height(100.0) // cap here
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.prompt_input)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(4) // minimum height
+                            .hint_text("Type something..."),
+                    );
+                });
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 24.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if ui.button("Add").clicked() {
+                        let text = self.prompt_input.trim().to_owned();
+                        if !text.is_empty() {
+                            self.config.add(text); // saves to disk
+                            self.prompt_input.clear();
+                        }
+                    }
+                },
+            );
+
+            ui.add_space(8.0);
+
+            let mut to_remove: Option<usize> = None;
+            let x_width = 28.0;
+            let spacing = ui.spacing().item_spacing.x;
+
+            egui::ScrollArea::vertical()
+                .id_salt("prompt_list")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, item) in self.config.load().get().iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let item_width = ui.available_width() - x_width - spacing;
+                            let item_btn = egui::Button::new(item.as_str())
+                                .selected(self.prompt_selected == Some(i))
+                                .wrap_mode(egui::TextWrapMode::Truncate);
+                            if ui.add_sized([item_width, 28.0], item_btn).clicked() {
+                                ui.ctx().copy_text(item.clone());
+                                self.prompt_selected = Some(i);
+                            }
+                            if ui
+                                .add_sized([x_width, 28.0], egui::Button::new("✕"))
+                                .clicked()
+                            {
+                                to_remove = Some(i);
+                            }
+                        });
+                    }
+                });
+
+            if let Some(i) = to_remove {
+                self.config.remove(i); // saves to disk
+                self.prompt_selected = match self.prompt_selected {
+                    Some(s) if s == i => None,
+                    Some(s) if s > i => Some(s - 1),
+                    other => other,
+                };
+            }
+        });
     }
 }
 
-impl eframe::App for QuickRestoreApp {
-    fn clear_color(&self, _visuals: &Visuals) -> [f32; 4] {
-        // Opaque window: clear to the app background so no black frame /
-        // compositor-default pixels show through around the pill.
-        egui::Rgba::from(BG).to_array()
-    }
+// ----------------------------------------------------------- frame phases --
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Notification-area menu: bring the window back or quit for real.
+impl QuickRestoreApp {
+    /// Notification-area menu: bring the window back or quit for real.
+    fn handle_tray(&mut self, ctx: &egui::Context) {
         for action in self.tray_rx.try_iter() {
             match action {
                 TrayAction::Show => {
                     self.hidden = false;
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Visible(true));
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
+                    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(ViewportCommand::Focus);
                 }
-                TrayAction::Quit => {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
-                }
+                TrayAction::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
             }
         }
+    }
 
-        // A hidden window receives no input, so nothing would run this handler.
-        // Poll slowly while hidden: that is what turns menu clicks into frames.
-        if self.hidden {
-            ui.ctx().request_repaint_after(Duration::from_millis(250));
-            return;
-        }
-
-        // Drop the Windows drop shadow / 1 px top line that winit draws for
-        // undecorated windows (one-shot; the call is idempotent but touches
-        // window styles, so don't repeat it every frame).
-        if !self.shadow_removed {
-            if let Some(w) = _frame.winit_window() {
-                #[cfg(windows)]
-                {
-                    use winit::platform::windows::WindowExtWindows;
-                    w.set_undecorated_shadow(false);
-                    // Match the border to the app background so the 1 px DWM
-                    // frame line blends in instead of showing as a dark edge.
-                    w.set_border_color(Some(winit::platform::windows::Color::from_rgb(18, 20, 26)));
-
-                    // Disable DWM non-client rendering entirely: this removes the
-                    // remaining 1 px frame line that Win11 draws for windows that
-                    // still carry WS_CAPTION (winit keeps it for snap support).
-                    #[link(name = "dwmapi")]
-                    unsafe extern "system" {
-                        fn DwmSetWindowAttribute(
-                            hwnd: isize,
-                            attr: u32,
-                            value: *const core::ffi::c_void,
-                            size: u32,
-                        ) -> i32;
-                    }
-                    // DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 2
-                    let hwnd = {
-                        use winit::raw_window_handle::HasWindowHandle;
-                        match w.window_handle() {
-                            Ok(h) => match h.as_raw() {
-                                winit::raw_window_handle::RawWindowHandle::Win32(w32) => {
-                                    w32.hwnd.get()
-                                }
-                                _ => 0,
-                            },
-                            Err(_) => 0,
-                        }
-                    };
-                    let policy: i32 = 2;
-                    if hwnd != 0 {
-                        unsafe {
-                            DwmSetWindowAttribute(
-                                hwnd,
-                                2,
-                                &policy as *const _ as *const core::ffi::c_void,
-                                4,
-                            );
-                        }
-                    }
-                }
-                self.shadow_removed = true;
-            }
-        }
-
-        // Stretch each frame to the budget so mouse-move bursts cannot paint faster
-        // than MAX_FPS. The budget is measured from the previous frame's *start*, so
-        // when painting is already slower than the budget (vsync on a 60 Hz panel, a
-        // slow present) this sleeps for zero instead of halving the rate.
+    /// Stretches each frame to `FRAME_BUDGET` so mouse-move bursts cannot paint
+    /// faster than MAX_FPS. Measured from the previous frame's *start*, so when
+    /// painting is already slower (vsync, slow present) this sleeps for zero.
+    fn throttle(&mut self) {
         if let Some(remaining) =
             (self.last_frame + FRAME_BUDGET).checked_duration_since(Instant::now())
         {
             std::thread::sleep(remaining);
         }
         self.last_frame = Instant::now();
+    }
 
-        // The server pushes one-way status updates; keep the newest one.
+    /// The server pushes one-way status updates; keep the newest one.
+    fn poll_status(&mut self, ctx: &egui::Context) {
         if let Some(latest) = self.status_rx.try_iter().last() {
             self.status = latest;
         }
-
-        // While a pipeline runs, poll at 10 Hz so the dot and text stay live
-        // even when the pointer is idle (frames otherwise only come from input).
-        match self.status.is_processing {
-            Status::Processing => ui.ctx().request_repaint_after(Duration::from_millis(100)),
-            _ => {}
+        if self.is_busy() {
+            ctx.request_repaint_after(BUSY_POLL);
         }
-        // One panel type for both modes: in compact mode the strip is as tall as
-        // the whole window, so it covers it the way a `CentralPanel` would.
-        let panel = Panel::top("top-panel")
+    }
+
+    /// Drag area, background pill, action buttons and the compact toggle.
+    /// In compact mode the strip is as tall as the whole window.
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        let height = if self.compact_mode {
+            WIN_H_COMPACT
+        } else {
+            BTN_H
+        };
+
+        Panel::top("top-panel")
             .frame(Frame::NONE)
-            .exact_size(if self.compact_mode {
-                WIN_H_COMPACT
-            } else {
-                BTN_H
+            .exact_size(BTN_H)
+            .show(ui, |ui| {
+                let full = ui.max_rect();
+
+                // Drag area first, so buttons sit on top of it.
+                let drag = ui.interact(full, ui.id().with("drag"), Sense::click_and_drag());
+                if drag.drag_started_by(egui::PointerButton::Primary) {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                }
+
+                let pill = full.shrink(1.0);
+                ui.painter().rect(
+                    pill,
+                    CornerRadius::same(0),
+                    BG,
+                    Stroke::new(1.0, BORDER),
+                    StrokeKind::Inside,
+                );
+
+                let cy = pill.center().y;
+                let at = |x: f32| Pos2::new(x + BTN_W / 2.0, cy);
+
+                // Actions hug the left edge; the compact toggle hugs the right.
+                let busy = self.is_busy();
+                for (i, action) in ACTIONS.iter().enumerate() {
+                    let x = pill.left() + GAP + i as f32 * (BTN_W + GAP);
+                    let clicked = Btn::click(
+                        ui,
+                        at(x),
+                        action.id,
+                        action.icon,
+                        action.tooltip,
+                        false,
+                        busy,
+                    );
+                    if clicked {
+                        self.start_action(action);
+                    }
+                }
+
+                let toggle_pos = at(pill.right() - GAP - BTN_W);
+                if self.compact_mode {
+                    ui.painter().circle_filled(
+                        toggle_pos,
+                        STATUS_DOT / 2.0,
+                        status_color(&self.status.is_processing),
+                    );
+
+                    egui::Area::new(Id::new("source"))
+                        .fixed_pos(egui::pos2(2., 40.))
+                        .show(ui, |ui| {
+                            ui.painter().rect_filled(ui.max_rect(), 0, BORDER);
+                            ui.set_width(ui.available_width());
+                            let text = egui::RichText::new(&self.status.status)
+                                .color(TEXT)
+                                .size(8.0);
+
+                            ui.add(egui::Label::new(text).truncate());
+                        });
+                }
+                // Keeps the app (and the pipeline) alive; quit lives in the tray menu.
+                if Btn::click(
+                    ui, toggle_pos, "compact", "\u{f4c3}", "Compact", true, false,
+                ) {
+                    self.toggle_compact(ui.ctx());
+                }
             });
+    }
 
-        panel.show(ui, |ui| {
-            let full = ui.max_rect();
+    fn status_bar(&self, ui: &mut egui::Ui) {
+        Panel::bottom("status-panel")
+            .frame(Frame::NONE.inner_margin(egui::Margin::symmetric(6, 2)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
 
-            // drag area (added first so buttons sit on top of it)
-            let drag = ui.interact(full, ui.id().with("drag"), Sense::click_and_drag());
-            if drag.drag_started_by(egui::PointerButton::Primary) {
-                ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-            }
+                    let (dot, _) =
+                        ui.allocate_exact_size(vec2(STATUS_DOT, STATUS_DOT), Sense::hover());
+                    ui.painter().circle_filled(
+                        dot.center(),
+                        STATUS_DOT / 2.0,
+                        status_color(&self.status.is_processing),
+                    );
 
-            // pill background
-            let pill = full.shrink(1.0);
-            ui.painter().rect(
-                pill,
-                CornerRadius::same(0),
-                // CornerRadius::same((pill.height() / 2.0) as u8),
-                BG,
-                Stroke::new(1.0, BORDER),
-                StrokeKind::Inside,
-            );
-
-            // three actions hug the left edge, close hugs the right edge
-            let cy = pill.center().y;
-            let at = |x: f32| Pos2::new(x + BTN_W / 2.0, cy);
-
-            let left = pill.left() + GAP;
-            let right = pill.right() - GAP; // right edge of the close button
-
-            let x1 = left;
-            let x2 = left + BTN_W + GAP;
-            let x3 = left + 2.0 * (BTN_W + GAP);
-            let x4 = right - BTN_W;
-
-            // Action buttons are muted while a pipeline is running.
-            let busy = matches!(self.status.is_processing, Status::Processing);
-            if Btn::click(ui, at(x1), "sel-tool", "\u{f019f}", "Get selection", false, busy) {
-                self.status = ps!(Status::Processing, "Processing");
-                self.send(serde_json::json!({ "type": "selection_tool", "value": true }));
-            }
-            if Btn::click(ui, at(x2), "sel", "\u{f1077}", "Get selection", false, busy) {
-                self.status = ps!(Status::Processing, "Processing");
-                self.send(serde_json::json!({ "type": "get_selection", "value": true }));
-            }
-            if Btn::click(ui, at(x3), "copy", "\u{f0100}", "Copy", false, busy) {
-                self.status = ps!(Status::Processing, "Requesting copy layer");
-                self.send(serde_json::json!({ "type": "copy", "value": true }));
-            }
-            if self.compact_mode {
-                let color = match self.status.is_processing {
-                    Status::Processing => INFO,
-                    Status::Idle => SUCCESS,
-                    Status::Error => DANGER,
-                };
-                ui.painter().circle_filled(at(x4), 6.0 / 2.0, color);
-            }
-            if Btn::click(ui, at(x4), "compact", "\u{f4c3}", "Hide to tray", true, false) {
-                // Keep the app (and the pipeline) alive; quit lives in the tray menu.
-                //self.hidden = true;
-                self.compact_mode = !self.compact_mode;
-                let size = match self.compact_mode {
-                    true => vec2(WIN_W_COMPACT, WIN_H_COMPACT),
-                    false => vec2(WIN_W, WIN_H),
-                };
-                ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
-            }
-        });
-        if !self.compact_mode {
-            Panel::bottom("status-panel")
-                .frame(Frame::NONE.inner_margin(egui::Margin::symmetric(6, 2)))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-
-                        // tiny status pill: green while processing, red when idle
-                        let d = 6.0;
-                        let (dot, _) = ui.allocate_exact_size(egui::vec2(d, d), Sense::hover());
-                        let color = match self.status.is_processing {
-                            Status::Processing => INFO,
-                            Status::Idle => SUCCESS,
-                            Status::Error => DANGER,
-                        };
-
-                        ui.painter().circle_filled(dot.center(), d / 2.0, color);
-
-                        // keep the bar one line tall: clamp with an ellipsis
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&self.status.status)
-                                    .color(TEXT)
-                                    .size(10.),
-                            )
-                            .truncate(),
-                        );
-                    });
+                    // One line tall: clamp with an ellipsis.
+                    let text = egui::RichText::new(&self.status.status)
+                        .color(TEXT)
+                        .size(10.0);
+                    ui.add(egui::Label::new(text).truncate());
                 });
-            CentralPanel::default()
-                .frame(Frame::NONE)
-                .show(ui, |ui| ui.label("Content"));
+            });
+    }
+
+    /// Hosts the native webview plus the GPT helper buttons.
+    fn web_panel(&mut self, ui: &mut egui::Ui) {
+        CentralPanel::default().frame(Frame::NONE).show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            self.sync_webview(ui, rect);
+        });
+    }
+    fn send_to_gpt(&mut self) {
+        let image = gpt::clipboard_image_base64().ok();
+        self.run_js(gpt::process_prompt_js(image.as_deref(), &self.prompt).map_err(Into::into));
+        self.status = ps!(Status::Idle, "Sending to GPT");
+    }
+
+    fn poll_gpt(&mut self) {
+        use gpt::GptEvent::*;
+        let events: Vec<_> = self.gpt_rx.try_iter().collect();
+        for ev in events {
+            self.status = match ev {
+                Ready { .. } => continue,
+                PromptSent { .. } => ps!(Status::Idle, "Waiting for image"),
+                ImageCopied {
+                    base64,
+                    width,
+                    height,
+                    ..
+                } => {
+                    if let Err(e) = Server::save_gpt_image(
+                        &self.cmd_tx,
+                        CanvasImage {
+                            base64: base64,
+                            mime_type: "image/png".into(),
+                            width,
+                            height,
+                        },
+                    ) {
+                        ps!(Status::Error, format!("{}", e))
+                    } else {
+                        ps!(Status::Idle, format!("Got image {width}x{height}"))
+                    }
+                }
+                BridgeError { error, .. } => ps!(Status::Error, error),
+            };
         }
     }
 }
 
-fn main() -> eframe::Result {
-    // Locate quickrestore.json next to the executable
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let config_path = exe_dir.join("quickrestore.json");
-
-    if !config_path.exists() {
-        let default = serde_json::json!({ "model": "E:\\_CODE\\rust\\rembg\\models" });
-        if let Ok(s) = serde_json::to_string_pretty(&default) {
-            let _ = std::fs::write(&config_path, s);
-        }
+impl eframe::App for QuickRestoreApp {
+    /// Opaque window: clear to the app background so no black frame shows
+    /// around the pill.
+    fn clear_color(&self, _visuals: &Visuals) -> [f32; 4] {
+        egui::Rgba::from(BG).to_array()
     }
 
-    let mut model_root: Option<String> = None;
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(m) = v.get("model").and_then(|x| x.as_str()) {
-                model_root = Some(m.to_string());
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+
+        self.handle_tray(&ctx);
+
+        // A hidden window receives no input, so poll slowly instead.
+        if self.hidden {
+            ctx.request_repaint_after(HIDDEN_POLL);
+            return;
+        }
+
+        if !self.chrome_stripped {
+            if let Some(window) = frame.winit_window() {
+                platform::strip_window_chrome(window);
+                self.chrome_stripped = true;
             }
         }
-    }
 
+        self.throttle();
+        self.poll_status(&ctx);
+        self.poll_gpt();
+
+        self.top_bar(ui);
+        if !self.compact_mode {
+            self.status_bar(ui);
+            self.web_panel(ui);
+        }
+    }
+}
+
+// ------------------------------------------------------------------ setup --
+
+fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Reads `model` from the config file, creating it with defaults if missing.
+fn model_from_config(path: &Path) -> Option<String> {
+    if !path.exists() {
+        let default = serde_json::json!({ "model": DEFAULT_MODEL_DIR });
+        if let Ok(s) = serde_json::to_string_pretty(&default) {
+            let _ = std::fs::write(path, s);
+        }
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("model")?.as_str().map(str::to_owned)
+}
+
+/// `--model <dir>` or `--model=<dir>`; the last occurrence wins.
+fn model_from_cli() -> Option<String> {
+    let mut found = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--model" {
-            if let Some(val) = args.next() {
-                model_root = Some(val);
-            }
+            found = args.next().or(found);
         } else if let Some(val) = arg.strip_prefix("--model=") {
-            model_root = Some(val.to_string());
+            found = Some(val.to_owned());
         }
     }
+    found
+}
 
-    let model_root = rembg_core::config::model_root(model_root.as_deref());
-    let (status_tx, status_rx) = mpsc::channel::<ProgressStatus>();
-    let _ = status_tx.send(ps!(format!("Using model root: {}", model_root)));
-
+fn spawn_server(
+    model_root: String,
+    status_tx: mpsc::Sender<ProgressStatus>,
+) -> mpsc::SyncSender<Cmd> {
     let (tx, rx) = mpsc::sync_channel::<Cmd>(32);
     let cmd_tx = tx.clone();
-    let mr = model_root.clone();
-    std::thread::spawn(move || {
-        server::Server::run(tx, rx, mr, status_tx);
-    });
+    std::thread::spawn(move || server::Server::run(tx, rx, model_root, status_tx));
+    cmd_tx
+}
+
+fn setup_egui(ctx: &egui::Context) {
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.set_visuals_of(egui::Theme::Dark, consts::visuals());
+
+    let mut fonts = egui::FontDefinitions::default();
+    egui_nerdfonts::add_to_fonts(&mut fonts, egui_nerdfonts::Variant::Regular);
+    ctx.set_fonts(fonts);
+}
+
+fn build_webview(
+    cc: &eframe::CreationContext<'_>,
+    events: mpsc::Sender<gpt::GptEvent>,
+) -> anyhow::Result<WebView> {
+    let ctx = cc.egui_ctx.clone();
+    let webview = WebViewBuilder::new()
+        .with_url(START_URL)
+        .with_devtools(true)
+        .with_initialization_script_for_main_only(gpt::INIT_JS, true)
+        .with_ipc_handler(move |req| match serde_json::from_str(req.body()) {
+            Ok(ev) => {
+                let _ = events.send(ev);
+                ctx.request_repaint(); // wake the UI so poll_gpt runs
+            }
+            Err(e) => eprintln!("bad ipc message: {e}"),
+        })
+        .build_as_child(cc)?;
+    _ = webview.zoom(WEBVIEW_ZOOM);
+    Ok(webview)
+}
+
+fn main() -> eframe::Result {
+    let model_root = model_from_cli().or_else(|| model_from_config(&exe_dir().join(CONFIG_FILE)));
+    let model_root = rembg_core::config::model_root(model_root.as_deref());
+
+    let (status_tx, status_rx) = mpsc::channel::<ProgressStatus>();
+    let _ = status_tx.send(ps!(format!("Using model root: {model_root}")));
+    let cmd_tx = spawn_server(model_root, status_tx);
+
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size(egui::vec2(WIN_W, WIN_H))
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size(vec2(WIN_W, WIN_H))
             .with_decorations(false)
             .with_resizable(false)
             .with_always_on_top()
-            // Tool window: no taskbar button, no Alt-Tab entry. The tray is the
-            // only place where the app can be found (and restored) from.
             .with_taskbar(false)
             .with_transparent(false),
         ..Default::default()
     };
+
     eframe::run_native(
         "QuickRestore",
         native_options,
         Box::new(|cc| {
-            cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
-            cc.egui_ctx
-                .set_visuals_of(egui::Theme::Dark, consts::visuals());
-
-            let mut fonts = egui::FontDefinitions::default();
-            egui_nerdfonts::add_to_fonts(&mut fonts, egui_nerdfonts::Variant::Regular);
-            cc.egui_ctx.set_fonts(fonts);
+            setup_egui(&cc.egui_ctx);
 
             let (tray_tx, tray_rx) = mpsc::channel();
-            let tray = match Tray::new(&cc.egui_ctx, tray_tx) {
-                Ok(tray) => Some(tray),
-                Err(err) => {
-                    eprintln!("notification-area icon unavailable: {err}");
-                    None
-                }
-            };
-
+            let tray = Tray::new(&cc.egui_ctx, tray_tx)
+                .map_err(|e| eprintln!("notification-area icon unavailable: {e}"))
+                .ok();
+            let (gpt_tx, gpt_rx) = mpsc::channel();
+            let config = Config::new();
+            let prompts = config.load().get().clone();
             Ok(Box::new(QuickRestoreApp {
+                webview: build_webview(cc, gpt_tx)?,
+                webview_rect: None,
                 compact_mode: false,
+                cmd_tx,
                 status: ps!("Initiating..."),
                 status_rx,
-                cmd_tx,
-                config_path: config_path.to_string_lossy().to_string(),
-                last_frame: Instant::now(),
                 tray_rx,
+                last_frame: Instant::now(),
                 hidden: false,
                 _tray: tray,
-                shadow_removed: false,
+                chrome_stripped: false,
+                prompt: String::new(),
+                gpt_rx,
+                setting_mode: false,
+                config,
+                prompts,
+                prompt_input: String::new(),
+                prompt_selected: None,
             }))
         }),
     )

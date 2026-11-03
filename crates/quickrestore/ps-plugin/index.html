@@ -1,54 +1,118 @@
 <!doctype html>
 <html>
   <head>
+    <meta charset="utf-8" />
     <script src="index.js"></script>
-    <style></style>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      body {
+        font-family: sans-serif;
+        background: #323232;
+        color: #e3e3e3;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .btn-root {
+        display: flex;
+        flex-direction: row;
+        width: 100%;
+      }
+
+      .btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 28px;
+        margin-right: 4px;
+        background: #444444;
+        cursor: pointer;
+      }
+
+      .btn:last-child {
+        margin-right: 0;
+      }
+
+      .btn:hover {
+        background: #555555;
+      }
+
+      .btn:active {
+        background: #2a2a2a;
+      }
+
+      .btn svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      /* Primary action */
+      #processBtn {
+        background: #2680eb;
+      }
+      #processBtn:hover {
+        background: #4096f3;
+      }
+      #processBtn:active {
+        background: #1a63b8;
+      }
+
+      /* pushes status to the bottom */
+      .spacer {
+        flex: 1;
+      }
+
+      #status {
+        display: block;
+        width: 100%;
+        min-height: 20px;
+        padding: 4px 6px;
+        background: #282828;
+        color: #9a9a9a;
+        font-size: 10px;
+        line-height: 12px;
+        word-break: break-word;
+      }
+    </style>
   </head>
-  <style>
-    body {
-      font-family: sans-serif;
-      padding: 6px;
-    }
-    sp-action-button {
-      cursor: pointer;
-      display: block;
-      width: 100%;
-      margin: 4px 0;
-      text-align: center;
-    }
-    #status {
-      font-size: 11px;
-      margin-top: 6px;
-      word-break: break-word;
-    }
-    .btn-root {
-      display: flex;
-      width: 100%;
-      flex-direction: row;
-      justify-content: center;
-    }
-    .btn {
-      cursor: pointer;
-      background: #222;
-      padding: 2px 8px;
-      font-size: 14px;
-      margin: 0px 2px;
-      font-weight: 800;
-    }
-    .btn:hover {
-      background: #999;
-    }
-    .btn:active {
-      background: #000;
-    }
-  </style>
   <body>
-    <sp-body>
-      <div class="btn-root">
-        <div class="btn" id="processBtn">Process</div>
-        <div class="btn" id="copyBtn">Copy</div>
+    <div class="btn-root">
+      <div class="btn" id="processBtn" title="Process">
+        <svg viewBox="0 0 24 24"><path fill="#ffffff" d="M8 5v14l11-7z" /></svg>
       </div>
-      <sp-label id="status"></sp-label>
-    </sp-body>
+      <div class="btn" id="copyBtn" title="Copy Layer">
+        <svg viewBox="0 0 24 24">
+          <path
+            fill="#d0d0d0"
+            d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"
+          />
+        </svg>
+      </div>
+      <div class="btn" id="reloadBtn" title="Reload">
+        <svg viewBox="0 0 24 24">
+          <path
+            fill="#d0d0d0"
+            d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+          />
+        </svg>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <label id="status"></label>
   </body>
 </html>

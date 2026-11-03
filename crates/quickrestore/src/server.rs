@@ -1,14 +1,20 @@
+use anyhow::{Context, Result};
 use base64::Engine;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use image::{ImageBuffer, Rgba};
 use rembg_core::{FaceDetector, Gfpgan, Realesrgan, RemoveBg};
+use serde::Deserialize;
 use serde_json::Value;
 use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 use tungstenite::{Message, accept};
 
+use crate::config::Config;
 use crate::model::{Cmd, ProgressStatus, Status};
 use crate::ps;
 
@@ -27,6 +33,14 @@ struct Models {
     gfpgan: Option<Gfpgan>,
     realesrgan: Option<Realesrgan>,
     remove_bg: Option<RemoveBg>,
+}
+
+#[derive(Deserialize)]
+pub struct CanvasImage {
+    pub base64: String,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 static MODELS: LazyLock<Mutex<Models>> = LazyLock::new(|| {
@@ -221,10 +235,7 @@ impl Server {
                 });
             }
             Some("status") => {
-                let msg = v
-                    .get("message")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("");
+                let msg = v.get("message").and_then(|x| x.as_str()).unwrap_or("");
                 set_status(status, ps!(Status::Processing, msg.to_string()));
             }
             Some("error") => {
@@ -286,8 +297,8 @@ impl Server {
         let restored_rgb = match (&models.face, &models.gfpgan, &models.realesrgan) {
             (Some(det), Some(gfpgan), Some(realesrgan)) => {
                 set_status(&status, ps!(Status::Processing, "upscale"));
-                let upscaled = realesrgan.upscale(&rgb).unwrap_or_else(|_| rgb.clone());
-                rgb = upscaled;
+                // let upscaled = realesrgan.upscale(&rgb).unwrap_or_else(|_| rgb.clone());
+                // rgb = upscaled;
                 set_status(&status, ps!(Status::Processing, "facerestore"));
                 let faces = det.detect(&rgb, 0.5, 0.4).unwrap_or_default();
                 let lms: Vec<rembg_core::Landmarks> = faces.iter().map(|f| f.landmarks).collect();
@@ -303,11 +314,7 @@ impl Server {
         };
 
         set_status(&status, ps!(Status::Processing, "rembg"));
-
-        let output_dir = std::env::var("LOCALAPPDATA")
-            .map(|p| std::path::PathBuf::from(p).join("QuickRestore").join("output"))
-            .unwrap_or_else(|_| std::env::temp_dir().join("quickrestore"));
-        let _ = std::fs::create_dir_all(&output_dir);
+        let output_dir = Config::root_dir();
 
         let _counter = {
             use std::sync::atomic::{AtomicU64, Ordering};
@@ -318,7 +325,8 @@ impl Server {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
-        let face_path = output_dir.join(format!("quickrestore_face_restore_{}_{}.png", ts, _counter));
+        let face_path =
+            output_dir.join(format!("quickrestore_face_restore_{}_{}.png", ts, _counter));
         let face_path_str = if restored_rgb.save(&face_path).is_ok() {
             Some(face_path.to_string_lossy().to_string())
         } else {
@@ -376,7 +384,7 @@ impl Server {
         out
     }
 
-    fn send_image(
+    pub(crate) fn send_image(
         cmd_tx: &SyncSender<Cmd>,
         name: &str,
         w: u32,
@@ -435,6 +443,65 @@ impl Server {
         };
         img.save(&path).ok()?;
         Some(path.to_string_lossy().to_string())
+    }
+    pub fn save_gpt_image(cmd_tx: &SyncSender<Cmd>, canvas_img: CanvasImage) -> Result<()> {
+        let output_dir = Config::root_dir();
+        let _counter = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static C: AtomicU64 = AtomicU64::new(0);
+            C.fetch_add(1, Ordering::Relaxed)
+        };
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let out_path = output_dir.join(format!("gpt_{}_{}.png", ts, _counter));
+        let buf = Server::decode_canvas_image(&canvas_img)?;
+        let gpt_img_path = if buf.save(&out_path).is_ok() {
+            Some(out_path.to_string_lossy().to_string())
+        } else {
+            eprintln!("failed to save face_restore png");
+            None
+        };
+        Server::send_image(
+            &cmd_tx,
+            "gpt_image",
+            buf.width(),
+            buf.height(),
+            3,
+            0,
+            0,
+            Some(buf.width() as u32),
+            Some(buf.height() as u32),
+            gpt_img_path.as_deref(),
+            buf.as_raw(),
+        );
+        Ok(())
+    }
+    fn decode_canvas_image(img: &CanvasImage) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+        // 1. base64 -> PNG bytes
+        let bytes = STANDARD
+            .decode(img.base64.trim())
+            .context("invalid base64")?;
+
+        // 2. PNG bytes -> decoded image -> RGBA8 buffer
+        let dynamic = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .context("failed to decode PNG")?;
+        let buffer = dynamic.to_rgba8();
+
+        // 3. optional sanity check against the reported size
+        if buffer.width() != img.width || buffer.height() != img.height {
+            anyhow::bail!(
+                "size mismatch: got {}x{}, expected {}x{}",
+                buffer.width(),
+                buffer.height(),
+                img.width,
+                img.height
+            );
+        }
+
+        Ok(buffer)
     }
 }
 

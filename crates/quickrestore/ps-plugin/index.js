@@ -17,6 +17,8 @@ entrypoints.setup({
           setTimeout(() => {
             const pb = document.getElementById("processBtn");
             if (pb) pb.addEventListener("click", () => handleGetSelection());
+            const rl = document.getElementById("reloadBtn");
+            if (rl) rl.addEventListener("click", () => location.reload());
             const cb = document.getElementById("copyBtn");
             if (cb) cb.addEventListener("click", () => copyLayerToClipboard());
           }, 400);
