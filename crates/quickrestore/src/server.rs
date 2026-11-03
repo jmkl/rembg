@@ -297,8 +297,8 @@ impl Server {
         let restored_rgb = match (&models.face, &models.gfpgan, &models.realesrgan) {
             (Some(det), Some(gfpgan), Some(realesrgan)) => {
                 set_status(&status, ps!(Status::Processing, "upscale"));
-                // let upscaled = realesrgan.upscale(&rgb).unwrap_or_else(|_| rgb.clone());
-                // rgb = upscaled;
+                let upscaled = realesrgan.upscale(&rgb).unwrap_or_else(|_| rgb.clone());
+                rgb = upscaled;
                 set_status(&status, ps!(Status::Processing, "facerestore"));
                 let faces = det.detect(&rgb, 0.5, 0.4).unwrap_or_default();
                 let lms: Vec<rembg_core::Landmarks> = faces.iter().map(|f| f.landmarks).collect();

@@ -16,12 +16,18 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Result, bail};
-use image::RgbImage;
+use image::{RgbImage, imageops};
 use ort::{session::Session, value::Tensor};
 
 use crate::config::{self, load_session, lock_err};
 
 pub const SCALE: u32 = 2;
+
+/// Core tile size in input pixels. Peak memory per run is roughly
+/// (TILE + 2 * TILE_PAD)^2 * ~2 KB (about 170 MB at 256 + 2 * 16).
+/// Both must stay even so tile origins keep the model's 2x2 pixel-unshuffle phase.
+const TILE: u32 = 256;
+const TILE_PAD: u32 = 16;
 
 pub struct Realesrgan {
     session: Mutex<Session>,
@@ -39,9 +45,52 @@ impl Realesrgan {
         })
     }
 
-    /// Upscale an RGB image by 2x. Pads the input to even dimensions (edge
-    /// replication) when needed and crops the result back to the exact 2x size.
+    /// Upscale an RGB image by 2x in fixed-size tiles.
+    ///
+    /// RRDBNet runs its last convolutions at the *output* resolution with 64
+    /// channels, so one activation tensor costs ~1 KB per input pixel and the
+    /// session needs two alive at once. Running the whole image therefore
+    /// scales with its area (1.5 MP input => ~3 GB). Tiling caps the peak at a
+    /// constant, whatever the image size.
     pub fn upscale(&self, img: &RgbImage) -> Result<RgbImage> {
+        let (w, h) = (img.width(), img.height());
+        if w == 0 || h == 0 {
+            bail!("empty input image");
+        }
+        if w <= TILE && h <= TILE {
+            return self.upscale_tile(img);
+        }
+
+        let mut out = RgbImage::new(w * SCALE, h * SCALE);
+        for ty in (0..h).step_by(TILE as usize) {
+            for tx in (0..w).step_by(TILE as usize) {
+                // Tile plus TILE_PAD px of context on each side (clamped to the image).
+                let x0 = tx.saturating_sub(TILE_PAD);
+                let y0 = ty.saturating_sub(TILE_PAD);
+                let x1 = (tx + TILE + TILE_PAD).min(w);
+                let y1 = (ty + TILE + TILE_PAD).min(h);
+                let tile = imageops::crop_imm(img, x0, y0, x1 - x0, y1 - y0).to_image();
+                let up = self.upscale_tile(&tile)?;
+
+                // Keep only the core of the upscaled tile, drop the context border.
+                let core = imageops::crop_imm(
+                    &up,
+                    (tx - x0) * SCALE,
+                    (ty - y0) * SCALE,
+                    TILE.min(w - tx) * SCALE,
+                    TILE.min(h - ty) * SCALE,
+                )
+                .to_image();
+                imageops::replace(&mut out, &core, (tx * SCALE) as i64, (ty * SCALE) as i64);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Upscale one image (or tile) by 2x in a single model run. Pads the input to
+    /// even dimensions (edge replication) when needed and crops the result back
+    /// to the exact 2x size.
+    fn upscale_tile(&self, img: &RgbImage) -> Result<RgbImage> {
         let (w, h) = (img.width(), img.height());
         if w == 0 || h == 0 {
             bail!("empty input image");
@@ -109,5 +158,3 @@ impl Realesrgan {
         Ok(result)
     }
 }
-
-
