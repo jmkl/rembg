@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
 
-use egui_snarl::{NodeId, Snarl};
+use crate::nodegraph::{NodeGraph, NodeId};
 use image::ImageEncoder;
 use sha2::{Digest, Sha256};
 
@@ -146,7 +146,7 @@ impl AssetStore {
     }
 
     /// Drop assets that no Image node references anymore.
-    pub(crate) fn retain_used(&mut self, snarl: &Snarl<Node>) {
+    pub(crate) fn retain_used(&mut self, snarl: &NodeGraph<Node>) {
         let used: HashSet<String> = snarl
             .node_ids()
             .filter_map(|(_, node)| node.image_node())

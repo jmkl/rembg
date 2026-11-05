@@ -12,9 +12,9 @@
 //! highlighted node (or opens the highlighted category). The filter field keeps
 //! Left/Right for text editing until the keyboard highlight becomes active.
 
+use crate::nodegraph::NodeGraph;
 use egui::containers::menu::{MenuState, SubMenu};
 use egui::{Align, Id, Key, Modifiers, Ui};
-use egui_snarl::Snarl;
 
 use crate::catalog::{self, NodeCategory, NodeSpec};
 use crate::model::{Kind, Node};
@@ -57,7 +57,7 @@ enum RootRow {
 
 pub(crate) fn show(
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     filter: &mut String,
     recent: &mut Vec<Kind>,
     pos: egui::Pos2,
@@ -260,8 +260,7 @@ pub(crate) fn show(
                     }
                     match *row {
                         RootRow::Recent(spec) => {
-                            let selected =
-                                nav.active && nav.level.is_none() && nav.index == index;
+                            let selected = nav.active && nav.level.is_none() && nav.index == index;
                             let response = ui.add(
                                 MenuItem::new(spec.title)
                                     .icon(spec.icon)
@@ -275,8 +274,7 @@ pub(crate) fn show(
                         }
                         RootRow::Category(category) => {
                             let (category, category_specs) = &categories[category];
-                            let selected =
-                                nav.active && nav.level.is_none() && nav.index == index;
+                            let selected = nav.active && nav.level.is_none() && nav.index == index;
                             let row_id = ui.next_auto_id();
                             let open = MenuState::from_ui(ui, |state, _| {
                                 state.open_item == Some(SubMenu::id_from_widget_id(row_id))
@@ -420,7 +418,7 @@ fn scroll_selected(nav: &mut MenuNav, selected: bool, response: &egui::Response)
 fn node_list(
     ui: &mut Ui,
     specs: impl IntoIterator<Item = &'static NodeSpec>,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     pos: egui::Pos2,
     recent: &mut Vec<Kind>,
     nav: &mut MenuNav,
@@ -452,7 +450,7 @@ fn node_list(
 
 fn create_node(
     spec: &'static NodeSpec,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     pos: egui::Pos2,
     recent: &mut Vec<Kind>,
 ) {

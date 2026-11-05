@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use eframe::{App, CreationContext};
 use egui::Color32;
-use egui_snarl::{NodeId, Snarl, ui::SnarlWidget};
 use gpaste::protocol::Message;
 
 use crate::assets::{self, AssetStore, FetchedImage};
@@ -18,12 +17,14 @@ use crate::graph::{ensure_image_loaded, refresh_viewer, rgba_to_texture, source_
 use crate::graph_menu;
 use crate::image_canvas::ImageCanvas;
 use crate::model::{Kind, Node};
+use crate::nodegraph::{NodeGraph, NodeId};
 use crate::session;
 use crate::settings::{self, Settings};
 use crate::settings_window::{self, SettingsAction};
 use crate::style::controls::{Button, sidebar_frame};
-use crate::style::{install_theme, pal, snarl_style};
+use crate::style::{install_theme, pal};
 use crate::title_bar::{self, Actions};
+use crate::view::GraphView;
 use crate::worker::{InferenceConfig, WorkerRequest, WorkerResponse, spawn_worker};
 use image::ImageEncoder;
 use std::sync::mpsc;
@@ -39,15 +40,16 @@ pub(crate) struct Notice {
 /// other.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum UndoScope {
-    /// The Snarl node graph.
+    /// The node graph.
     Graph,
     /// The layer canvas of the active node.
     Canvas,
 }
 
 pub struct CompNodeApp {
-    pub(crate) snarl: Snarl<Node>,
-    pub(crate) style: egui_snarl::ui::SnarlStyle,
+    pub(crate) snarl: NodeGraph<Node>,
+    /// The widget that draws `snarl`; chosen in `view::default_view`.
+    pub(crate) view: Box<dyn GraphView>,
     pub(crate) editor: GraphEditor,
     pub(crate) inflight: Receiver<WorkerResponse>,
     pub(crate) cache: OutputCache,
@@ -89,7 +91,7 @@ pub struct CompNodeApp {
     /// Layer state of a node from before the canvas edit in progress. The
     /// per-frame sync during a drag only updates the node; one history entry
     /// from this baseline is recorded when the edit settles.
-    pub(crate) canvas_edit_base: Option<(egui_snarl::NodeId, crate::history::LayerState)>,
+    pub(crate) canvas_edit_base: Option<(crate::nodegraph::NodeId, crate::history::LayerState)>,
 }
 impl CompNodeApp {
     pub(crate) fn new(
@@ -114,8 +116,8 @@ impl CompNodeApp {
         let autosave_path = settings.autosave_path();
         let gpaste_app = GPasTeApp::new(tx, rx);
         let mut app = Self {
-            snarl: Snarl::new(),
-            style: snarl_style(),
+            snarl: NodeGraph::new(),
+            view: crate::view::default_view(),
             editor: GraphEditor::new(worker.clone()),
             inflight,
             cache,
@@ -509,6 +511,7 @@ impl CompNodeApp {
         // shadow the restored layer transforms.
         self.image_canvas.reset_graph();
         self.editor.reset_view();
+        self.view.reset();
         self.session_path = Some(path.to_path_buf());
         self.set_notice(
             format!(
@@ -556,7 +559,7 @@ impl CompNodeApp {
         self.set_notice("Image added", false);
     }
 
-    pub(crate) fn replace_image_asset(&mut self, node: egui_snarl::NodeId, asset_id: &str) {
+    pub(crate) fn replace_image_asset(&mut self, node: crate::nodegraph::NodeId, asset_id: &str) {
         if self.snarl.get_node_info(node).is_none() {
             return;
         }
@@ -564,7 +567,7 @@ impl CompNodeApp {
         // Replacing the source disconnects any upstream pass-through so the
         // new asset is what the node outputs.
         self.snarl
-            .drop_inputs(egui_snarl::InPinId { node, input: 0 });
+            .drop_inputs(crate::nodegraph::InPinId { node, input: 0 });
         if let Some(image) = self.snarl[node].image_node_mut() {
             image.asset_id = Some(asset_id.to_owned());
             image.name = self
@@ -625,7 +628,7 @@ impl CompNodeApp {
                 self.snarl.get_node_info(*node).is_some()
                     && self.snarl[*node].image_node().is_some()
             });
-        let graph_pos = self.editor.to_global.inverse()
+        let graph_pos = self.editor.geometry.to_global.inverse()
             * ctx.input(|input| {
                 input
                     .pointer
@@ -687,7 +690,7 @@ impl CompNodeApp {
         let screen_pos = ctx
             .input(|input| input.pointer.hover_pos())
             .unwrap_or(egui::pos2(120.0, 120.0));
-        let graph_pos = self.editor.to_global.inverse() * screen_pos;
+        let graph_pos = self.editor.geometry.to_global.inverse() * screen_pos;
         let target = self.editor.node_at_screen(screen_pos);
 
         let mut files = Vec::new();
@@ -793,7 +796,7 @@ impl CompNodeApp {
         }
     }
 
-    fn selected_image_node(&self) -> Option<egui_snarl::NodeId> {
+    fn selected_image_node(&self) -> Option<crate::nodegraph::NodeId> {
         let selected = self.editor.selected_nodes();
         if selected.len() == 1 {
             let node = selected[0];
@@ -806,12 +809,13 @@ impl CompNodeApp {
 
     /// Start a fresh, unsaved graph.
     fn clear(&mut self) {
-        self.snarl = Snarl::default();
+        self.snarl = NodeGraph::default();
         self.editor.clear_history();
         self.canvas_edit_base = None;
         crate::graph::ensure_output_node(&mut self.snarl);
         self.image_canvas.reset_graph();
         self.editor.reset_view();
+        self.view.reset();
         self.session_path = None;
     }
 
@@ -1020,7 +1024,7 @@ impl CompNodeApp {
         if self.image_canvas.begin_sync(&ctx, sig) {
             // Collect layers from the edited node (bottom-to-top).
             let layers: Vec<(
-                egui_snarl::NodeId,
+                crate::nodegraph::NodeId,
                 Kind,
                 String,
                 Option<egui::TextureHandle>,
@@ -1147,7 +1151,7 @@ impl CompNodeApp {
 
     /// Node whose layers the canvas is editing: the selected layer node, or
     /// the viewer node when nothing else is selected.
-    fn canvas_target_id(&self) -> Option<egui_snarl::NodeId> {
+    fn canvas_target_id(&self) -> Option<crate::nodegraph::NodeId> {
         let edited = self.editor.selected_nodes().first().copied().filter(|id| {
             self.snarl.get_node_info(*id).is_some() && self.snarl[*id].kind().is_layer_kind()
         });
@@ -1197,14 +1201,14 @@ impl CompNodeApp {
     /// transform that is still waiting for the idle timer.
     fn commit_canvas_layers(&mut self) {
         let canvas_transforms: std::collections::HashMap<
-            egui_snarl::NodeId,
+            crate::nodegraph::NodeId,
             (egui::Vec2, egui::Vec2, f32),
         > = self
             .image_canvas
             .layers()
             .map(|l| (l.id, (l.center, l.size, l.angle)))
             .collect();
-        let canvas_layer_order: Vec<egui_snarl::NodeId> =
+        let canvas_layer_order: Vec<crate::nodegraph::NodeId> =
             self.image_canvas.layers().map(|l| l.id).collect();
 
         if let Some(tid) = self.canvas_target_id() {
@@ -1338,7 +1342,7 @@ impl App for CompNodeApp {
         let selected_count = self.editor.selected_nodes().len();
         let maximized = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
         let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
-        // Snarl nodes are focusable widgets, so a focused node must not suppress
+        // Graph nodes are focusable widgets, so a focused node must not suppress
         // Delete/Backspace. Only real text entry should own those keys.
         let text_edit_focused = ctx.text_edit_focused();
 
@@ -1354,7 +1358,6 @@ impl App for CompNodeApp {
         );
 
         ui.input(|input| {
-            // Ctrl + Hotkey
             if input.modifiers.command {
                 if input.key_pressed(egui::Key::O) {
                     actions.open = true;
@@ -1386,7 +1389,6 @@ impl App for CompNodeApp {
                     actions.paste_clipboard = true;
                 }
             }
-
             if input.key_pressed(egui::Key::F11) {
                 actions.toggle_fullscreen = true;
             }
@@ -1489,31 +1491,27 @@ impl App for CompNodeApp {
         self.sidebar_rect = Some(sidebar.response.rect);
 
         let central = egui::CentralPanel::default().show(ui, |ui| {
-            let view_id = self.editor.view_id();
             self.editor.begin_cut_drag(ui.ctx(), ui.max_rect());
-            SnarlWidget::new().id(view_id).style(self.style).show(
-                &mut self.snarl,
-                &mut self.editor,
-                ui,
-            )
+            self.view.show(ui, &mut self.snarl, &mut self.editor)
         });
-        // `snarl_response.rect` is in the snarl layer's transformed coordinate
-        // space. The central panel rect is the screen-space area the graph
+        // The view response's rect may be in the view's own (transformed)
+        // coordinate space. The central panel rect is the screen-space area the graph
         // occupies, which is what popup anchoring needs.
         let graph_rect = central.response.rect;
         self.graph_rect = Some(graph_rect);
         let snarl_response = central.inner;
+        let view_selection = self.view.selection(&ctx);
         let graph_background_clicked =
             self.editor
-                .finish_frame(&ctx, &mut self.snarl, &snarl_response);
+                .finish_frame(&ctx, &mut self.snarl, &snarl_response, &view_selection);
         if graph_background_clicked {
             // Match the graph's node deselection: clicking empty graph space
             // also dismisses the sidebar layer selection and its canvas gizmos.
             self.image_canvas.clear_selection();
         }
 
-        // Build the graph menu ourselves instead of using Snarl's
-        // `show_graph_menu`: the stock context menu uses
+        // Build the graph menu ourselves instead of using the
+        // view's own graph menu: the stock context menu uses
         // `PopupCloseBehavior::CloseOnClick`, so clicking the filter input
         // immediately dismissed it. `CloseOnClickOutside` keeps the menu open
         // for text entry while still closing it on outside clicks and Escape.
@@ -1566,7 +1564,7 @@ impl App for CompNodeApp {
             None => popup.open_memory(None),
         };
         let menu = popup.show(|ui| {
-            let graph_pos = self.editor.to_global.inverse() * ui.cursor().min;
+            let graph_pos = self.editor.geometry.to_global.inverse() * ui.cursor().min;
             let before = self.editor.graph_snapshot(&self.snarl);
             let old_count = self.snarl.node_ids().count();
             graph_menu::show(
@@ -1640,7 +1638,7 @@ pub fn run() -> eframe::Result<()> {
 
 /// True when a layer's node has no full-resolution output file of its own, so
 /// its low-res preview texture is the only correct content (plain filters).
-fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
+fn layer_uses_preview(snarl: &NodeGraph<Node>, source: crate::nodegraph::NodeId) -> bool {
     // Layers normally point at the real source, but older sessions may still
     // store a Route id; resolve it before deciding.
     let source = crate::graph::resolve_route(snarl, source);
@@ -1657,7 +1655,7 @@ fn layer_uses_preview(snarl: &Snarl<Node>, source: egui_snarl::NodeId) -> bool {
 /// of a selected Group/Blend node (the sidebar shows those instead of the
 /// Output). Full-resolution renders are only scheduled for these, so orphan
 /// filters never allocate large images.
-fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<NodeId> {
+fn filters_reaching_output(snarl: &NodeGraph<Node>, selected: &[NodeId]) -> HashSet<NodeId> {
     let mut needed = HashSet::new();
     let mut stack: Vec<NodeId> = snarl
         .node_ids()
@@ -1680,7 +1678,7 @@ fn filters_reaching_output(snarl: &Snarl<Node>, selected: &[NodeId]) -> HashSet<
         let sockets = crate::catalog::spec(node.kind()).sockets.len();
         for input in 0..sockets {
             let remotes = snarl
-                .in_pin(egui_snarl::InPinId { node: id, input })
+                .in_pin(crate::nodegraph::InPinId { node: id, input })
                 .remotes
                 .clone();
             for remote in remotes {

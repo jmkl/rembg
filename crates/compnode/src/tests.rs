@@ -4,8 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use egui_snarl::Snarl;
-use egui_snarl::ui::SnarlViewer;
+use crate::nodegraph::NodeGraph;
 
 use crate::app::CompNodeApp;
 use crate::assets::AssetStore;
@@ -19,7 +18,7 @@ use crate::image_canvas::ImageCanvas;
 use crate::model::{FilterKind, Kind, Node, ViewerLayer};
 use crate::session::{self, SessionFile, SessionNodeData};
 use crate::settings::Settings;
-use crate::style::{install_theme, snarl_style};
+use crate::style::install_theme;
 use crate::worker::WorkerRequest;
 
 fn app_with_cache(cache: OutputCache) -> CompNodeApp {
@@ -30,8 +29,8 @@ fn app_with_cache(cache: OutputCache) -> CompNodeApp {
     let (tx, rx) = crossbeam_channel::unbounded();
     let settings = Settings::default();
     CompNodeApp {
-        snarl: Snarl::new(),
-        style: snarl_style(),
+        snarl: NodeGraph::new(),
+        view: crate::view::default_view(),
         editor: GraphEditor::new(worker.clone()),
         inflight,
         cache,
@@ -94,17 +93,17 @@ fn processing_preview_follows_its_input_and_clears_with_the_wire() {
     let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let texture = rgba_to_texture(&ctx, &image);
 
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(
         egui::pos2(0.0, 0.0),
         image_node("C:/missing/input.png", texture),
     );
     let process = snarl.insert_node(egui::pos2(200.0, 0.0), Node::remove_bg());
-    let from = egui_snarl::OutPinId {
+    let from = crate::nodegraph::OutPinId {
         node: source,
         output: 0,
     };
-    let to = egui_snarl::InPinId {
+    let to = crate::nodegraph::InPinId {
         node: process,
         input: 0,
     };
@@ -152,7 +151,7 @@ fn viewer_sessions_without_layer_data_still_parse() {
 fn processing_nodes_replace_their_single_input() {
     let ctx = egui::Context::default();
     let mut editor = test_editor();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let mut img = image::RgbaImage::new(4, 4);
     img.put_pixel(0, 0, image::Rgba([1, 2, 3, 255]));
     let tex = rgba_to_texture(&ctx, &img);
@@ -161,16 +160,16 @@ fn processing_nodes_replace_their_single_input() {
     let b = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("b", tex));
     let bg = snarl.insert_node(egui::pos2(200.0, 0.0), Node::remove_bg());
 
-    let from_a = snarl.out_pin(egui_snarl::OutPinId { node: a, output: 0 });
-    let to = snarl.in_pin(egui_snarl::InPinId { node: bg, input: 0 });
-    editor.connect(&from_a, &to, &mut snarl);
+    let from_a = snarl.out_pin(crate::nodegraph::OutPinId { node: a, output: 0 });
+    let to = snarl.in_pin(crate::nodegraph::InPinId { node: bg, input: 0 });
+    editor.on_connect(from_a.id, to.id, &mut snarl);
 
-    let from_b = snarl.out_pin(egui_snarl::OutPinId { node: b, output: 0 });
-    let to = snarl.in_pin(egui_snarl::InPinId { node: bg, input: 0 });
-    editor.connect(&from_b, &to, &mut snarl);
+    let from_b = snarl.out_pin(crate::nodegraph::OutPinId { node: b, output: 0 });
+    let to = snarl.in_pin(crate::nodegraph::InPinId { node: bg, input: 0 });
+    editor.on_connect(from_b.id, to.id, &mut snarl);
 
     let remotes = snarl
-        .in_pin(egui_snarl::InPinId { node: bg, input: 0 })
+        .in_pin(crate::nodegraph::InPinId { node: bg, input: 0 })
         .remotes;
     assert_eq!(remotes.len(), 1);
     assert_eq!(remotes[0].node, b);
@@ -180,7 +179,7 @@ fn processing_nodes_replace_their_single_input() {
 fn viewer_stacks_multiple_inputs_in_connection_order() {
     let ctx = egui::Context::default();
     let mut editor = test_editor();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let mut img = image::RgbaImage::new(4, 4);
     img.put_pixel(0, 0, image::Rgba([40, 50, 60, 255]));
     let tex = rgba_to_texture(&ctx, &img);
@@ -190,15 +189,15 @@ fn viewer_stacks_multiple_inputs_in_connection_order() {
     let viewer = snarl.insert_node(egui::pos2(200.0, 0.0), Node::viewer());
 
     for source in [second, first] {
-        let from = snarl.out_pin(egui_snarl::OutPinId {
+        let from = snarl.out_pin(crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         });
-        let to = snarl.in_pin(egui_snarl::InPinId {
+        let to = snarl.in_pin(crate::nodegraph::InPinId {
             node: viewer,
             input: 0,
         });
-        editor.connect(&from, &to, &mut snarl);
+        editor.on_connect(from.id, to.id, &mut snarl);
     }
 
     refresh_viewer(&mut snarl, viewer, &ctx, &mut AssetStore::default());
@@ -244,21 +243,21 @@ fn session_roundtrip_restores_graph_and_cached_output() {
         .snarl
         .insert_node(egui::pos2(500.0, 120.0), Node::viewer());
     app.snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: image_node,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: bg_node,
             input: 0,
         },
     );
     app.snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: bg_node,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: viewer,
             input: 0,
         },
@@ -325,7 +324,7 @@ fn session_roundtrip_restores_graph_and_cached_output() {
     assert_eq!(
         loaded
             .snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: bg,
                 output: 0
             })
@@ -514,11 +513,11 @@ fn filter_preview_does_not_shrink_layer_scale_on_connect_or_slider_drag() {
         .insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
 
     app.snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: img_node,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter_node,
             input: 0,
         },
@@ -663,7 +662,7 @@ fn memory_budget_releases_only_reloadable_images() {
     let image = image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 20, 30, 255]));
     image.save(&path).unwrap();
 
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(
         egui::pos2(0.0, 0.0),
         Node::image(path.display().to_string()),
@@ -901,15 +900,15 @@ fn borrowed_cache_key_matches_the_owned_variant() {
 
 #[test]
 fn full_res_inputs_never_walk_past_a_filter() {
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/input.png"));
     let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter,
             input: 0,
         },
@@ -938,7 +937,7 @@ fn route_is_transparent_to_downstream_nodes() {
     let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let source_tex = rgba_to_texture(&ctx, &image);
 
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(
         egui::pos2(0.0, 0.0),
         image_node("C:/tmp/source.png", source_tex),
@@ -947,11 +946,11 @@ fn route_is_transparent_to_downstream_nodes() {
     let curve = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Curves));
     for (from, to) in [(source, route), (route, curve)] {
         snarl.connect(
-            egui_snarl::OutPinId {
+            crate::nodegraph::OutPinId {
                 node: from,
                 output: 0,
             },
-            egui_snarl::InPinId { node: to, input: 0 },
+            crate::nodegraph::InPinId { node: to, input: 0 },
         );
     }
 
@@ -971,22 +970,22 @@ fn route_is_transparent_to_downstream_nodes() {
     // A filter behind a Route must still render before it can be consumed.
     let filter = snarl.insert_node(egui::pos2(600.0, 0.0), Node::new_filter(FilterKind::Hsv));
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: curve,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter,
             input: 0,
         },
     );
     let route_after = snarl.insert_node(egui::pos2(800.0, 0.0), Node::route());
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: filter,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: route_after,
             input: 0,
         },
@@ -1010,18 +1009,18 @@ fn graph_queries_cover_multi_hop_routes_and_cycle_paths() {
     let ctx = egui::Context::default();
     let image = image::RgbaImage::new(1, 1);
     let texture = rgba_to_texture(&ctx, &image);
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("source.png", texture));
     let route_a = snarl.insert_node(egui::pos2(100.0, 0.0), Node::route());
     let route_b = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     let filter = snarl.insert_node(egui::pos2(300.0, 0.0), Node::new_filter(FilterKind::Invert));
     for (from, to) in [(source, route_a), (route_a, route_b), (route_b, filter)] {
         snarl.connect(
-            egui_snarl::OutPinId {
+            crate::nodegraph::OutPinId {
                 node: from,
                 output: 0,
             },
-            egui_snarl::InPinId { node: to, input: 0 },
+            crate::nodegraph::InPinId { node: to, input: 0 },
         );
     }
 
@@ -1040,7 +1039,7 @@ fn graph_queries_cover_multi_hop_routes_and_cycle_paths() {
 #[test]
 fn diamond_graph_evaluates_both_branches() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("diamond.png"));
     snarl[source].set_cpu(image::RgbaImage::from_pixel(
         8,
@@ -1060,11 +1059,11 @@ fn diamond_graph_evaluates_both_branches() {
         (right, blend, 1),
     ] {
         snarl.connect(
-            egui_snarl::OutPinId {
+            crate::nodegraph::OutPinId {
                 node: from,
                 output: 0,
             },
-            egui_snarl::InPinId { node: to, input },
+            crate::nodegraph::InPinId { node: to, input },
         );
     }
     snarl[blend].set_canvas_size(egui::vec2(8.0, 8.0));
@@ -1080,18 +1079,18 @@ fn diamond_graph_evaluates_both_branches() {
 #[test]
 fn bypassed_filter_passes_its_input_through_unchanged() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::Pos2::ZERO, Node::image("bypass.png"));
     let input = image::RgbaImage::from_pixel(2, 2, image::Rgba([25, 80, 140, 210]));
     snarl[source].set_cpu(input.clone());
     let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
     snarl[filter].set_bypassed(true);
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter,
             input: 0,
         },
@@ -1105,27 +1104,27 @@ fn bypassed_filter_passes_its_input_through_unchanged() {
 #[test]
 fn reconnecting_input_invalidates_downstream_outputs() {
     let mut editor = test_editor();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let old_source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("old.png"));
     let new_source = snarl.insert_node(egui::pos2(0.0, 100.0), Node::image("new.png"));
     let first = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
     let downstream = snarl.insert_node(egui::pos2(400.0, 0.0), Node::new_filter(FilterKind::Hsv));
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: old_source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: first,
             input: 0,
         },
     );
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: first,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: downstream,
             input: 0,
         },
@@ -1133,15 +1132,15 @@ fn reconnecting_input_invalidates_downstream_outputs() {
     snarl[first].set_output_path(Some(PathBuf::from("first.png")));
     snarl[downstream].set_output_path(Some(PathBuf::from("downstream.png")));
 
-    let from = snarl.out_pin(egui_snarl::OutPinId {
+    let from = snarl.out_pin(crate::nodegraph::OutPinId {
         node: new_source,
         output: 0,
     });
-    let to = snarl.in_pin(egui_snarl::InPinId {
+    let to = snarl.in_pin(crate::nodegraph::InPinId {
         node: first,
         input: 0,
     });
-    editor.connect(&from, &to, &mut snarl);
+    editor.on_connect(from.id, to.id, &mut snarl);
 
     assert!(snarl[first].output_path().is_none());
     assert!(snarl[downstream].output_path().is_none());
@@ -1155,7 +1154,7 @@ fn route_matches_a_direct_connection_during_eval() {
     });
 
     let build = |with_route: bool| {
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
         let source = snarl.insert_node(
             egui::pos2(0.0, 0.0),
             Node::image("C:/missing/route-eval.png"),
@@ -1165,32 +1164,32 @@ fn route_matches_a_direct_connection_during_eval() {
         if with_route {
             let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
             snarl.connect(
-                egui_snarl::OutPinId {
+                crate::nodegraph::OutPinId {
                     node: source,
                     output: 0,
                 },
-                egui_snarl::InPinId {
+                crate::nodegraph::InPinId {
                     node: route,
                     input: 0,
                 },
             );
             snarl.connect(
-                egui_snarl::OutPinId {
+                crate::nodegraph::OutPinId {
                     node: route,
                     output: 0,
                 },
-                egui_snarl::InPinId {
+                crate::nodegraph::InPinId {
                     node: curve,
                     input: 0,
                 },
             );
         } else {
             snarl.connect(
-                egui_snarl::OutPinId {
+                crate::nodegraph::OutPinId {
                     node: source,
                     output: 0,
                 },
-                egui_snarl::InPinId {
+                crate::nodegraph::InPinId {
                     node: curve,
                     input: 0,
                 },
@@ -1212,16 +1211,16 @@ fn route_matches_a_direct_connection_during_eval() {
 #[test]
 fn preview_quality_changes_evaluation_dimensions_and_cache_signature() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("quality.png"));
     snarl[source].set_cpu(image::RgbaImage::new(1024, 512));
     let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Invert));
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter,
             input: 0,
         },
@@ -1256,7 +1255,7 @@ fn invalidating_node_cancels_its_pending_worker_request() {
 #[test]
 fn texts_preview_keeps_document_canvas_resolution() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let texts = snarl.insert_node(egui::pos2(0.0, 0.0), Node::texts());
     let viewer = snarl.insert_node(egui::pos2(300.0, 0.0), Node::viewer());
     snarl[viewer].set_canvas_size(egui::vec2(2048.0, 1024.0));
@@ -1269,15 +1268,15 @@ fn texts_preview_keeps_document_canvas_resolution() {
 #[test]
 fn route_is_never_rendered() {
     let mut editor = test_editor();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/source.png"));
     let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: route,
             input: 0,
         },
@@ -1295,18 +1294,18 @@ fn viewer_layers_follow_routes_and_keep_transforms() {
     let image = image::RgbaImage::from_pixel(4, 4, image::Rgba([40, 50, 60, 255]));
     let texture = rgba_to_texture(&ctx, &image);
 
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(
         egui::pos2(0.0, 0.0),
         image_node("C:/missing/source.png", texture),
     );
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: viewer,
             input: 0,
         },
@@ -1324,31 +1323,31 @@ fn viewer_layers_follow_routes_and_keep_transforms() {
     // Insert a Route between the image and the viewer.
     let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     snarl.disconnect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: viewer,
             input: 0,
         },
     );
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: route,
             input: 0,
         },
     );
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: route,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: viewer,
             input: 0,
         },
@@ -1377,15 +1376,15 @@ fn viewer_layers_follow_routes_and_keep_transforms() {
 
 #[test]
 fn filter_renders_are_reclaimed_after_invalidation() {
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/input.png"));
     let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: filter,
             input: 0,
         },
@@ -1405,9 +1404,9 @@ fn filter_renders_are_reclaimed_after_invalidation() {
 }
 
 fn blend_layers_for(
-    snarl: &mut Snarl<Node>,
-    blend: egui_snarl::NodeId,
-    sources: &[egui_snarl::NodeId],
+    snarl: &mut NodeGraph<Node>,
+    blend: crate::nodegraph::NodeId,
+    sources: &[crate::nodegraph::NodeId],
 ) {
     let kind = snarl[blend].kind();
     let layers = snarl[blend].layers_mut().unwrap();
@@ -1429,7 +1428,7 @@ fn blend_layers_for(
 fn blend_collects_layers_from_both_sockets() {
     let ctx = egui::Context::default();
     let mut editor = test_editor();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
     let mut img = image::RgbaImage::new(4, 4);
     img.put_pixel(0, 0, image::Rgba([40, 50, 60, 255]));
     let tex = rgba_to_texture(&ctx, &img);
@@ -1440,12 +1439,12 @@ fn blend_collects_layers_from_both_sockets() {
 
     // Socket order: Socket 0 is Top Layer (overlay), Socket 1 is Bottom Layer (base).
     for (source, input) in [(overlay, 0usize), (base, 1usize)] {
-        let from = snarl.out_pin(egui_snarl::OutPinId {
+        let from = snarl.out_pin(crate::nodegraph::OutPinId {
             node: source,
             output: 0,
         });
-        let to = snarl.in_pin(egui_snarl::InPinId { node: blend, input });
-        editor.connect(&from, &to, &mut snarl);
+        let to = snarl.in_pin(crate::nodegraph::InPinId { node: blend, input });
+        editor.on_connect(from.id, to.id, &mut snarl);
     }
 
     refresh_viewer(&mut snarl, blend, &ctx, &mut AssetStore::default());
@@ -1460,7 +1459,7 @@ fn blend_collects_layers_from_both_sockets() {
 #[test]
 fn blend_composites_layers_on_the_document_canvas() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
 
     let base = snarl.insert_node(
         egui::pos2(0.0, 0.0),
@@ -1483,21 +1482,21 @@ fn blend_composites_layers_on_the_document_canvas() {
     let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: base,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: blend,
             input: 0,
         },
     );
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: overlay,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: blend,
             input: 1,
         },
@@ -1530,7 +1529,7 @@ fn blend_composites_layers_on_the_document_canvas() {
 #[test]
 fn blend_mode_applies_to_layers_above_the_base() {
     let ctx = egui::Context::default();
-    let mut snarl = Snarl::new();
+    let mut snarl = NodeGraph::new();
 
     let base = snarl.insert_node(
         egui::pos2(0.0, 0.0),
@@ -1553,21 +1552,21 @@ fn blend_mode_applies_to_layers_above_the_base() {
     let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: base,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: blend,
             input: 0,
         },
     );
     snarl.connect(
-        egui_snarl::OutPinId {
+        crate::nodegraph::OutPinId {
             node: overlay,
             output: 0,
         },
-        egui_snarl::InPinId {
+        crate::nodegraph::InPinId {
             node: blend,
             input: 1,
         },
@@ -1618,19 +1617,19 @@ fn delete_connected_node_does_not_panic_in_refresh_viewer() {
     let ctx = egui::Context::default();
     let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let tex = rgba_to_texture(&ctx, &image_data);
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
     let viewer = snarl.insert_node(egui::pos2(200.0, 0.0), Node::viewer());
 
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: image,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: viewer,
                 input: 0,
             })
@@ -1653,20 +1652,20 @@ fn delete_connected_route_node_does_not_panic() {
     let ctx = egui::Context::default();
     let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let tex = rgba_to_texture(&ctx, &image_data);
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
     let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
 
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: image,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: route,
                 input: 0,
             })
@@ -1674,13 +1673,13 @@ fn delete_connected_route_node_does_not_panic() {
     );
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: route,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: viewer,
                 input: 0,
             })
@@ -1702,20 +1701,20 @@ fn delete_connected_node_does_not_panic_in_eval() {
     let ctx = egui::Context::default();
     let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let tex = rgba_to_texture(&ctx, &image_data);
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let base = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("base", tex.clone()));
     let overlay = snarl.insert_node(egui::pos2(0.0, 100.0), image_node("overlay", tex));
     let blend = snarl.insert_node(egui::pos2(200.0, 0.0), Node::blend());
 
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: base,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: blend,
                 input: 1,
             })
@@ -1723,13 +1722,13 @@ fn delete_connected_node_does_not_panic_in_eval() {
     );
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: overlay,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: blend,
                 input: 0,
             })
@@ -1753,20 +1752,20 @@ fn delete_selected_invalidates_downstream_and_avoids_panic() {
     let ctx = egui::Context::default();
     let image_data = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
     let tex = rgba_to_texture(&ctx, &image_data);
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let image = snarl.insert_node(egui::pos2(0.0, 0.0), image_node("test", tex));
     let filter = snarl.insert_node(egui::pos2(200.0, 0.0), Node::new_filter(FilterKind::Hsv));
     let viewer = snarl.insert_node(egui::pos2(400.0, 0.0), Node::viewer());
 
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: image,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: filter,
                 input: 0,
             })
@@ -1774,13 +1773,13 @@ fn delete_selected_invalidates_downstream_and_avoids_panic() {
     );
     snarl.connect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: filter,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: viewer,
                 input: 0,
             })
@@ -1805,7 +1804,7 @@ fn delete_selected_invalidates_downstream_and_avoids_panic() {
 #[test]
 fn texts_layer_computes_content_bounds_crop() {
     let ctx = egui::Context::default();
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let text_node = snarl.insert_node(egui::pos2(0.0, 0.0), Node::texts());
 
     // Evaluate preview on UI thread
@@ -1869,7 +1868,7 @@ fn texts_layer_computes_content_bounds_crop() {
 
 #[test]
 fn route_toggle_disconnects_upstream_and_downstream() {
-    let mut snarl: Snarl<Node> = Snarl::new();
+    let mut snarl: NodeGraph<Node> = NodeGraph::new();
     let source = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/test/source.png"));
     let route = snarl.insert_node(egui::pos2(200.0, 0.0), Node::route());
     let filter = snarl.insert_node(
@@ -1880,12 +1879,14 @@ fn route_toggle_disconnects_upstream_and_downstream() {
     for (from, to) in [(source, route), (route, filter)] {
         snarl.connect(
             snarl
-                .out_pin(egui_snarl::OutPinId {
+                .out_pin(crate::nodegraph::OutPinId {
                     node: from,
                     output: 0,
                 })
                 .id,
-            snarl.in_pin(egui_snarl::InPinId { node: to, input: 0 }).id,
+            snarl
+                .in_pin(crate::nodegraph::InPinId { node: to, input: 0 })
+                .id,
         );
     }
 
@@ -1909,13 +1910,13 @@ fn route_toggle_disconnects_upstream_and_downstream() {
 
     snarl.disconnect(
         snarl
-            .out_pin(egui_snarl::OutPinId {
+            .out_pin(crate::nodegraph::OutPinId {
                 node: route,
                 output: 0,
             })
             .id,
         snarl
-            .in_pin(egui_snarl::InPinId {
+            .in_pin(crate::nodegraph::InPinId {
                 node: filter,
                 input: 0,
             })
@@ -1926,12 +1927,14 @@ fn route_toggle_disconnects_upstream_and_downstream() {
     for (from, to) in [(route, route_b), (route_b, route_c), (route_c, filter)] {
         snarl.connect(
             snarl
-                .out_pin(egui_snarl::OutPinId {
+                .out_pin(crate::nodegraph::OutPinId {
                     node: from,
                     output: 0,
                 })
                 .id,
-            snarl.in_pin(egui_snarl::InPinId { node: to, input: 0 }).id,
+            snarl
+                .in_pin(crate::nodegraph::InPinId { node: to, input: 0 })
+                .id,
         );
     }
 

@@ -2,6 +2,11 @@
 members = [
   "crates/rembg-core",
   "crates/compnode",
+  "crates/compnode-core",
+  "crates/compnode-ui",
+  "crates/compnode-image",
+  "crates/compnode-editor",
+  "crates/compnode-example",
   "crates/gpaste",
   "crates/quickrestore",
   "crates/linkrouter",

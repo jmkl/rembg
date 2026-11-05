@@ -1,7 +1,7 @@
 //! Generic body UI for every filter node.
 
+use crate::nodegraph::{NodeGraph, NodeId};
 use egui::{Color32, Ui, Vec2};
-use egui_snarl::{NodeId, Snarl};
 
 use crate::catalog::{FieldKind, FieldSpec};
 use crate::editor::GraphEditor;
@@ -13,7 +13,7 @@ use crate::style::controls::{Button, ColorField, Select, Slider};
 use crate::style::pal;
 use crate::widgets::{error_line, node_body, node_preview};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, kind: Kind) {
+pub(crate) fn create(snarl: &mut NodeGraph<Node>, pos: egui::Pos2, kind: Kind) {
     match kind {
         Kind::Filter(filter_kind) => {
             snarl.insert_node(pos, Node::new_filter(filter_kind));
@@ -32,7 +32,7 @@ pub(crate) fn show_body(
     _editor: &mut GraphEditor,
     node: NodeId,
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     width: f32,
 ) {
     node_body(ui);

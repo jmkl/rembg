@@ -1,0 +1,16 @@
+[package]
+name = "compnode-example"
+description = "Interactive egui viewer for compnode-core: a node-graph renderer built on the headless engine."
+version = "0.1.0"
+edition = "2024"
+default-run = "compnode-example"
+
+[dependencies]
+compnode-core = { path = "../compnode-core" }
+eframe.workspace = true
+anyhow.workspace = true
+
+# Headless frame-cost benchmark: `cargo run --release -p compnode-example --bin bench`
+[[bin]]
+name = "bench"
+path = "src/bench.rs"

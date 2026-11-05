@@ -8,7 +8,7 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-use egui_snarl::{NodeId, Snarl};
+use crate::nodegraph::{NodeGraph, NodeId};
 
 use crate::assets::AssetStore;
 use crate::model::Node;
@@ -51,7 +51,7 @@ impl ImageMemory {
 
     /// Release old CPU images until the budget is met. Nodes whose image
     /// cannot be recreated from disk keep their CPU copy.
-    pub(crate) fn trim(&mut self, snarl: &mut Snarl<Node>, assets: &AssetStore) {
+    pub(crate) fn trim(&mut self, snarl: &mut NodeGraph<Node>, assets: &AssetStore) {
         self.last_used
             .retain(|node, _| snarl.get_node_info(*node).is_some());
 
@@ -84,7 +84,11 @@ impl ImageMemory {
     }
 }
 
-fn can_reload_image(snarl: &egui_snarl::Snarl<Node>, node: NodeId, assets: &AssetStore) -> bool {
+fn can_reload_image(
+    snarl: &crate::nodegraph::NodeGraph<Node>,
+    node: NodeId,
+    assets: &AssetStore,
+) -> bool {
     if let Some(image) = snarl[node].image_node() {
         if image
             .asset_id

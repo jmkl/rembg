@@ -9,8 +9,8 @@ use std::ops::RangeInclusive;
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Frame, Id, Margin, Pos2, Rect, Response, RichText,
-    Sense, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType,
-    pos2, vec2,
+    Sense, Stroke, StrokeKind, TextStyle, Ui, Widget, WidgetInfo, WidgetText, WidgetType, pos2,
+    vec2,
 };
 
 use super::{font, icons, metrics, pal};
@@ -521,7 +521,7 @@ impl Widget for Slider<'_> {
         let (lo, hi) = (*self.range.start(), *self.range.end());
         let width = ui.available_width();
         let (rect, mut response) =
-            ui.allocate_exact_size(vec2(width, metrics::FIELD_H), Sense::click_and_drag());
+            ui.allocate_exact_size(vec2(width, metrics::SLIDER_H), Sense::click_and_drag());
 
         let before = *self.value;
         if let Some(pos) = response.interact_pointer_pos()
@@ -556,7 +556,11 @@ impl Widget for Slider<'_> {
             painter.rect_filled(
                 rect,
                 radius,
-                if lit { pal::hover(pal::FIELD) } else { pal::FIELD },
+                if lit {
+                    pal::hover(pal::FIELD)
+                } else {
+                    pal::FIELD
+                },
             );
             let frac = if hi > lo {
                 ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
@@ -565,8 +569,13 @@ impl Widget for Slider<'_> {
             };
             if frac > 0.0 {
                 // Clip the full-width bar so the fill follows its rounded corners.
-                let fill = Rect::from_min_max(rect.min, pos2(rect.left() + frac * rect.width(), rect.max.y));
-                painter.with_clip_rect(fill).rect_filled(rect, radius, pal::ACCENT);
+                let fill = Rect::from_min_max(
+                    rect.min,
+                    pos2(rect.left() + frac * rect.width(), rect.max.y),
+                );
+                painter
+                    .with_clip_rect(fill)
+                    .rect_filled(rect, radius, pal::ACCENT);
             }
             painter.rect_stroke(
                 rect,
@@ -595,7 +604,13 @@ impl Widget for Slider<'_> {
                     );
                 }
                 None => {
-                    painter.text(rect.center(), Align2::CENTER_CENTER, value_text, font, pal::HEADER_TEXT);
+                    painter.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        value_text,
+                        font,
+                        pal::HEADER_TEXT,
+                    );
                 }
             }
         }

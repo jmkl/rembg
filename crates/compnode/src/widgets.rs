@@ -3,11 +3,11 @@
 use egui::{
     Align2, CornerRadius, FontId, Mesh, Pos2, Rect, Shape, Stroke, Vec2, epaint::Vertex, pos2, vec2,
 };
-use egui_snarl::ui::PinInfo;
 
 use crate::model::{RunTiming, ViewerLayer};
 use crate::style::controls::muted;
 use crate::style::{font, pal};
+use crate::view::PinStyle;
 
 /// Viewer preview: draw every layer bottom-to-top into the same frame,
 /// applying each layer's center/size/angle transform so it matches ImageCanvas.
@@ -210,11 +210,12 @@ pub(crate) fn timing_line(ui: &mut egui::Ui, timing: Option<RunTiming>) {
     );
 }
 
-pub(crate) fn socket(ui: &mut egui::Ui, label: &str) -> PinInfo {
+/// Standard socket: an optional label and a circular pin.
+pub(crate) fn socket(ui: &mut egui::Ui, label: &str) -> PinStyle {
     if !label.is_empty() {
         ui.add(egui::Label::new(muted(label, font::LABEL)).selectable(false));
     }
-    PinInfo::circle()
+    PinStyle::circle()
         .with_fill(pal::SOCKET)
         .with_stroke(Stroke::new(1.0, pal::SOCKET_STROKE))
         .with_wire_color(pal::SOCKET)

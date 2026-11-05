@@ -1,0 +1,14 @@
+[package]
+name = "compnode-editor"
+description = "compnode editor: the egui bridge between compnode-ui and compnode-core, plus a demo application."
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+compnode-core = { path = "../compnode-core" }
+compnode-ui = { path = "../compnode-ui" }
+# Only the node catalogue is used; nothing is evaluated.
+compnode-image = { path = "../compnode-image" }
+eframe.workspace = true
+egui.workspace = true

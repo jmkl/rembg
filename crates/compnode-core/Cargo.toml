@@ -1,0 +1,7 @@
+[package]
+name = "compnode-core"
+description = "Headless, renderer-agnostic node-graph engine built for large graphs: generational arena, spatial indexing, culling, cached wire geometry."
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

@@ -2,8 +2,8 @@
 
 use std::sync::{OnceLock, RwLock};
 
+use crate::nodegraph::{NodeGraph, NodeId};
 use egui::{Color32, Pos2, Ui};
-use egui_snarl::{NodeId, Snarl};
 use image::RgbaImage;
 
 use crate::editor::GraphEditor;
@@ -13,8 +13,8 @@ use crate::ops;
 use crate::params::{self, Params};
 use crate::style::{NODE_W, NODE_W_S, icons, pal};
 
-pub(crate) type BodyFn = fn(&mut GraphEditor, NodeId, &mut Ui, &mut Snarl<Node>, f32);
-pub(crate) type CreateFn = fn(&mut Snarl<Node>, Pos2, Kind);
+pub(crate) type BodyFn = fn(&mut GraphEditor, NodeId, &mut Ui, &mut NodeGraph<Node>, f32);
+pub(crate) type CreateFn = fn(&mut NodeGraph<Node>, Pos2, Kind);
 pub(crate) type EvalFn =
     fn(inputs: &[Vec<RgbaImage>], params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, String>;
 

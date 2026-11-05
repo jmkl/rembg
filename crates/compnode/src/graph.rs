@@ -1,11 +1,11 @@
-//! Operations on the Snarl graph: loading images, connecting wires,
+//! Operations on the node graph: loading images, connecting wires,
 //! invalidating stale outputs and refreshing Viewer layers.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+use crate::nodegraph::{InPinId, NodeGraph, NodeId, OutPinId};
 use egui::TextureHandle;
-use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 
 use crate::assets::AssetStore;
 use crate::catalog;
@@ -14,7 +14,7 @@ use crate::model::{FilterKind, Kind, Node, Preview, ViewerLayer};
 
 /// Ensure the graph has exactly one Output node, creating one if missing and
 /// removing any extras (dropping their wires).
-pub(crate) fn ensure_output_node(snarl: &mut Snarl<Node>) {
+pub(crate) fn ensure_output_node(snarl: &mut NodeGraph<Node>) {
     let output_ids: Vec<NodeId> = snarl
         .node_ids()
         .filter(|(_, node)| node.viewer_node().is_some())
@@ -61,7 +61,7 @@ pub(crate) fn rgba_to_texture(ctx: &egui::Context, img: &image::RgbaImage) -> eg
 }
 
 /// First node wired into `node`'s primary input, without any Route mapping.
-pub(crate) fn first_input(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
+pub(crate) fn first_input(snarl: &NodeGraph<Node>, node: NodeId) -> Option<NodeId> {
     let pin = snarl.in_pin(InPinId { node, input: 0 });
     pin.remotes.first().map(|remote| remote.node)
 }
@@ -72,7 +72,7 @@ pub(crate) fn first_input(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
 /// `image -> curve`. Non-Route nodes and unconnected Routes resolve to
 /// themselves. When a Route is toggled off, it acts as a disconnect/open circuit.
 /// Cycles are cut off at the first repeated Route.
-pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
+pub(crate) fn resolve_route(snarl: &NodeGraph<Node>, node: NodeId) -> NodeId {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     while let Some(node_ref) = snarl.get_node(current) {
@@ -94,7 +94,7 @@ pub(crate) fn resolve_route(snarl: &Snarl<Node>, node: NodeId) -> NodeId {
 }
 
 /// Source of `node`'s primary input, with any Route chain resolved away.
-pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
+pub(crate) fn upstream(snarl: &NodeGraph<Node>, node: NodeId) -> Option<NodeId> {
     if snarl
         .get_node(node)
         .is_some_and(|n| n.is_route() && !n.route_enabled())
@@ -112,7 +112,7 @@ pub(crate) fn upstream(snarl: &Snarl<Node>, node: NodeId) -> Option<NodeId> {
 /// Return every connected source feeding `node`, resolving pass-through Route
 /// chains and removing duplicate sources. Results are sorted by node id.
 #[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
-pub(crate) fn upstream_sources(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId> {
+pub(crate) fn upstream_sources(snarl: &NodeGraph<Node>, node: NodeId) -> Vec<NodeId> {
     let Some(target) = snarl.get_node(node) else {
         return Vec::new();
     };
@@ -121,8 +121,7 @@ pub(crate) fn upstream_sources(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId>
     for input in 0..input_count {
         for remote in &snarl.in_pin(InPinId { node, input }).remotes {
             let source = resolve_route(snarl, remote.node);
-            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source)
-            {
+            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source) {
                 sources.push(source);
             }
         }
@@ -134,7 +133,7 @@ pub(crate) fn upstream_sources(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId>
 /// Return all transitive nodes that depend on `node`, following graph wires.
 /// Route nodes are included because they are explicit topology in the graph.
 #[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
-pub(crate) fn downstream_dependents(snarl: &Snarl<Node>, node: NodeId) -> Vec<NodeId> {
+pub(crate) fn downstream_dependents(snarl: &NodeGraph<Node>, node: NodeId) -> Vec<NodeId> {
     let mut pending = vec![node];
     let mut seen = std::collections::HashSet::new();
     seen.insert(node);
@@ -165,7 +164,7 @@ pub(crate) fn downstream_dependents(snarl: &Snarl<Node>, node: NodeId) -> Vec<No
 /// If adding the edge `from -> to` would create a cycle, return the cycle path
 /// beginning with that edge and ending at `from` (for example `[a, b, a]`).
 #[allow(dead_code)] // Graph query API is consumed by upcoming topology tooling.
-pub(crate) fn find_cycle(snarl: &Snarl<Node>, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
+pub(crate) fn find_cycle(snarl: &NodeGraph<Node>, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
     if snarl.get_node(from).is_none() || snarl.get_node(to).is_none() {
         return None;
     }
@@ -209,14 +208,17 @@ pub(crate) fn find_cycle(snarl: &Snarl<Node>, from: NodeId, to: NodeId) -> Optio
 
 /// Preview of the node feeding `node`'s first input, if that source has one.
 /// Used as the fallback preview for processing nodes that have not run yet.
-pub(crate) fn upstream_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egui::TextureHandle> {
+pub(crate) fn upstream_texture(
+    snarl: &NodeGraph<Node>,
+    node: NodeId,
+) -> Option<egui::TextureHandle> {
     let upstream = upstream(snarl, node)?;
     effective_texture(snarl, upstream)
 }
 
 /// Output filepath that `node` (or its nearest upstream ancestor) produces.
 /// Walk the wire upstream until we find a node that has written an output path.
-pub(crate) fn effective_output_path(snarl: &Snarl<Node>, node: NodeId) -> Option<PathBuf> {
+pub(crate) fn effective_output_path(snarl: &NodeGraph<Node>, node: NodeId) -> Option<PathBuf> {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     loop {
@@ -246,7 +248,7 @@ pub(crate) fn effective_output_path(snarl: &Snarl<Node>, node: NodeId) -> Option
 /// use the unfiltered upstream image instead of the filter result. Image nodes
 /// are pass-through while an upstream wire exists, so the wire is followed
 /// before falling back to their own file.
-pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<PathBuf> {
+pub(crate) fn full_res_source_path(snarl: &NodeGraph<Node>, node: NodeId) -> Option<PathBuf> {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     loop {
@@ -294,7 +296,10 @@ pub(crate) fn full_res_source_path(snarl: &Snarl<Node>, node: NodeId) -> Option<
 
 /// Texture handle that `node` (or its nearest upstream ancestor) produces.
 /// Walk the wire upstream until we find a node that has rendered a preview.
-pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egui::TextureHandle> {
+pub(crate) fn effective_texture(
+    snarl: &NodeGraph<Node>,
+    node: NodeId,
+) -> Option<egui::TextureHandle> {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     loop {
@@ -323,7 +328,7 @@ pub(crate) fn effective_texture(snarl: &Snarl<Node>, node: NodeId) -> Option<egu
 ///
 /// Single-input nodes replace an existing wire. Multi-input nodes (currently
 /// the Viewer's `Layers` socket) keep every connection.
-pub(crate) fn connect_input(snarl: &mut Snarl<Node>, from: OutPinId, to: InPinId) -> bool {
+pub(crate) fn connect_input(snarl: &mut NodeGraph<Node>, from: OutPinId, to: InPinId) -> bool {
     let Some(to_node) = snarl.get_node(to.node) else {
         return false;
     };
@@ -340,7 +345,7 @@ pub(crate) fn connect_input(snarl: &mut Snarl<Node>, from: OutPinId, to: InPinId
 /// cached on the node. Upstream-connected Image nodes are pass-through nodes
 /// and do not need their own asset decoded.
 pub(crate) fn ensure_image_loaded(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     node: NodeId,
     ctx: &egui::Context,
     assets: &mut AssetStore,
@@ -398,7 +403,7 @@ pub(crate) fn ensure_image_loaded(
 /// there is none yet.
 #[allow(dead_code)]
 pub(crate) fn upstream_image(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     node: NodeId,
     ctx: &egui::Context,
     memory: &mut ImageMemory,
@@ -452,7 +457,7 @@ pub(crate) fn upstream_image(
 
 /// Drop a node's own output and everything downstream of it. Used when an
 /// input wire changes, including connect and disconnect.
-pub(crate) fn invalidate_node(snarl: &mut Snarl<Node>, node: NodeId) {
+pub(crate) fn invalidate_node(snarl: &mut NodeGraph<Node>, node: NodeId) {
     if let Some(n) = snarl.get_node_mut(node) {
         n.invalidate_output();
     }
@@ -461,7 +466,7 @@ pub(crate) fn invalidate_node(snarl: &mut Snarl<Node>, node: NodeId) {
 
 /// Drop outputs of nodes downstream of `node`, so a changed input never shows
 /// stale results. Any in-flight job for those nodes is discarded too.
-pub(crate) fn invalidate_downstream(snarl: &mut Snarl<Node>, node: NodeId) {
+pub(crate) fn invalidate_downstream(snarl: &mut NodeGraph<Node>, node: NodeId) {
     let mut stack = vec![node];
     let mut seen = std::collections::HashSet::new();
     while let Some(current) = stack.pop() {
@@ -492,7 +497,7 @@ pub(crate) fn invalidate_downstream(snarl: &mut Snarl<Node>, node: NodeId) {
 /// socket. Existing layer order is kept; newly discovered connections are
 /// appended (and sorted by node id for deterministic session loading).
 pub(crate) fn refresh_viewer(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     node: NodeId,
     ctx: &egui::Context,
     assets: &mut AssetStore,
@@ -516,8 +521,7 @@ pub(crate) fn refresh_viewer(
         let remotes = snarl.in_pin(InPinId { node, input }).remotes.clone();
         for remote in remotes {
             let source = resolve_route(snarl, remote.node);
-            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source)
-            {
+            if snarl.get_node(source).is_some_and(|n| !n.is_route()) && !sources.contains(&source) {
                 sources.push(source);
             }
         }
@@ -628,7 +632,7 @@ pub(crate) fn refresh_viewer(
 
 /// Dimensions of the image a node effectively outputs.
 pub(crate) fn effective_dimensions(
-    snarl: &Snarl<Node>,
+    snarl: &NodeGraph<Node>,
     node: NodeId,
     assets: &AssetStore,
 ) -> Option<(u32, u32)> {
@@ -725,7 +729,7 @@ pub(crate) fn effective_dimensions(
 
 /// Source name used for output filenames. It follows Image pass-through chains
 /// and prefers an asset's original name.
-pub(crate) fn source_name(snarl: &Snarl<Node>, node: NodeId) -> String {
+pub(crate) fn source_name(snarl: &NodeGraph<Node>, node: NodeId) -> String {
     let node = resolve_route(snarl, node);
     let mut current = node;
     let mut seen = std::collections::HashSet::new();

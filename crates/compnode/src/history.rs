@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use egui_snarl::{NodeId, Snarl};
+use crate::nodegraph::{NodeGraph, NodeId};
 
 use crate::assets::AssetStore;
 use crate::graph::invalidate_node;
@@ -51,7 +51,7 @@ pub(crate) fn apply_layer_state(node: &mut Node, state: &[LayerPose]) -> bool {
 }
 
 /// Layer transforms of every viewer node in the graph.
-fn capture_poses(snarl: &Snarl<Node>) -> HashMap<NodeId, LayerState> {
+fn capture_poses(snarl: &NodeGraph<Node>) -> HashMap<NodeId, LayerState> {
     snarl
         .node_ids()
         .filter_map(|(id, node)| layer_state(node).map(|state| (id, state)))
@@ -61,7 +61,7 @@ fn capture_poses(snarl: &Snarl<Node>) -> HashMap<NodeId, LayerState> {
 /// Put previously captured layer transforms back after a graph or node
 /// restore. Canvas transforms live in their own history, so undoing a graph
 /// edit must never move or reorder layers.
-fn reapply_poses(snarl: &mut Snarl<Node>, poses: &HashMap<NodeId, LayerState>) {
+fn reapply_poses(snarl: &mut NodeGraph<Node>, poses: &HashMap<NodeId, LayerState>) {
     for (id, state) in poses {
         if let Some(node) = snarl.get_node_mut(*id) {
             apply_layer_state(node, state);
@@ -70,12 +70,12 @@ fn reapply_poses(snarl: &mut Snarl<Node>, poses: &HashMap<NodeId, LayerState>) {
 }
 
 pub(crate) struct GraphSnapshot {
-    pub(crate) snarl: Snarl<Node>,
+    pub(crate) snarl: NodeGraph<Node>,
     pub(crate) assets: AssetStore,
 }
 
 impl GraphSnapshot {
-    pub(crate) fn capture(snarl: &Snarl<Node>, assets: &AssetStore) -> Self {
+    pub(crate) fn capture(snarl: &NodeGraph<Node>, assets: &AssetStore) -> Self {
         let mut snarl = snarl.clone();
         for (_, node) in snarl.nodes_ids_mut() {
             node.release_cpu_if_reloadable();
@@ -86,7 +86,7 @@ impl GraphSnapshot {
         }
     }
 
-    fn restore(mut self, snarl: &mut Snarl<Node>, assets: &mut AssetStore) {
+    fn restore(mut self, snarl: &mut NodeGraph<Node>, assets: &mut AssetStore) {
         let poses = capture_poses(snarl);
         for (_, node) in snarl.nodes_ids_mut() {
             node.reset_transient_state();
@@ -152,7 +152,7 @@ impl GraphHistory {
         self.redo.clear();
     }
 
-    pub(crate) fn undo(&mut self, snarl: &mut Snarl<Node>, assets: &mut AssetStore) -> bool {
+    pub(crate) fn undo(&mut self, snarl: &mut NodeGraph<Node>, assets: &mut AssetStore) -> bool {
         let Some(change) = self.undo.pop() else {
             return false;
         };
@@ -167,7 +167,7 @@ impl GraphHistory {
         true
     }
 
-    pub(crate) fn redo(&mut self, snarl: &mut Snarl<Node>, assets: &mut AssetStore) -> bool {
+    pub(crate) fn redo(&mut self, snarl: &mut NodeGraph<Node>, assets: &mut AssetStore) -> bool {
         let Some(change) = self.redo.pop() else {
             return false;
         };
@@ -197,7 +197,7 @@ fn cap_oldest(stack: &mut Vec<Change>) {
     }
 }
 
-fn restore_node(snarl: &mut Snarl<Node>, id: NodeId, mut node: Node, assets: &mut AssetStore) {
+fn restore_node(snarl: &mut NodeGraph<Node>, id: NodeId, mut node: Node, assets: &mut AssetStore) {
     node.reset_transient_state();
     if let Some(current) = snarl.get_node_mut(id) {
         // Layer transforms belong to the canvas history, not to this one.
@@ -248,7 +248,7 @@ impl CanvasHistory {
 
     /// Undo the newest canvas edit of `node`; returns the state that was
     /// applied to the node's layers.
-    pub(crate) fn undo(&mut self, snarl: &mut Snarl<Node>, node: NodeId) -> Option<LayerState> {
+    pub(crate) fn undo(&mut self, snarl: &mut NodeGraph<Node>, node: NodeId) -> Option<LayerState> {
         let stack = self.stacks.get_mut(&node)?;
         let change = stack.undo.pop()?;
         let applied = snarl
@@ -259,7 +259,7 @@ impl CanvasHistory {
         state
     }
 
-    pub(crate) fn redo(&mut self, snarl: &mut Snarl<Node>, node: NodeId) -> Option<LayerState> {
+    pub(crate) fn redo(&mut self, snarl: &mut NodeGraph<Node>, node: NodeId) -> Option<LayerState> {
         let stack = self.stacks.get_mut(&node)?;
         let change = stack.redo.pop()?;
         let applied = snarl
@@ -280,12 +280,12 @@ mod tests {
     use super::{GraphHistory, GraphSnapshot};
     use crate::assets::AssetStore;
     use crate::model::{FilterKind, Node, NodeTrait};
-    use egui_snarl::Snarl;
+    use crate::nodegraph::NodeGraph;
     use serde_json::json;
 
     #[test]
     fn graph_snapshot_undoes_and_redoes_node_addition() {
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
         let mut assets = AssetStore::default();
         let mut history = GraphHistory::default();
         let before = GraphSnapshot::capture(&snarl, &assets);
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn history_drops_oldest_entries_when_full() {
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
         let mut assets = AssetStore::default();
         let mut history = GraphHistory::default();
         for _ in 0..(super::HISTORY_LIMIT + 5) {
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn canvas_history_is_isolated_per_node_and_from_the_graph() {
         use super::{CanvasHistory, layer_state};
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
         let mut assets = AssetStore::default();
         let mut graph = GraphHistory::default();
         let mut canvas = CanvasHistory::default();
@@ -347,15 +347,12 @@ mod tests {
         assert!(canvas.undo(&mut snarl, a).is_some());
         assert_eq!(snarl[a].layers().unwrap()[0].center, egui::Vec2::ZERO);
         assert!(canvas.redo(&mut snarl, a).is_some());
-        assert_eq!(
-            snarl[a].layers().unwrap()[0].center,
-            egui::vec2(50.0, 20.0)
-        );
+        assert_eq!(snarl[a].layers().unwrap()[0].center, egui::vec2(50.0, 20.0));
     }
 
     #[test]
     fn node_history_restores_parameter_edits() {
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
         let mut assets = AssetStore::default();
         let mut history = GraphHistory::default();
         let id = snarl.insert_node(egui::Pos2::ZERO, Node::new_filter(FilterKind::Hsv));

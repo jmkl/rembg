@@ -1,7 +1,7 @@
 //! Multi-layer viewer node.
 
+use crate::nodegraph::{NodeGraph, NodeId};
 use egui::Ui;
-use egui_snarl::{NodeId, Snarl};
 
 use crate::editor::GraphEditor;
 use crate::model::{Kind, Node};
@@ -9,7 +9,7 @@ use crate::style::controls::muted;
 use crate::style::font;
 use crate::widgets::{node_body, preview_layers};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
+pub(crate) fn create(snarl: &mut NodeGraph<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::viewer());
 }
 
@@ -17,7 +17,7 @@ pub(crate) fn show_body(
     _editor: &mut GraphEditor,
     node: NodeId,
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     _width: f32,
 ) {
     node_body(ui);

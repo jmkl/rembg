@@ -1,15 +1,15 @@
 //! Background removal node v2 (uses new RemoveBg library with RMBG-1.4 logic).
 
+use crate::nodegraph::{NodeGraph, NodeId};
 use crate::style::controls::Button;
 use egui::Ui;
-use egui_snarl::{NodeId, Snarl};
 
 use crate::editor::GraphEditor;
 use crate::graph::upstream_texture;
 use crate::model::{Kind, Node};
 use crate::widgets::{error_line, node_body, node_preview, node_status, timing_line};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
+pub(crate) fn create(snarl: &mut NodeGraph<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::remove_bg_v2());
 }
 
@@ -17,7 +17,7 @@ pub(crate) fn show_body(
     editor: &mut GraphEditor,
     node: NodeId,
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     width: f32,
 ) {
     node_body(ui);

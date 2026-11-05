@@ -1,14 +1,14 @@
-//! Snarl view implementation and node interaction.
+//! Node interaction and the editor side of the view contract.
+//!
+//! `GraphEditor` owns everything that is independent of the widget drawing the
+//! graph: selection, undo, jobs and the content of nodes. The `pub(crate)`
+//! hooks near the end of the `impl` (`draw_node_*`, `*_pin_style`,
+//! `node_laid_out`, `on_*`) are what a [`crate::view::GraphView`] backend calls.
+//! The egui-snarl backend is in `view/snarl.rs`.
 
 use std::path::PathBuf;
 
 use egui::{Align2, CornerRadius, FontId, Frame, Stroke, vec2};
-use egui_snarl::{
-    InPin, InPinId, NodeId, OutPin, OutPinId, Snarl,
-    ui::{
-        AnyPins, BackgroundPattern, PinInfo, SnarlPin, SnarlStyle, SnarlViewer, get_selected_nodes,
-    },
-};
 
 use crate::assets::AssetStore;
 use crate::cancellation::CancellationToken;
@@ -17,45 +17,34 @@ use crate::graph::{connect_input, full_res_source_path, invalidate_downstream, i
 use crate::history::{CanvasHistory, GraphHistory, GraphSnapshot, LayerState};
 use crate::memory::ImageMemory;
 use crate::model::{Kind, Node, ViewerLayer};
+use crate::nodegraph::{InPinId, NodeGraph, NodeId, OutPinId};
 use crate::style::controls::{MenuItem, muted};
 use crate::style::{self, BODY_MARGIN, font, icons, pal};
+use crate::view::{PinStyle, ViewGeometry};
 use crate::widgets::socket;
 use crate::worker::{
     FilterInput, InferenceJob, InferenceRequest, RenderJob, RenderRequest, WorkerRequest,
 };
 
 pub(crate) struct GraphEditor {
-    /// Current canvas scale, used to keep the dot grid a constant size.
-    pub(crate) zoom: f32,
-    /// Canvas-to-screen transform, used to place graph-menu nodes under the
-    /// cursor in graph coordinates.
-    pub(crate) to_global: egui::emath::TSTransform,
+    /// What the active view reported on its last frame (screen space).
+    pub(crate) geometry: ViewGeometry,
     pub(crate) assets: AssetStore,
-    pub(crate) node_rects: std::collections::HashMap<egui_snarl::NodeId, egui::Rect>,
-    /// Screen-space Y of each pin row, recorded while the node is drawn. Wires
-    /// are straight lines between the node edges and these heights, which is
-    /// all the cut gesture needs.
-    input_pin_y: std::collections::HashMap<InPinId, f32>,
-    output_pin_y: std::collections::HashMap<OutPinId, f32>,
     /// Active Ctrl+drag wire cut (Blender-style). Screen coordinates.
     cut_drag: Option<CutDrag>,
     jobs: std::sync::mpsc::Sender<WorkerRequest>,
     next_token: u64,
-    /// ID for the Snarl widget's temporary view state. Replaced when the graph
-    /// is loaded or cleared so pan/zoom and selection cannot leak across files.
-    view_id: egui::Id,
-    view_generation: u64,
-    /// App-level node selection. egui-snarl 0.12 only updates its own selection
-    /// for Shift/Ctrl-click and rectangle selection, so a normal click would
-    /// otherwise leave Delete with nothing to act on.
+    /// App-level node selection. The view only reports Shift/Ctrl-click and
+    /// rectangle selection, so a normal click is handled here; otherwise Delete
+    /// would have nothing to act on.
     pub(crate) selected: Vec<NodeId>,
-    /// Snarl's selection from the previous frame. Rectangle selection still
-    /// comes from Snarl, so mirror it when it changes.
-    snarl_selection: Vec<NodeId>,
+    /// The view's own selection from the previous frame. Rectangle selection
+    /// still comes from the view, so mirror it when it changes.
+    view_selection: Vec<NodeId>,
     node_pressed: bool,
     /// Tracks recent full-resolution image use and caps CPU memory.
     image_memory: ImageMemory,
-    /// Undo history of the node graph (the Snarl view context).
+    /// Undo history of the node graph.
     history: GraphHistory,
     /// Undo history of the layer canvas, one stack per viewer node.
     canvas_history: CanvasHistory,
@@ -72,19 +61,13 @@ struct CutDrag {
 impl GraphEditor {
     pub(crate) fn new(jobs: std::sync::mpsc::Sender<WorkerRequest>) -> Self {
         Self {
-            zoom: 1.0,
-            to_global: egui::emath::TSTransform::IDENTITY,
+            geometry: ViewGeometry::default(),
             assets: AssetStore::default(),
-            node_rects: std::collections::HashMap::new(),
-            input_pin_y: std::collections::HashMap::new(),
-            output_pin_y: std::collections::HashMap::new(),
             cut_drag: None,
             jobs,
             next_token: 1,
-            view_id: egui::Id::new("snarl"),
-            view_generation: 0,
             selected: Vec::new(),
-            snarl_selection: Vec::new(),
+            view_selection: Vec::new(),
             node_pressed: false,
             image_memory: ImageMemory::default(),
             history: GraphHistory::default(),
@@ -92,33 +75,29 @@ impl GraphEditor {
         }
     }
 
-    pub(crate) fn view_id(&self) -> egui::Id {
-        self.view_id
-    }
-
     pub(crate) fn selected_nodes(&self) -> &[NodeId] {
         &self.selected
     }
 
-    /// Drop all view state when the graph itself is replaced. egui-snarl keeps
-    /// pan/zoom and selection in context storage keyed by the widget ID, so a
-    /// new ID is the only way to guarantee they do not leak into a new file.
+    /// Drop editor-side view state when the graph itself is replaced. The
+    /// view resets its own state through `GraphView::reset`.
     pub(crate) fn reset_view(&mut self) {
-        self.view_generation += 1;
-        self.view_id = egui::Id::new(("snarl", self.view_generation));
         self.selected.clear();
-        self.snarl_selection.clear();
+        self.view_selection.clear();
         self.node_pressed = false;
         self.image_memory.clear();
-        self.node_rects.clear();
-        self.input_pin_y.clear();
-        self.output_pin_y.clear();
+        self.geometry.clear();
         self.cut_drag = None;
     }
 
+    /// Whether the view must keep the canvas still (a wire cut is being dragged).
+    pub(crate) fn pan_locked(&self) -> bool {
+        self.cut_drag.is_some()
+    }
+
     /// Start a Blender-style wire cut when Ctrl+primary is pressed on empty
-    /// graph background. Called before the Snarl widget so the started drag
-    /// does not pan the canvas (`current_transform` suppresses that).
+    /// graph background. Called before the graph view so the started drag
+    /// does not pan the canvas (the view checks `pan_locked`).
     pub(crate) fn begin_cut_drag(&mut self, ctx: &egui::Context, graph_rect: egui::Rect) {
         let Some(start) = ctx.input(|input| {
             (input.modifiers.command && input.pointer.primary_pressed())
@@ -133,6 +112,7 @@ impl GraphEditor {
         // Never start over a node (or its pins), so Ctrl+click on a node still
         // toggles its selection.
         if self
+            .geometry
             .node_rects
             .values()
             .any(|rect| rect.expand(6.0).contains(start))
@@ -146,10 +126,10 @@ impl GraphEditor {
         });
     }
 
-    /// Finish a Ctrl+drag wire cut. Runs after the Snarl widget has drawn, so
+    /// Finish a Ctrl+drag wire cut. Runs after the graph view has drawn, so
     /// this frame's pin heights are available. Every wire crossing the gesture
     /// is disconnected.
-    pub(crate) fn update_cut_drag(&mut self, ctx: &egui::Context, snarl: &mut Snarl<Node>) {
+    pub(crate) fn update_cut_drag(&mut self, ctx: &egui::Context, snarl: &mut NodeGraph<Node>) {
         let Some(drag) = self.cut_drag.as_mut() else {
             return;
         };
@@ -190,19 +170,20 @@ impl GraphEditor {
     }
 
     /// Disconnect every wire whose straight line crosses `from`–`to`.
-    fn cut_wires(&mut self, snarl: &mut Snarl<Node>, from: egui::Pos2, to: egui::Pos2) {
+    fn cut_wires(&mut self, snarl: &mut NodeGraph<Node>, from: egui::Pos2, to: egui::Pos2) {
         let wires: Vec<(OutPinId, InPinId)> = snarl
             .wires()
             .filter(|(out, input)| {
                 let (Some(out_rect), Some(in_rect)) = (
-                    self.node_rects.get(&out.node),
-                    self.node_rects.get(&input.node),
+                    self.geometry.node_rects.get(&out.node),
+                    self.geometry.node_rects.get(&input.node),
                 ) else {
                     return false;
                 };
-                let (Some(out_y), Some(in_y)) =
-                    (self.output_pin_y.get(out), self.input_pin_y.get(input))
-                else {
+                let (Some(out_y), Some(in_y)) = (
+                    self.geometry.output_pin_y.get(out),
+                    self.geometry.input_pin_y.get(input),
+                ) else {
                     return false;
                 };
                 segments_intersect(
@@ -230,22 +211,23 @@ impl GraphEditor {
     }
 
     pub(crate) fn node_at_screen(&self, pos: egui::Pos2) -> Option<NodeId> {
-        self.node_rects
+        self.geometry
+            .node_rects
             .iter()
             .find(|(_, rect)| rect.contains(pos))
             .map(|(id, _)| *id)
     }
 
-    pub(crate) fn trim_image_memory(&mut self, snarl: &mut Snarl<Node>) {
+    pub(crate) fn trim_image_memory(&mut self, snarl: &mut NodeGraph<Node>) {
         self.image_memory.trim(snarl, &self.assets);
     }
 
     /// Undo the last node-graph edit.
     ///
-    /// The Snarl widget keeps its ID, so the zoom and pan the user has stay
+    /// The view keeps its state across undo/redo, so the zoom and pan the user has stay
     /// exactly as they are. Selection that refers to nodes which no longer
     /// exist is dropped by `finish_frame`.
-    pub(crate) fn undo(&mut self, snarl: &mut Snarl<Node>) -> bool {
+    pub(crate) fn undo(&mut self, snarl: &mut NodeGraph<Node>) -> bool {
         let changed = self.history.undo(snarl, &mut self.assets);
         if changed {
             self.forget_missing_nodes(snarl);
@@ -253,7 +235,7 @@ impl GraphEditor {
         changed
     }
 
-    pub(crate) fn redo(&mut self, snarl: &mut Snarl<Node>) -> bool {
+    pub(crate) fn redo(&mut self, snarl: &mut NodeGraph<Node>) -> bool {
         let changed = self.history.redo(snarl, &mut self.assets);
         if changed {
             self.forget_missing_nodes(snarl);
@@ -261,10 +243,11 @@ impl GraphEditor {
         changed
     }
 
-    fn forget_missing_nodes(&mut self, snarl: &Snarl<Node>) {
+    fn forget_missing_nodes(&mut self, snarl: &NodeGraph<Node>) {
         self.selected
             .retain(|node| snarl.get_node_info(*node).is_some());
-        self.node_rects
+        self.geometry
+            .node_rects
             .retain(|node, _| snarl.get_node_info(*node).is_some());
         self.node_pressed = false;
         self.cut_drag = None;
@@ -274,7 +257,7 @@ impl GraphEditor {
     /// written to the node so the canvas widget can mirror it.
     pub(crate) fn undo_canvas(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
     ) -> Option<LayerState> {
         self.canvas_history.undo(snarl, node)
@@ -282,7 +265,7 @@ impl GraphEditor {
 
     pub(crate) fn redo_canvas(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
     ) -> Option<LayerState> {
         self.canvas_history.redo(snarl, node)
@@ -303,16 +286,21 @@ impl GraphEditor {
         self.canvas_history.clear();
     }
 
-    pub(crate) fn record_graph_change(&mut self, before: GraphSnapshot, snarl: &Snarl<Node>) {
+    pub(crate) fn record_graph_change(&mut self, before: GraphSnapshot, snarl: &NodeGraph<Node>) {
         self.history
             .record_graph(before, GraphSnapshot::capture(snarl, &self.assets));
     }
 
-    pub(crate) fn graph_snapshot(&self, snarl: &Snarl<Node>) -> GraphSnapshot {
+    pub(crate) fn graph_snapshot(&self, snarl: &NodeGraph<Node>) -> GraphSnapshot {
         GraphSnapshot::capture(snarl, &self.assets)
     }
 
-    pub(crate) fn record_node_change(&mut self, id: NodeId, mut before: Node, snarl: &Snarl<Node>) {
+    pub(crate) fn record_node_change(
+        &mut self,
+        id: NodeId,
+        mut before: Node,
+        snarl: &NodeGraph<Node>,
+    ) {
         if let Some(after) = snarl.get_node(id) {
             let mut after = after.clone();
             before.release_cpu_if_reloadable();
@@ -322,7 +310,7 @@ impl GraphEditor {
     }
 
     /// Remove specific nodes from the graph and invalidate affected downstream nodes.
-    pub(crate) fn delete_nodes(&mut self, snarl: &mut Snarl<Node>, nodes: &[NodeId]) {
+    pub(crate) fn delete_nodes(&mut self, snarl: &mut NodeGraph<Node>, nodes: &[NodeId]) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
         let mut downstream = Vec::new();
 
@@ -365,14 +353,10 @@ impl GraphEditor {
             self.record_graph_change(before, snarl);
         }
     }
-    /// bypass selected
-    pub(crate) fn bypass_selected(&mut self, snarl: &mut Snarl<Node>) {
-        todo!()
-    }
 
     /// Remove the app-level selection from the graph. Both Delete shortcuts and
     /// the Edit menu go through here so the selection cannot go stale.
-    pub(crate) fn delete_selected(&mut self, snarl: &mut Snarl<Node>) {
+    pub(crate) fn delete_selected(&mut self, snarl: &mut NodeGraph<Node>) {
         let removing = std::mem::take(&mut self.selected);
         self.delete_nodes(snarl, &removing);
     }
@@ -381,7 +365,7 @@ impl GraphEditor {
     /// Wiring between duplicated nodes is preserved, viewer/group layers are
     /// remapped to duplicated sources, and the duplicates become the new
     /// selection.
-    pub(crate) fn duplicate_selected(&mut self, snarl: &mut Snarl<Node>) {
+    pub(crate) fn duplicate_selected(&mut self, snarl: &mut NodeGraph<Node>) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
         use std::collections::HashMap;
 
@@ -393,7 +377,7 @@ impl GraphEditor {
             let Some(info) = snarl.get_node_info(*node) else {
                 continue;
             };
-            let mut value = info.value.clone();
+            let mut value = snarl[*node].clone();
             value.reset_transient_state();
             let new_id = snarl.insert_node(info.pos + egui::vec2(OFFSET, OFFSET), value);
             map.insert(*node, new_id);
@@ -402,9 +386,7 @@ impl GraphEditor {
         // Keep the collapsed state of the sources.
         for (old, new) in &map {
             let open = snarl.get_node_info(*old).map_or(true, |src| src.open);
-            if let Some(dst) = snarl.get_node_info_mut(*new) {
-                dst.open = open;
-            }
+            snarl.open_node(*new, open);
         }
 
         for (old, new) in &map {
@@ -443,7 +425,7 @@ impl GraphEditor {
         }
     }
 
-    /// Finish bookkeeping after the Snarl widget has been rendered.
+    /// Finish bookkeeping after the graph view has been rendered.
     ///
     /// Returns `true` when a primary click landed on empty graph space (which
     /// also clears the node selection), so the caller can dismiss other
@@ -451,23 +433,24 @@ impl GraphEditor {
     pub(crate) fn finish_frame(
         &mut self,
         ctx: &egui::Context,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         canvas: &egui::Response,
+        view_selection: &[NodeId],
     ) -> bool {
         self.update_cut_drag(ctx, snarl);
 
         self.selected
             .retain(|node| snarl.get_node_info(*node).is_some());
 
-        // A Shift-drag rectangle is still implemented by egui-snarl. Adopt its
-        // result on release, but never let it overwrite a click handled by
+        // A Shift-drag rectangle is implemented by the view. Adopt its result
+        // on release, but never let it overwrite a click handled by
         // `update_selection`.
-        let snarl_selection = get_selected_nodes(self.view_id, ctx);
+        let view_selection = view_selection.to_vec();
         let pointer_released = ctx.input(|input| input.pointer.primary_released());
-        if !self.node_pressed && pointer_released && snarl_selection != self.snarl_selection {
-            self.selected.clone_from(&snarl_selection);
+        if !self.node_pressed && pointer_released && view_selection != self.view_selection {
+            self.selected.clone_from(&view_selection);
         }
-        self.snarl_selection = snarl_selection;
+        self.view_selection = view_selection;
 
         // Clicking empty canvas clears the selection unless the user is adding
         // to it with a modifier.
@@ -501,7 +484,7 @@ impl GraphEditor {
 
     pub(crate) fn start_remove_bg(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         ctx: &egui::Context,
     ) {
@@ -551,7 +534,7 @@ impl GraphEditor {
 
     pub(crate) fn start_face_restore(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         ctx: &egui::Context,
     ) {
@@ -609,7 +592,7 @@ impl GraphEditor {
     /// output file) or the worker is gone.
     pub(crate) fn start_group_render(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         signature: u64,
         ctx: &egui::Context,
@@ -701,7 +684,7 @@ impl GraphEditor {
     /// can retry after the debounce window.
     pub(crate) fn start_filter_render(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         signature: u64,
         ctx: &egui::Context,
@@ -723,7 +706,7 @@ impl GraphEditor {
         let mut inputs: Vec<Vec<FilterInput>> = Vec::with_capacity(sockets);
         for input in 0..sockets {
             let remotes = snarl
-                .in_pin(egui_snarl::InPinId { node, input })
+                .in_pin(crate::nodegraph::InPinId { node, input })
                 .remotes
                 .clone();
             let mut socket = Vec::with_capacity(remotes.len());
@@ -769,7 +752,7 @@ impl GraphEditor {
 
     pub(crate) fn start_texts_render(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         signature: u64,
         ctx: &egui::Context,
@@ -809,44 +792,10 @@ impl GraphEditor {
         }
     }
 
-    #[allow(dead_code)]
-    fn draw_background(
-        &mut self,
-        _background: Option<&BackgroundPattern>,
-        viewport: &egui::Rect,
-        _snarl_style: &SnarlStyle,
-        _style: &egui::Style,
-        painter: &egui::Painter,
-        _snarl: &Snarl<Node>,
-    ) {
-        let zoom = self.zoom.max(0.05);
-        let mut spacing = 22.0;
-        while spacing * zoom < 40.0 {
-            spacing *= 2.0;
-        }
-        while spacing * zoom > 80.0 {
-            spacing *= 0.5;
-        }
-
-        let radius = (1.1 / zoom).clamp(0.45, 2.0);
-        let x0 = (viewport.left() / spacing).floor() * spacing;
-        let y0 = (viewport.top() / spacing).floor() * spacing;
-
-        let mut y = y0;
-        while y <= viewport.bottom() {
-            let mut x = x0;
-            while x <= viewport.right() {
-                painter.circle_filled(egui::pos2(x, y), radius, pal::BG);
-                x += spacing;
-            }
-            y += spacing;
-        }
-    }
-
     /// Start background removal using the new RemoveBg library (RMBG-1.4 logic).
     pub(crate) fn start_remove_bg_v2(
         &mut self,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
         node: NodeId,
         ctx: &egui::Context,
     ) {
@@ -895,70 +844,20 @@ impl GraphEditor {
     }
 }
 
-fn draw_debug_rect(ui: &mut egui::Ui, rect: egui::Rect) {
-    if std::env::var("DEBUG_RECT")
-        .map(|value| value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
-        ui.painter().rect_stroke(
-            rect,
-            0.0,
-            egui::Stroke::new(1.0, egui::Color32::RED),
-            egui::StrokeKind::Inside,
-        );
-    }
-}
+// --- Editor side of the view contract (see `crate::view`) ------------------
 
-impl SnarlViewer<Node> for GraphEditor {
-    fn title(&mut self, node: &Node) -> String {
-        catalog::spec(node.kind()).title.to_owned()
-    }
-
-    fn inputs(&mut self, node: &Node) -> usize {
-        catalog::spec(node.kind()).inputs
-    }
-
-    fn outputs(&mut self, node: &Node) -> usize {
-        catalog::spec(node.kind()).outputs
-    }
-
-    fn has_body(&mut self, _node: &Node) -> bool {
-        true
-    }
-
-    fn node_frame(
-        &mut self,
-        default: Frame,
-        node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
-        _snarl: &Snarl<Node>,
-    ) -> Frame {
-        style::node_frame(default, self.selected.contains(&node))
-    }
-
-    fn header_frame(
-        &mut self,
-        default: Frame,
-        node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
-        snarl: &Snarl<Node>,
-    ) -> Frame {
-        style::node_header_frame(default, catalog::spec(snarl[node].kind()).accent)
-    }
-
-    fn show_header(
+impl GraphEditor {
+    /// Header content (title, collapse chevron, toggles), drawn inside the
+    /// header frame the view provides.
+    pub(crate) fn draw_node_header(
         &mut self,
         node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
     ) {
         const ROW_H: f32 = 22.0; // header content height
         const HIT: f32 = 20.0; // square hit area of each icon
-        const PAD: f32 = 0.0; // margin from the node edge
+        const PAD: f32 = 4.0; // margin from the node edge
 
         let open = snarl.get_node_info(node).is_none_or(|info| info.open);
         let spec = catalog::spec(snarl[node].kind());
@@ -1051,19 +950,14 @@ impl SnarlViewer<Node> for GraphEditor {
             egui::pos2(rect.right() - PAD - HIT, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
-        draw_debug_rect(ui, bypass_rect);
-
         let right = egui::Rect::from_min_size(
             egui::pos2(bypass_rect.left() - 2.0 - HIT, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
-        draw_debug_rect(ui, right);
-
         let title = egui::Rect::from_min_max(
             egui::pos2(left.right(), rect.top()),
             egui::pos2(right.left(), rect.bottom()),
         );
-        draw_debug_rect(ui, title);
 
         // Collapse chevron (left).
         let chevron = if open {
@@ -1113,8 +1007,8 @@ impl SnarlViewer<Node> for GraphEditor {
         // Title (centre). Match the sidebar layer list naming so the node a
         // layer comes from is identifiable at a glance: `{type} #{node id}`.
         ui.painter().text(
-            egui::pos2(title.left() + 16.0, title.center().y),
-            Align2::LEFT_CENTER,
+            title.center(),
+            Align2::CENTER_CENTER,
             format!("{} #{}", spec.title, node.0),
             FontId::proportional(font::BUTTON),
             pal::HEADER_TEXT,
@@ -1124,20 +1018,17 @@ impl SnarlViewer<Node> for GraphEditor {
         let enabled = snarl[node].preview_enabled();
         let glyph = if enabled { icons::EYE } else { icons::EYE_OFF };
         let response = ui.interact(right, ui.id().with(("eye", node)), egui::Sense::click());
-        let galley = ui.painter().text(
+        ui.painter().text(
             right.center(),
             Align2::CENTER_CENTER,
             glyph,
             icons::font(16.0),
             pal::HEADER_TEXT,
         );
-        draw_debug_rect(
-            ui,
-            egui::Rect::from_center_size(right.center(), galley.size()),
-        );
         if response.clicked() {
             snarl[node].set_preview_enabled(!enabled);
         }
+
         // Bypass keeps the node and its settings in the graph while passing
         // its first input image directly to downstream consumers.
         let can_bypass = snarl[node].can_bypass();
@@ -1150,15 +1041,14 @@ impl SnarlViewer<Node> for GraphEditor {
         ui.painter().text(
             bypass_rect.center(),
             Align2::CENTER_CENTER,
-            icons::INFO,
-            icons::font(16.0),
+            "⦸",
+            icons::font(14.0),
             if bypassed {
-                pal::DANGER
+                pal::SOCKET
             } else {
                 pal::HEADER_TEXT
             },
         );
-
         if bypass_response
             .on_hover_text(if bypassed {
                 "Enable node"
@@ -1175,19 +1065,22 @@ impl SnarlViewer<Node> for GraphEditor {
         }
     }
 
-    fn show_input(
+    /// Look of an input pin. `screen_y` is the screen-space Y of its row,
+    /// kept for the wire-cut gesture.
+    pub(crate) fn input_pin_style(
         &mut self,
-        pin: &InPin,
+        pin: InPinId,
+        screen_y: f32,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
-    ) -> impl SnarlPin + 'static {
+        snarl: &NodeGraph<Node>,
+    ) -> PinStyle {
         // Square pins for multi-input nodes (Group, Output) and nodes that receive layers
-        let spec = catalog::spec(snarl[pin.id.node].kind());
+        let spec = catalog::spec(snarl[pin.node].kind());
         let is_multi = spec.multi_input;
-        self.input_pin_y.insert(pin.id, pin_screen_y(ui));
+        self.geometry.input_pin_y.insert(pin, screen_y);
         // Remove label - connectors should not have labels
         if is_multi {
-            return PinInfo::square()
+            return PinStyle::square()
                 .with_fill(pal::SOCKET)
                 .with_stroke(Stroke::new(1.0, pal::SOCKET_STROKE))
                 .with_wire_color(pal::SOCKET);
@@ -1195,15 +1088,17 @@ impl SnarlViewer<Node> for GraphEditor {
         socket(ui, "")
     }
 
-    fn show_output(
+    /// Look of an output pin. See [`GraphEditor::input_pin_style`].
+    pub(crate) fn output_pin_style(
         &mut self,
-        pin: &OutPin,
+        pin: OutPinId,
+        screen_y: f32,
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
-    ) -> impl SnarlPin + 'static {
-        self.output_pin_y.insert(pin.id, pin_screen_y(ui));
-        if snarl[pin.id.node].is_route() && !snarl[pin.id.node].route_enabled() {
-            PinInfo::circle()
+        snarl: &NodeGraph<Node>,
+    ) -> PinStyle {
+        self.geometry.output_pin_y.insert(pin, screen_y);
+        if snarl[pin.node].is_route() && !snarl[pin.node].route_enabled() {
+            PinStyle::circle()
                 .with_fill(pal::MUTED)
                 .with_stroke(Stroke::new(1.0, pal::MUTED))
                 .with_wire_color(pal::MUTED)
@@ -1212,13 +1107,12 @@ impl SnarlViewer<Node> for GraphEditor {
         }
     }
 
-    fn show_body(
+    /// Body of a node: its parameters and preview.
+    pub(crate) fn draw_node_body(
         &mut self,
         node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
     ) {
         let before = snarl[node].clone();
         let spec = catalog::spec(snarl[node].kind());
@@ -1235,18 +1129,10 @@ impl SnarlViewer<Node> for GraphEditor {
         }
     }
 
-    fn final_node_rect(
-        &mut self,
-        node: NodeId,
-        rect: egui::Rect,
-        ui: &mut egui::Ui,
-        _snarl: &mut Snarl<Node>,
-    ) {
-        let to_global = ui
-            .ctx()
-            .layer_transform_to_global(ui.layer_id())
-            .unwrap_or(egui::emath::TSTransform::IDENTITY);
-        self.node_rects.insert(node, to_global * rect);
+    /// The view laid a node out. `screen_rect` is in screen space. Records the
+    /// rect for hit tests and handles a click on the node as a selection.
+    pub(crate) fn node_laid_out(&mut self, node: NodeId, screen_rect: egui::Rect, ui: &egui::Ui) {
+        self.geometry.node_rects.insert(node, screen_rect);
         let (pressed, clicked) = ui.input(|input| {
             (
                 input.pointer.primary_pressed(),
@@ -1257,18 +1143,13 @@ impl SnarlViewer<Node> for GraphEditor {
             return;
         }
 
-        // Snarl draws nodes on its own transformed layer, but that layer has no
-        // `Area`, so `Ui::rect_contains_pointer` fails its `layer_id_at` check.
-        // Transform the node rect into screen space and compare the pointer
-        // directly instead.
+        // Views may draw nodes on a layer without an `Area` (Snarl does), where
+        // `Ui::rect_contains_pointer` fails its `layer_id_at` check. Compare the
+        // pointer with the screen-space rect directly instead.
         let Some(pointer) = ui.input(|input| input.pointer.interact_pos()) else {
             return;
         };
-        let to_global = ui
-            .ctx()
-            .layer_transform_to_global(ui.layer_id())
-            .unwrap_or(egui::emath::TSTransform::IDENTITY);
-        if !(to_global * rect).contains(pointer) {
+        if !screen_rect.contains(pointer) {
             return;
         }
 
@@ -1279,24 +1160,25 @@ impl SnarlViewer<Node> for GraphEditor {
         }
     }
 
-    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Node>) {
+    /// A wire was dragged from `from` to `to`.
+    pub(crate) fn on_connect(&mut self, from: OutPinId, to: InPinId, snarl: &mut NodeGraph<Node>) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
-        connect_input(snarl, from.id, to.id);
+        connect_input(snarl, from, to);
 
         // Keep Viewer layers in connection order. `refresh_viewer` fills in
         // textures and removes layers whose wire was disconnected.
         // Route is transparent: the layer belongs to the real source node.
-        let source = crate::graph::resolve_route(snarl, from.id.node);
+        let source = crate::graph::resolve_route(snarl, from.node);
         // Extract all data from snarl immutably before borrowing viewer_node_mut().
         let spec = catalog::spec(snarl[source].kind());
         let source_name = spec.title.to_string();
         let source_path = snarl[source].output_path().map(|p| p.to_path_buf());
-        let layer_exists = snarl[to.id.node]
+        let layer_exists = snarl[to.node]
             .viewer_node()
             .map(|v| v.layers.iter().any(|layer| layer.source == source))
             .unwrap_or(false);
 
-        if let Some(viewer) = snarl[to.id.node].viewer_node_mut() {
+        if let Some(viewer) = snarl[to.node].viewer_node_mut() {
             if !layer_exists {
                 viewer.layers.push(ViewerLayer {
                     source,
@@ -1311,66 +1193,50 @@ impl SnarlViewer<Node> for GraphEditor {
             }
         }
 
-        invalidate_node(snarl, to.id.node);
+        invalidate_node(snarl, to.node);
         self.record_graph_change(before, snarl);
     }
 
-    fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Node>) {
+    /// The wire `from` -> `to` was removed.
+    pub(crate) fn on_disconnect(
+        &mut self,
+        from: OutPinId,
+        to: InPinId,
+        snarl: &mut NodeGraph<Node>,
+    ) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
-        snarl.disconnect(from.id, to.id);
+        snarl.disconnect(from, to);
         // The input changed; drop the processed result and show the new input
         // (or no preview when nothing remains connected).
-        invalidate_node(snarl, to.id.node);
+        invalidate_node(snarl, to.node);
         self.record_graph_change(before, snarl);
     }
 
-    fn drop_inputs(&mut self, pin: &InPin, snarl: &mut Snarl<Node>) {
+    /// Every wire into `pin` was dropped.
+    pub(crate) fn on_drop_inputs(&mut self, pin: InPinId, snarl: &mut NodeGraph<Node>) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
-        snarl.drop_inputs(pin.id);
-        invalidate_node(snarl, pin.id.node);
+        snarl.drop_inputs(pin);
+        invalidate_node(snarl, pin.node);
         self.record_graph_change(before, snarl);
     }
 
-    fn drop_outputs(&mut self, pin: &OutPin, snarl: &mut Snarl<Node>) {
+    /// Every wire out of `pin` was dropped.
+    pub(crate) fn on_drop_outputs(&mut self, pin: OutPinId, snarl: &mut NodeGraph<Node>) {
         let before = GraphSnapshot::capture(snarl, &self.assets);
-        let remotes = pin.remotes.clone();
-        snarl.drop_outputs(pin.id);
+        let remotes = snarl.out_pin(pin).remotes;
+        snarl.drop_outputs(pin);
         for remote in remotes {
             invalidate_node(snarl, remote.node);
         }
         self.record_graph_change(before, snarl);
     }
 
-    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<Node>) -> bool {
-        // The stock Snarl graph menu uses `PopupCloseBehavior::CloseOnClick`,
-        // which dismisses the popup as soon as the filter input is clicked.
-        // `app` renders the menu with `CloseOnClickOutside` instead.
-        false
-    }
-
-    fn has_node_menu(&mut self, _node: &Node) -> bool {
-        true
-    }
-    fn has_dropped_wire_menu(&mut self, _src_pins: AnyPins, _snarl: &mut Snarl<Node>) -> bool {
-        true
-    }
-
-    fn show_dropped_wire_menu(
-        &mut self,
-        _pos: egui::Pos2,
-        _ui: &mut egui::Ui,
-        _src_pins: AnyPins,
-        _snarl: &mut Snarl<Node>,
-    ) {
-    }
-
-    fn show_node_menu(
+    /// Context-menu content of a node.
+    pub(crate) fn draw_node_menu(
         &mut self,
         node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
         ui: &mut egui::Ui,
-        snarl: &mut Snarl<Node>,
+        snarl: &mut NodeGraph<Node>,
     ) {
         ui.label(muted("NODE", font::TINY));
         ui.add_space(2.0);
@@ -1382,34 +1248,6 @@ impl SnarlViewer<Node> for GraphEditor {
             ui.close();
         }
     }
-
-    fn current_transform(
-        &mut self,
-        to_global: &mut egui::emath::TSTransform,
-        _snarl: &mut Snarl<Node>,
-    ) {
-        // Pin heights are recorded again while this frame's nodes are drawn.
-        self.input_pin_y.clear();
-        self.output_pin_y.clear();
-
-        // egui-snarl's `Scene` pans on primary drag for every button. While a
-        // Ctrl+drag cut is active the canvas must stay put.
-        if self.cut_drag.is_some() {
-            to_global.translation = self.to_global.translation;
-        }
-
-        self.to_global = *to_global;
-        self.zoom = to_global.scaling.max(0.05);
-    }
-}
-
-/// Screen-space Y of the pin row currently being drawn.
-fn pin_screen_y(ui: &egui::Ui) -> f32 {
-    let to_global = ui
-        .ctx()
-        .layer_transform_to_global(ui.layer_id())
-        .unwrap_or(egui::emath::TSTransform::IDENTITY);
-    (to_global * ui.max_rect().center()).y
 }
 
 /// Whether the line segments `a`–`b` and `c`–`d` cross or touch.
@@ -1445,7 +1283,7 @@ fn segments_intersect(a: egui::Pos2, b: egui::Pos2, c: egui::Pos2, d: egui::Pos2
 /// itself) guarantees that a directly-upstream filter's rendered result is
 /// used — never its low-res preview, the unfiltered image behind it, or the
 /// processing node's own previous output.
-fn processing_input_path(snarl: &Snarl<Node>, node: NodeId) -> Result<PathBuf, String> {
+fn processing_input_path(snarl: &NodeGraph<Node>, node: NodeId) -> Result<PathBuf, String> {
     match crate::graph::upstream(snarl, node) {
         Some(upstream) => full_res_source_path(snarl, upstream)
             .ok_or_else(|| "The input has no full-resolution output yet".to_owned()),
@@ -1459,7 +1297,7 @@ fn processing_input_path(snarl: &Snarl<Node>, node: NodeId) -> Result<PathBuf, S
 /// walking past them would silently drop the filter effect. Image nodes follow
 /// their upstream wire first (they are pass-through when connected) and fall
 /// back to their file, asset bytes or decoded pixels.
-fn filter_input(snarl: &Snarl<Node>, node: NodeId, assets: &AssetStore) -> Option<FilterInput> {
+fn filter_input(snarl: &NodeGraph<Node>, node: NodeId, assets: &AssetStore) -> Option<FilterInput> {
     let mut current = node;
     let mut seen = std::collections::HashSet::new();
     loop {
@@ -1560,7 +1398,7 @@ mod tests {
     fn cut_gesture_disconnects_only_crossed_wires() {
         let (jobs, _jobs_rx) = std::sync::mpsc::channel();
         let mut editor = GraphEditor::new(jobs);
-        let mut snarl = Snarl::new();
+        let mut snarl = NodeGraph::new();
 
         let image = snarl.insert_node(egui::pos2(0.0, 0.0), Node::image("C:/missing/a.png"));
         let filter = snarl.insert_node(egui::pos2(300.0, 0.0), Node::remove_bg());
@@ -1577,10 +1415,10 @@ mod tests {
         let image_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
         let filter_rect =
             egui::Rect::from_min_size(egui::pos2(300.0, 0.0), egui::vec2(200.0, 100.0));
-        editor.node_rects.insert(image, image_rect);
-        editor.node_rects.insert(filter, filter_rect);
-        editor.output_pin_y.insert(from, 50.0);
-        editor.input_pin_y.insert(to, 50.0);
+        editor.geometry.node_rects.insert(image, image_rect);
+        editor.geometry.node_rects.insert(filter, filter_rect);
+        editor.geometry.output_pin_y.insert(from, 50.0);
+        editor.geometry.input_pin_y.insert(to, 50.0);
 
         // A swipe below the wire leaves it connected.
         editor.cut_wires(&mut snarl, egui::pos2(250.0, 70.0), egui::pos2(250.0, 90.0));
@@ -1589,33 +1427,5 @@ mod tests {
         // A swipe across the wire cuts it.
         editor.cut_wires(&mut snarl, egui::pos2(250.0, 20.0), egui::pos2(250.0, 80.0));
         assert_eq!(snarl.wires().count(), 0);
-    }
-
-    #[test]
-    fn undo_and_redo_keep_the_snarl_view() {
-        let (jobs, _jobs_rx) = std::sync::mpsc::channel();
-        let mut editor = GraphEditor::new(jobs);
-        let mut snarl = Snarl::new();
-
-        let before = editor.graph_snapshot(&snarl);
-        snarl.insert_node(egui::pos2(0.0, 0.0), Node::remove_bg());
-        editor.record_graph_change(before, &snarl);
-
-        // Zoom/pan live in egui-snarl's state keyed by this id. As long as
-        // the id is unchanged undo/redo cannot reset them.
-        let view_id = editor.view_id();
-        assert!(editor.undo(&mut snarl));
-        assert_eq!(editor.view_id(), view_id);
-        assert!(editor.redo(&mut snarl));
-        assert_eq!(editor.view_id(), view_id);
-    }
-
-    #[test]
-    fn loading_another_file_changes_the_view_id() {
-        let (jobs, _jobs_rx) = std::sync::mpsc::channel();
-        let mut editor = GraphEditor::new(jobs);
-        let view_id = editor.view_id();
-        editor.reset_view();
-        assert_ne!(editor.view_id(), view_id);
     }
 }

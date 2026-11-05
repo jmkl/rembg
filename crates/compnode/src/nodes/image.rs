@@ -1,7 +1,7 @@
 //! Image source node.
 
+use crate::nodegraph::{InPinId, NodeGraph, NodeId};
 use egui::Ui;
-use egui_snarl::{InPinId, NodeId, Snarl};
 use rfd::FileDialog;
 
 use crate::editor::GraphEditor;
@@ -12,7 +12,7 @@ use crate::style::controls::{Button, muted};
 use crate::style::font;
 use crate::widgets::{error_line, node_body, node_preview};
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: Kind) {
+pub(crate) fn create(snarl: &mut NodeGraph<Node>, pos: egui::Pos2, _kind: Kind) {
     snarl.insert_node(pos, Node::image(""));
 }
 
@@ -20,7 +20,7 @@ pub(crate) fn show_body(
     editor: &mut GraphEditor,
     node: NodeId,
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     width: f32,
 ) {
     node_body(ui);

@@ -1,0 +1,7 @@
+[package]
+name = "compnode-ui"
+description = "Headless editor layer for compnode: sockets, widgets, interaction, undo/redo, theme and draw list (work in progress)."
+publish = false
+edition = "2024"
+[dependencies]
+compnode-core = { path = "../compnode-core" }

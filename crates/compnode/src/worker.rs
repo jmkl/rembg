@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use egui_snarl::NodeId;
+use crate::nodegraph::NodeId;
 use rembg_core::{
     BirefNet, FaceDetector, Gfpgan, MODEL_BIREFNET_FILE, MODEL_GFPGAN_FILE, MODEL_RMBG_FILE,
     MODEL_SCRFD_FILE, RemoveBg,
@@ -1041,7 +1041,7 @@ mod inference_backend_tests {
             .send(WorkerRequest::Render(RenderRequest {
                 job: RenderJob::Texts {
                     token: 1,
-                    node: egui_snarl::NodeId(0),
+                    node: crate::nodegraph::NodeId(0),
                     params: Default::default(),
                     canvas: (1, 1),
                     source_name: "cancelled".to_owned(),

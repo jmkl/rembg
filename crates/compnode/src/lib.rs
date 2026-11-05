@@ -9,7 +9,10 @@
 //! - [`graph`] contains graph operations such as connecting, invalidating and
 //!   refreshing previews.
 //! - [`memory`] bounds full-resolution CPU images and reloads them on demand.
-//! - [`editor`] implements egui-snarl's `SnarlViewer` for the graph.
+//! - [`nodegraph`] is the backend-neutral graph model (ids, wires, positions).
+//! - [`view`] defines the `GraphView` boundary; `view::snarl` is the egui-snarl
+//!   backend and the only widget-specific code.
+//! - [`editor`] holds selection, undo and node content, which every view reuses.
 //! - [`session`], [`cache`] and [`worker`] cover persistence and inference.
 //! - [`settings`] and [`settings_window`] own persisted app configuration.
 //! - [`app`] wires the application together, including autosave and menus.
@@ -29,6 +32,7 @@ mod image_canvas;
 mod layer_cache;
 mod memory;
 mod model;
+mod nodegraph;
 mod nodes;
 mod ops;
 mod params;
@@ -40,6 +44,7 @@ mod style;
 #[cfg(test)]
 mod tests;
 mod title_bar;
+mod view;
 mod widgets;
 mod worker;
 

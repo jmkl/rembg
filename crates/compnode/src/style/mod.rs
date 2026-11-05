@@ -6,7 +6,7 @@
 //! * [`icons`]   – the icon font and glyph codepoints.
 //! * [`controls`] – the widget kit (buttons, menu rows, sliders, ...), built
 //!   on vanilla egui. There is no third-party widget library.
-//! * this file – metrics, font sizes, the egui theme and the Snarl style.
+//! * this file – metrics, font sizes, the egui theme.
 //!
 //! Node-specific header colours are registered in [`crate::catalog`].
 
@@ -17,13 +17,10 @@ mod palette;
 mod tests;
 
 use egui::{
-    Color32, CornerRadius, FontData, FontId, Frame, Margin, Shadow, Stroke, TextStyle, Vec2,
+    Color32, CornerRadius, FontData, FontId, Frame, Margin, Stroke, TextStyle,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     style::{Selection, WidgetVisuals, Widgets},
     vec2,
-};
-use egui_snarl::ui::{
-    BackgroundPattern, PinPlacement, SelectionStyle, SnarlStyle, WireLayer, WireStyle,
 };
 
 pub(crate) use palette::{hex, pal};
@@ -44,9 +41,9 @@ pub(crate) mod font {
 
 /// Shared geometry.
 pub(crate) mod metrics {
-    pub const R_CONTROL: u8 = 4;
+    pub const R_CONTROL: u8 = 6;
     pub const R_CARD: u8 = 8;
-    pub const R_NODE: u8 = 6;
+    pub const R_NODE: u8 = 4;
 
     pub const BTN_H: f32 = 28.0;
     pub const BTN_H_SMALL: f32 = 22.0;
@@ -54,8 +51,9 @@ pub(crate) mod metrics {
     pub const MENU_PAD_X: f32 = 8.0;
     pub const MENU_ICON_COL: f32 = 16.0;
     pub const CHECK_SIZE: f32 = 16.0;
-    /// Height of slider / number fields inside nodes.
-    pub const FIELD_H: f32 = 20.0;
+    pub const SLIDER_THUMB: f32 = 14.0;
+    pub const SLIDER_H: f32 = 14.0;
+    pub const SLIDER_TRACK: f32 = 6.0;
     pub const TITLEBAR_H: f32 = 32.0;
 }
 
@@ -187,14 +185,11 @@ fn apply_style(style: &mut egui::Style) {
         stroke: Stroke::new(1.0, pal::ACCENT),
     };
     let border = Stroke::new(1.0, pal::NODE_STROKE);
-    // Number fields, drop-downs and list cards: lighter than the surface, with a
-    // dark hairline, like Blender's property fields.
-    let field_border = Stroke::new(1.0, pal::BLACK.gamma_multiply(0.35));
     v.widgets = Widgets {
         noninteractive: widget(pal::NODE, border, Stroke::new(1.0, pal::TEXT), 0.0),
-        inactive: widget(pal::FIELD, field_border, Stroke::new(1.0, pal::TEXT), 0.0),
+        inactive: widget(pal::INPUT_BG, border, Stroke::new(1.0, pal::TEXT), 0.0),
         hovered: widget(
-            pal::hover(pal::FIELD),
+            pal::hover(pal::INPUT_BG),
             Stroke::new(1.0, pal::MUTED),
             Stroke::new(1.5, pal::TEXT),
             1.0,
@@ -206,7 +201,7 @@ fn apply_style(style: &mut egui::Style) {
             1.0,
         ),
         open: widget(
-            pal::FIELD,
+            pal::INPUT_BG,
             Stroke::new(1.0, pal::ACCENT),
             Stroke::new(1.0, pal::TEXT),
             0.0,
@@ -219,7 +214,7 @@ fn apply_style(style: &mut egui::Style) {
 /// Per-node body frame; the outline turns accent-coloured when selected.
 pub(crate) fn node_frame(default: Frame, selected: bool) -> Frame {
     let stroke = if selected {
-        Stroke::new(2.0, pal::NODE_SELECTED)
+        Stroke::new(2.0, pal::ACCENT)
     } else {
         Stroke::new(1.0, pal::NODE_STROKE)
     };
@@ -241,62 +236,4 @@ pub(crate) fn node_header_frame(default: Frame, header: Color32) -> Frame {
             se: 0,
         })
         .inner_margin(Margin::symmetric(6, 3))
-}
-
-/// Configure egui-snarl's canvas, nodes, wires and selection.
-pub(crate) fn snarl_style() -> SnarlStyle {
-    let mut style = SnarlStyle::new();
-    style.min_scale = Some(0.25);
-    style.max_scale = Some(2.0);
-    // The built-in triangle is replaced by our own chevron in
-    // `editor::GraphEditor::show_header`.
-    style.collapsible = Some(false);
-    style.header_drag_space = Some(Vec2::ZERO);
-    // NOTE: `crisp_magnified_text` multiplies the whole egui style by
-    // `max_scale`, so enabling it makes nodes render at 2x/2.5x. Keep it off
-    // and let the layer transform do the zooming.
-    style.crisp_magnified_text = Some(false);
-
-    // Wires: smooth S-curves behind the nodes, like Blender.
-    style.wire_style = Some(WireStyle::Bezier3);
-    style.wire_width = Some(2.5);
-    style.wire_layer = Some(WireLayer::BehindNodes);
-
-    // Sockets sit on the node border.
-    style.pin_size = Some(9.0);
-    style.pin_placement = Some(PinPlacement::Edge);
-    style.pin_fill = Some(pal::SOCKET);
-    style.pin_stroke = Some(Stroke::new(1.0, pal::SOCKET_STROKE));
-
-    // Canvas: flat dark fill; the viewer draws no grid.
-    style.bg_frame = Some(controls::canvas_frame());
-    style.bg_pattern = Some(BackgroundPattern::NoPattern);
-
-    // Frames are also overridden per node (see `node_frame` /
-    // `node_header_frame`); these are the fallbacks.
-    style.node_frame = Some(node_frame(
-        Frame::new().shadow(Shadow {
-            offset: [0, 3],
-            blur: 8,
-            spread: 0,
-            color: Color32::from_black_alpha(70),
-        }),
-        false,
-    ));
-    style.header_frame =
-        Some(node_header_frame(Frame::new(), pal::NODE).inner_margin(Margin::ZERO));
-
-    // Rectangle selection uses the accent blue, like Blender's selection box.
-    // NOTE: `select_stoke` is misspelled in egui-snarl's public API.
-    style.select_stoke = Some(Stroke::new(2.0, pal::ACCENT));
-    style.select_fill = Some(pal::ACCENT.gamma_multiply(0.08));
-    // Node outlines are drawn by `GraphEditor` instead, because egui-snarl
-    // does not select a node on a normal click. Keep Snarl's own node
-    // selection invisible so the two highlight sources never disagree.
-    style.select_style = Some(SelectionStyle {
-        fill: Color32::TRANSPARENT,
-        stroke: Stroke::NONE,
-        ..Default::default()
-    });
-    style
 }

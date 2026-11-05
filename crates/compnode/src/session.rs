@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::nodegraph::{InPinId, NodeGraph, NodeId, OutPinId};
 use base64::Engine as _;
-use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -183,7 +183,7 @@ pub(crate) fn default_autosave_path() -> PathBuf {
     }
 }
 
-pub(crate) fn snapshot(snarl: &Snarl<Node>, assets: &AssetStore) -> SessionFile {
+pub(crate) fn snapshot(snarl: &NodeGraph<Node>, assets: &AssetStore) -> SessionFile {
     let mut used_assets = HashSet::new();
     let mut nodes = Vec::new();
     for (id, node) in snarl.node_ids() {
@@ -328,7 +328,7 @@ pub(crate) fn load(
     cache: &OutputCache,
     ctx: &egui::Context,
     assets: &mut AssetStore,
-) -> Result<Snarl<Node>, String> {
+) -> Result<NodeGraph<Node>, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let json: Value =
         serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?;
@@ -343,7 +343,7 @@ pub(crate) fn load(
     }
 
     let legacy_assets = legacy_assets_dir(path);
-    let mut next = Snarl::new();
+    let mut next = NodeGraph::new();
     let mut id_map = HashMap::with_capacity(file.nodes.len());
     let mut pending_viewers: Vec<(NodeId, Vec<usize>, Vec<SessionLayerTransform>)> = Vec::new();
 
@@ -466,7 +466,7 @@ pub(crate) fn load(
         node.set_bypassed(stored.bypassed);
         let pos = egui::pos2(stored.pos[0], stored.pos[1]);
         let id = if stored.collapsed {
-            next.insert_node_collapsed(pos, node)
+            next.insert_node(pos, node)
         } else {
             next.insert_node(pos, node)
         };

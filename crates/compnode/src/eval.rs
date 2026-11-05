@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+use crate::nodegraph::{InPinId, NodeGraph, NodeId};
 use egui::{TextureHandle, TextureOptions};
-use egui_snarl::{InPinId, NodeId, Snarl};
 use image::RgbaImage;
 
 use crate::catalog;
@@ -18,7 +18,7 @@ pub(crate) use crate::resolution::PreviewQuality;
 mod signature;
 
 /// Evaluation reads graph topology through this interface so the evaluator is
-/// not tied to Snarl's pin and node storage APIs.
+/// not tied to the graph storage APIs.
 trait EvalContext {
     fn node_ids(&self) -> Vec<NodeId>;
     fn node(&self, id: NodeId) -> Option<&Node>;
@@ -28,7 +28,7 @@ trait EvalContext {
     fn canvas_size(&self) -> (u32, u32);
 }
 
-struct SnarlEvalContext<'a>(&'a mut Snarl<Node>);
+struct SnarlEvalContext<'a>(&'a mut NodeGraph<Node>);
 
 impl EvalContext for SnarlEvalContext<'_> {
     fn node_ids(&self) -> Vec<NodeId> {
@@ -56,13 +56,13 @@ impl EvalContext for SnarlEvalContext<'_> {
     }
 }
 
-pub(crate) fn ensure_all(snarl: &mut Snarl<Node>, ctx: &egui::Context) -> bool {
+pub(crate) fn ensure_all(snarl: &mut NodeGraph<Node>, ctx: &egui::Context) -> bool {
     ensure_all_with_quality(snarl, ctx, PreviewQuality::Normal)
 }
 
 #[allow(dead_code)] // UI callers currently select Normal; tests exercise all tiers.
 pub(crate) fn ensure_all_with_quality(
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     ctx: &egui::Context,
     quality: PreviewQuality,
 ) -> bool {
@@ -484,7 +484,7 @@ pub(crate) fn upload(ctx: &egui::Context, node: NodeId, image: &RgbaImage) -> Te
     )
 }
 
-pub(crate) fn canvas_size(snarl: &Snarl<Node>) -> (u32, u32) {
+pub(crate) fn canvas_size(snarl: &NodeGraph<Node>) -> (u32, u32) {
     for (_, node) in snarl.node_ids() {
         if let Some(viewer) = node.viewer_node() {
             let width = viewer.canvas_size.x as u32;

@@ -702,7 +702,7 @@ mod color_compute_tests {
         let layer = |index, color| {
             (
                 ViewerLayer {
-                    source: egui_snarl::NodeId(index),
+                    source: crate::nodegraph::NodeId(index),
                     kind: crate::model::Kind::Image,
                     texture: None,
                     source_name: format!("layer-{index}"),

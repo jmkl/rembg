@@ -589,7 +589,7 @@ mod gpu_parity_tests {
         let layer = |id, image_size, center, size, angle, source_name: &str| {
             (
                 ViewerLayer {
-                    source: egui_snarl::NodeId(id),
+                    source: crate::nodegraph::NodeId(id),
                     kind: Kind::Image,
                     texture: None,
                     source_name: source_name.to_owned(),

@@ -2,8 +2,8 @@
 //! `\n`-separated lines become stacked rows, each row with its own size and
 //! colour.
 
+use crate::nodegraph::{NodeGraph, NodeId};
 use egui::{Color32, Ui, Vec2, vec2};
-use egui_snarl::{NodeId, Snarl};
 
 use crate::editor::GraphEditor;
 use crate::graph::invalidate_node;
@@ -122,7 +122,7 @@ fn param_color(ui: &mut Ui, params: &mut Params, key: &str, label: &str, default
     changed
 }
 
-pub(crate) fn create(snarl: &mut Snarl<Node>, pos: egui::Pos2, _kind: crate::model::Kind) {
+pub(crate) fn create(snarl: &mut NodeGraph<Node>, pos: egui::Pos2, _kind: crate::model::Kind) {
     snarl.insert_node(pos, Node::Texts(crate::model::TextsNode::new()));
 }
 
@@ -130,7 +130,7 @@ pub(crate) fn show_body(
     _editor: &mut GraphEditor,
     node: NodeId,
     ui: &mut Ui,
-    snarl: &mut Snarl<Node>,
+    snarl: &mut NodeGraph<Node>,
     width: f32,
 ) {
     node_body(ui);
@@ -214,7 +214,7 @@ pub(crate) fn show_body(
                         params,
                         "box_padding_x",
                         "Padding X",
-                        0.0..=100.0,
+                        0.0..=400.0,
                         24.0,
                         " px",
                         1.0,
@@ -225,32 +225,10 @@ pub(crate) fn show_body(
                         params,
                         "box_padding_y",
                         "Padding Y",
-                        0.0..=100.0,
+                        0.0..=400.0,
                         12.0,
                         " px",
                         1.0,
-                        0,
-                    );
-                    changed |= param_slider(
-                        ui,
-                        params,
-                        "box_offset_x",
-                        "Offset x",
-                        -100.0..=100.0,
-                        12.0,
-                        " px",
-                        0.0,
-                        0,
-                    );
-                    changed |= param_slider(
-                        ui,
-                        params,
-                        "box_offset_y",
-                        "Offset Y",
-                        -100.0..=100.0,
-                        12.0,
-                        " px",
-                        0.0,
                         0,
                     );
                 });
