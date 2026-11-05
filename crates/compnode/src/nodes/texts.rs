@@ -214,7 +214,7 @@ pub(crate) fn show_body(
                         params,
                         "box_padding_x",
                         "Padding X",
-                        0.0..=400.0,
+                        0.0..=100.0,
                         24.0,
                         " px",
                         1.0,
@@ -225,10 +225,32 @@ pub(crate) fn show_body(
                         params,
                         "box_padding_y",
                         "Padding Y",
-                        0.0..=400.0,
+                        0.0..=100.0,
                         12.0,
                         " px",
                         1.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "box_offset_x",
+                        "Offset x",
+                        -100.0..=100.0,
+                        12.0,
+                        " px",
+                        0.0,
+                        0,
+                    );
+                    changed |= param_slider(
+                        ui,
+                        params,
+                        "box_offset_y",
+                        "Offset Y",
+                        -100.0..=100.0,
+                        12.0,
+                        " px",
+                        0.0,
                         0,
                     );
                 });

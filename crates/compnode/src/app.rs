@@ -1354,6 +1354,7 @@ impl App for CompNodeApp {
         );
 
         ui.input(|input| {
+            // Ctrl + Hotkey
             if input.modifiers.command {
                 if input.key_pressed(egui::Key::O) {
                     actions.open = true;
@@ -1385,6 +1386,7 @@ impl App for CompNodeApp {
                     actions.paste_clipboard = true;
                 }
             }
+
             if input.key_pressed(egui::Key::F11) {
                 actions.toggle_fullscreen = true;
             }

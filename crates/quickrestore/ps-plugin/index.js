@@ -73,6 +73,10 @@ function connect() {
       case "copy":
         await copyLayerToClipboard();
         break;
+      case "abort":
+        updateStatus("aborted");
+        setProcessing(false);
+        break;
     }
   };
   ws.onclose = () => {
@@ -89,6 +93,14 @@ function updateStatus(text) {
   if (el) el.textContent = String(text);
 }
 
+
+async function sleep(ms){
+  return new Promise((resolve,reject)=>{
+    setTimeout(()=>{
+      resolve(0);
+    },ms);
+  });
+}
 function setProcessing(on) {
   processing = on;
   const pb = document.getElementById("processBtn");
@@ -409,8 +421,9 @@ async function handlePutImage(msg) {
               maskData.dispose();
             } catch (e) {}
             updateStatus("mask");
-            sendStatus("mask");
-            // Resize the restored layer back to the original selection size.
+            sendStatus("masking complete");
+            await sleep(3000);
+              // Resize the restored layer back to the original selection size.
             try {
               const _layer = doc.layers.find(
                 (l) => l.id === lastFaceRestoreLayerId,

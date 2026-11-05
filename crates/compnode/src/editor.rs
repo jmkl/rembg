@@ -272,16 +272,29 @@ impl GraphEditor {
 
     /// Undo the last canvas edit of `node`. Returns the layer state that was
     /// written to the node so the canvas widget can mirror it.
-    pub(crate) fn undo_canvas(&mut self, snarl: &mut Snarl<Node>, node: NodeId) -> Option<LayerState> {
+    pub(crate) fn undo_canvas(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+    ) -> Option<LayerState> {
         self.canvas_history.undo(snarl, node)
     }
 
-    pub(crate) fn redo_canvas(&mut self, snarl: &mut Snarl<Node>, node: NodeId) -> Option<LayerState> {
+    pub(crate) fn redo_canvas(
+        &mut self,
+        snarl: &mut Snarl<Node>,
+        node: NodeId,
+    ) -> Option<LayerState> {
         self.canvas_history.redo(snarl, node)
     }
 
     /// Record a committed canvas transform/reorder of `node`.
-    pub(crate) fn record_canvas_edit(&mut self, node: NodeId, before: LayerState, after: LayerState) {
+    pub(crate) fn record_canvas_edit(
+        &mut self,
+        node: NodeId,
+        before: LayerState,
+        after: LayerState,
+    ) {
         self.canvas_history.record(node, before, after);
     }
 
@@ -299,12 +312,7 @@ impl GraphEditor {
         GraphSnapshot::capture(snarl, &self.assets)
     }
 
-    pub(crate) fn record_node_change(
-        &mut self,
-        id: NodeId,
-        mut before: Node,
-        snarl: &Snarl<Node>,
-    ) {
+    pub(crate) fn record_node_change(&mut self, id: NodeId, mut before: Node, snarl: &Snarl<Node>) {
         if let Some(after) = snarl.get_node(id) {
             let mut after = after.clone();
             before.release_cpu_if_reloadable();
@@ -356,6 +364,10 @@ impl GraphEditor {
         if snarl.node_ids().count() != before.snarl.node_ids().count() {
             self.record_graph_change(before, snarl);
         }
+    }
+    /// bypass selected
+    pub(crate) fn bypass_selected(&mut self, snarl: &mut Snarl<Node>) {
+        todo!()
     }
 
     /// Remove the app-level selection from the graph. Both Delete shortcuts and
@@ -883,6 +895,20 @@ impl GraphEditor {
     }
 }
 
+fn draw_debug_rect(ui: &mut egui::Ui, rect: egui::Rect) {
+    if std::env::var("DEBUG_RECT")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.0, egui::Color32::RED),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
 impl SnarlViewer<Node> for GraphEditor {
     fn title(&mut self, node: &Node) -> String {
         catalog::spec(node.kind()).title.to_owned()
@@ -932,7 +958,7 @@ impl SnarlViewer<Node> for GraphEditor {
     ) {
         const ROW_H: f32 = 22.0; // header content height
         const HIT: f32 = 20.0; // square hit area of each icon
-        const PAD: f32 = 4.0; // margin from the node edge
+        const PAD: f32 = 0.0; // margin from the node edge
 
         let open = snarl.get_node_info(node).is_none_or(|info| info.open);
         let spec = catalog::spec(snarl[node].kind());
@@ -947,20 +973,24 @@ impl SnarlViewer<Node> for GraphEditor {
             let enabled = snarl[node].route_enabled();
             let status_color = if enabled { pal::SUCCESS } else { pal::DANGER };
             let dot_x = rect.left() + PAD + 4.0;
-            ui.painter().circle_filled(
-                egui::pos2(dot_x, rect.center().y),
-                3.0,
-                status_color,
-            );
+            ui.painter()
+                .circle_filled(egui::pos2(dot_x, rect.center().y), 3.0, status_color);
 
             let toggle_w = 34.0;
             let toggle_h = 16.0;
             let toggle_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.right() - PAD - toggle_w, rect.center().y - toggle_h / 2.0),
+                egui::pos2(
+                    rect.right() - PAD - toggle_w,
+                    rect.center().y - toggle_h / 2.0,
+                ),
                 vec2(toggle_w, toggle_h),
             );
 
-            let title_color = if enabled { pal::HEADER_TEXT } else { pal::MUTED };
+            let title_color = if enabled {
+                pal::HEADER_TEXT
+            } else {
+                pal::MUTED
+            };
             let title_text = if enabled {
                 format!("Route #{}", node.0)
             } else {
@@ -988,7 +1018,8 @@ impl SnarlViewer<Node> for GraphEditor {
             } else {
                 (pal::hover(pal::PANEL), pal::MUTED, "OFF")
             };
-            ui.painter().rect_filled(toggle_rect, CornerRadius::same(3), bg);
+            ui.painter()
+                .rect_filled(toggle_rect, CornerRadius::same(3), bg);
             ui.painter().text(
                 toggle_rect.center(),
                 Align2::CENTER_CENTER,
@@ -1020,14 +1051,19 @@ impl SnarlViewer<Node> for GraphEditor {
             egui::pos2(rect.right() - PAD - HIT, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
+        draw_debug_rect(ui, bypass_rect);
+
         let right = egui::Rect::from_min_size(
             egui::pos2(bypass_rect.left() - 2.0 - HIT, rect.center().y - HIT / 2.0),
             vec2(HIT, HIT),
         );
+        draw_debug_rect(ui, right);
+
         let title = egui::Rect::from_min_max(
             egui::pos2(left.right(), rect.top()),
             egui::pos2(right.left(), rect.bottom()),
         );
+        draw_debug_rect(ui, title);
 
         // Collapse chevron (left).
         let chevron = if open {
@@ -1088,17 +1124,20 @@ impl SnarlViewer<Node> for GraphEditor {
         let enabled = snarl[node].preview_enabled();
         let glyph = if enabled { icons::EYE } else { icons::EYE_OFF };
         let response = ui.interact(right, ui.id().with(("eye", node)), egui::Sense::click());
-        ui.painter().text(
+        let galley = ui.painter().text(
             right.center(),
             Align2::CENTER_CENTER,
             glyph,
             icons::font(16.0),
             pal::HEADER_TEXT,
         );
+        draw_debug_rect(
+            ui,
+            egui::Rect::from_center_size(right.center(), galley.size()),
+        );
         if response.clicked() {
             snarl[node].set_preview_enabled(!enabled);
         }
-
         // Bypass keeps the node and its settings in the graph while passing
         // its first input image directly to downstream consumers.
         let can_bypass = snarl[node].can_bypass();
@@ -1111,14 +1150,15 @@ impl SnarlViewer<Node> for GraphEditor {
         ui.painter().text(
             bypass_rect.center(),
             Align2::CENTER_CENTER,
-            "⦸",
-            icons::font(14.0),
+            icons::INFO,
+            icons::font(16.0),
             if bypassed {
-                pal::SOCKET
+                pal::DANGER
             } else {
                 pal::HEADER_TEXT
             },
         );
+
         if bypass_response
             .on_hover_text(if bypassed {
                 "Enable node"

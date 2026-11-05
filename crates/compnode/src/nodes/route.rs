@@ -18,9 +18,13 @@ pub(crate) fn show_body(
     snarl: &mut Snarl<Node>,
     _width: f32,
 ) {
+    return;
     let mut enabled = snarl[node].route_enabled();
     let before = snarl[node].clone();
-    if ui.add(Checkbox::new(&mut enabled, "Pass-through")).changed() {
+    if ui
+        .add(Checkbox::new(&mut enabled, "Pass-through"))
+        .changed()
+    {
         snarl[node].set_route_enabled(enabled);
         crate::graph::invalidate_node(snarl, node);
         editor.record_node_change(node, before, snarl);

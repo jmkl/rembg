@@ -201,6 +201,8 @@ impl TextsNode {
         params::set_string(&mut params, "box_color", "#000000");
         params::set_f32(&mut params, "box_padding_x", 24.0);
         params::set_f32(&mut params, "box_padding_y", 12.0);
+        params::set_f32(&mut params, "box_offset_x", 0.0);
+        params::set_f32(&mut params, "box_offset_y", 0.0);
         params::set_f32(&mut params, "line_gap", -16.0);
         params::set_f32(&mut params, "letter_spacing", -2.0);
         params::set_f32(&mut params, "outline_width", 0.0);

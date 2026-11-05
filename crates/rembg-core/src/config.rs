@@ -12,6 +12,7 @@ use ort::{
 pub const WARMUP: bool = false;
 
 pub const MODEL_GFPGAN_FILE: &str = "GFPGANv1.4.onnx";
+pub const MODEL_GPEN_FILE: &str = "GPEN-BFR-512.onnx";
 pub const MODEL_BIREFNET_FILE: &str = "birefnet.onnx";
 pub const MODEL_RMBG_FILE: &str = "rmbg-1.4.onnx";
 pub const MODEL_SCRFD_FILE: &str = "det_10g.onnx";
@@ -22,6 +23,7 @@ pub const MODEL_REALESRGAN: &str = "models/RealESRGAN_x2plus.onnx";
 pub const VRAM_LIMIT_REALESRGAN_MB: usize = 0;
 
 pub const MODEL_GFPGAN: &str = "models/GFPGANv1.4.onnx";
+pub const MODEL_GPEN: &str = "models/GPEN-BFR-512.onnx";
 
 /// Resolve a model root directory, defaulting to "models" when None/empty.
 pub fn model_root(root: Option<&str>) -> String {
@@ -47,6 +49,7 @@ pub const MODEL_SAM2_DECODER: &str = "models/sam2.1_hiera_small.decoder.onnx";
 pub const MODEL_YOLO: &str = "models/yolo11n.onnx";
 
 pub const SIZE_GFPGAN: u32 = 512;
+pub const SIZE_GPEN: u32 = 512;
 pub const SIZE_BIREFNET: u32 = 1024;
 pub const SIZE_YOLO: u32 = 640;
 pub const MAX_WIDTH: u32 = 1920;
@@ -56,6 +59,7 @@ pub const MEAN_IMAGENET: [f32; 3] = [0.485, 0.456, 0.406];
 pub const STD_IMAGENET: [f32; 3] = [0.229, 0.224, 0.225];
 
 pub const VRAM_LIMIT_GFPGAN_MB: usize = 0;
+pub const VRAM_LIMIT_GPEN_MB: usize = 0;
 pub const VRAM_LIMIT_BIREFNET_MB: usize = 0;
 pub const VRAM_LIMIT_SCRFD_MB: usize = 0;
 pub const VRAM_LIMIT_SAM2_MB: usize = 0;

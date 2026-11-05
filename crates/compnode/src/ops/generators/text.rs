@@ -324,16 +324,25 @@ pub(crate) fn texts(params: &Params, canvas: (u32, u32)) -> Result<RgbaImage, St
     // 4. Optional backdrop box, composited underneath the text. Its bounds are
     // the text block (widest rows) grown by the paddings.
     if params::bool(params, "box", false) {
-        let pad_x = params::f32(params, "box_padding_x", 24.0).clamp(0.0, 1024.0);
-        let pad_y = params::f32(params, "box_padding_y", 12.0).clamp(0.0, 1024.0);
-        let left = xs.iter().copied().fold(f32::INFINITY, f32::min) - pad_x;
+        let pad_x = params::f32(params, "box_padding_x", 24.0).clamp(0.0, 100.0);
+        let pad_y = params::f32(params, "box_padding_y", 12.0).clamp(0.0, 100.0);
+        let offset_x = params::f32(params, "box_offset_x", 0.0).clamp(-100.0, 100.0);
+        let offset_y = params::f32(params, "box_offset_y", 0.0).clamp(-100.0, 100.0);
+        let left = xs.iter().copied().fold(f32::INFINITY, f32::min) - pad_x + offset_x;
+
         let right = xs
             .iter()
             .zip(&lay.widths)
             .map(|(&x, &w)| x + w)
             .fold(f32::NEG_INFINITY, f32::max)
-            + pad_x;
-        let rect = (left, y_shift - pad_y, right, y_shift + block_h + pad_y);
+            + pad_x
+            + offset_x;
+
+        let top = y_shift - pad_y + offset_y;
+        let bottom = y_shift + block_h + pad_y + offset_y;
+
+        let rect = (left, top, right, bottom);
+
         paint_box(
             &mut img,
             rect,

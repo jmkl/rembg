@@ -72,75 +72,102 @@ impl Gfpgan {
         faces: &[Landmarks],
         strength: f32,
     ) -> Result<RgbImage> {
-        let mut out = img.clone();
-        let strength = strength.clamp(0.0, 1.0);
-        if strength <= 0.0 {
-            return Ok(out);
-        }
-        let s = SIZE_GFPGAN;
-        let scale = s as f64 / 512.0;
-
-        let mut template = FFHQ_512;
-        for p in template.iter_mut() {
-            p[0] *= scale;
-            p[1] *= scale;
-        }
-
-        for lm in faces {
-            let src = lm.map(|p| [p[0] as f64, p[1] as f64]);
-            let m = similarity(&src, &template)?;
-            let aligned = warp_face(img, &m, s); // always from the ORIGINAL image
-            let restored = self.restore_aligned(&aligned)?;
-            paste_back(&mut out, &restored, &m, strength);
-        }
-        Ok(out)
+        restore_faces_with(img, faces, strength, SIZE_GFPGAN, |face| {
+            self.restore_aligned(face)
+        })
     }
 
     /// Run GFPGAN on a face that is ALREADY FFHQ-aligned (size x size).
     /// Input and output are RGB.
     pub fn restore_aligned(&self, face: &RgbImage) -> Result<RgbImage> {
-        let s = SIZE_GFPGAN;
-        if face.dimensions() != (s, s) {
-            bail!("aligned face must be {s}x{s}, got {:?}", face.dimensions());
-        }
-        let n = (s * s) as usize;
-
-        // RGB u8 -> CHW f32 in [-1, 1]  ((v/255 - 0.5) / 0.5)
-        let mut data = vec![0f32; 3 * n];
-        for (i, p) in face.pixels().enumerate() {
-            data[i] = p[0] as f32 / 127.5 - 1.0;
-            data[n + i] = p[1] as f32 / 127.5 - 1.0;
-            data[2 * n + i] = p[2] as f32 / 127.5 - 1.0;
-        }
-        let input = Tensor::from_array(([1usize, 3, s as usize, s as usize], data))?;
-
         let mut session = self
             .session
             .lock()
             .map_err(|_| anyhow!("GFPGAN session mutex poisoned"))?;
-        let outputs = session.run(ort::inputs![input])?;
-        let (shape, out) = outputs[0].try_extract_tensor::<f32>()?;
-
-        if shape.len() != 4
-            || shape[0] != 1
-            || shape[1] != 3
-            || shape[2] != s as i64
-            || shape[3] != s as i64
-        {
-            bail!("Unexpected GFPGAN output shape: {shape:?}");
-        }
-        if out.len() < 3 * n {
-            bail!("GFPGAN output tensor is too small");
-        }
-
-        // [-1, 1] CHW -> [0, 255] RGB HWC
-        let to_u8 = |v: f32| ((v.clamp(-1.0, 1.0) + 1.0) * 127.5).round() as u8;
-        let mut result = RgbImage::new(s, s);
-        for (i, p) in result.pixels_mut().enumerate() {
-            *p = Rgb([to_u8(out[i]), to_u8(out[n + i]), to_u8(out[2 * n + i])]);
-        }
-        Ok(result)
+        run_aligned(&mut session, face, SIZE_GFPGAN, "GFPGAN")
     }
+}
+
+/// Shared alignment / paste-back pipeline used by the face-restore models.
+///
+/// `restore_aligned` runs the model on an FFHQ-aligned `size` x `size` crop.
+pub(crate) fn restore_faces_with(
+    img: &RgbImage,
+    faces: &[Landmarks],
+    strength: f32,
+    size: u32,
+    mut restore_aligned: impl FnMut(&RgbImage) -> Result<RgbImage>,
+) -> Result<RgbImage> {
+    let mut out = img.clone();
+    let strength = strength.clamp(0.0, 1.0);
+    if strength <= 0.0 {
+        return Ok(out);
+    }
+    let s = size;
+    let scale = s as f64 / 512.0;
+
+    let mut template = FFHQ_512;
+    for p in template.iter_mut() {
+        p[0] *= scale;
+        p[1] *= scale;
+    }
+
+    for lm in faces {
+        let src = lm.map(|p| [p[0] as f64, p[1] as f64]);
+        let m = similarity(&src, &template)?;
+        let aligned = warp_face(img, &m, s); // always from the ORIGINAL image
+        let restored = restore_aligned(&aligned)?;
+        paste_back(&mut out, &restored, &m, strength);
+    }
+    Ok(out)
+}
+
+/// Run a face-restore model on an already FFHQ-aligned crop.
+///
+/// Input and output are RGB. Model tensors are CHW float in `[-1, 1]`.
+pub(crate) fn run_aligned(
+    session: &mut Session,
+    face: &RgbImage,
+    size: u32,
+    name: &str,
+) -> Result<RgbImage> {
+    let s = size;
+    if face.dimensions() != (s, s) {
+        bail!("aligned face must be {s}x{s}, got {:?}", face.dimensions());
+    }
+    let n = (s * s) as usize;
+
+    // RGB u8 -> CHW f32 in [-1, 1]  ((v/255 - 0.5) / 0.5)
+    let mut data = vec![0f32; 3 * n];
+    for (i, p) in face.pixels().enumerate() {
+        data[i] = p[0] as f32 / 127.5 - 1.0;
+        data[n + i] = p[1] as f32 / 127.5 - 1.0;
+        data[2 * n + i] = p[2] as f32 / 127.5 - 1.0;
+    }
+    let input = Tensor::from_array(([1usize, 3, s as usize, s as usize], data))?;
+
+    let outputs = session.run(ort::inputs![input])?;
+    let (shape, out) = outputs[0].try_extract_tensor::<f32>()?;
+
+    if shape.len() != 4
+        || shape[0] != 1
+        || shape[1] != 3
+        || shape[2] != s as i64
+        || shape[3] != s as i64
+    {
+        bail!("Unexpected {name} output shape: {shape:?}");
+    }
+    if out.len() < 3 * n {
+        bail!("{name} output tensor is too small");
+    }
+
+    // [-1, 1] CHW -> [0, 255] RGB HWC
+    let to_u8 = |v: f32| ((v.clamp(-1.0, 1.0) + 1.0) * 127.5).round() as u8;
+    let mut result = RgbImage::new(s, s);
+    for (i, p) in result.pixels_mut().enumerate() {
+        *p = Rgb([to_u8(out[i]), to_u8(out[n + i]), to_u8(out[2 * n + i])]);
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
