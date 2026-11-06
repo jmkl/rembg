@@ -12,3 +12,5 @@ compnode-ui = { path = "../compnode-ui" }
 compnode-image = { path = "../compnode-image" }
 eframe.workspace = true
 egui.workspace = true
+image.workspace = true
+rfd = "0.15"
